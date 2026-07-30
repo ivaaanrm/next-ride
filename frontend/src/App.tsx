@@ -1,3 +1,4 @@
+import { Suspense, lazy } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 
 import { Layout } from "./components/Layout";
@@ -8,6 +9,13 @@ import { LoginPage } from "./pages/Login";
 import { ModelsPage } from "./pages/Models";
 import { OffersPage } from "./pages/Offers";
 import { SettingsPage } from "./pages/Settings";
+
+// Analítica aparte: se lleva Recharts, que pesa más que el resto de la app
+// junta. Quien entra a mirar la tabla de ofertas —que es casi siempre— no
+// debería descargar una librería de gráficos para verla.
+const AnalyticsPage = lazy(() =>
+  import("./pages/Analytics").then((module) => ({ default: module.AnalyticsPage })),
+);
 
 export function App() {
   const { user, loading } = useAuth();
@@ -26,6 +34,14 @@ export function App() {
     <Routes>
       <Route element={<Layout />}>
         <Route path="/offers" element={<OffersPage />} />
+        <Route
+          path="/analytics"
+          element={
+            <Suspense fallback={<Loading label="Cargando la analítica…" />}>
+              <AnalyticsPage />
+            </Suspense>
+          }
+        />
         <Route path="/models" element={<ModelsPage />} />
         <Route path="/dealers" element={<DealersPage />} />
         <Route path="/settings" element={<SettingsPage />} />

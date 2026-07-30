@@ -1,10 +1,12 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 
 import { useAuth } from "../lib/auth";
+import { NotificationsNav } from "./Notifications";
 
 const NAV = [
   { to: "/offers", label: "Ofertas", icon: "◱" },
+  { to: "/analytics", label: "Analítica", icon: "◫" },
   { to: "/models", label: "Modelos", icon: "◈" },
   { to: "/dealers", label: "Dealers", icon: "◇" },
 ];
@@ -15,6 +17,7 @@ const COLLAPSED_KEY = "nr.sidebar_collapsed";
 
 export function Layout() {
   const { user, logout } = useAuth();
+  const { pathname } = useLocation();
   const initials = (user?.full_name || user?.email || "?").slice(0, 2);
 
   // Se recuerda entre recargas: plegarla es una preferencia, no un estado de paso.
@@ -75,6 +78,8 @@ export function Layout() {
         ))}
 
         <div className="nav-section">Sistema</div>
+        {/* Antes que Ajustes: el aviso es lo que manda a Ajustes, no al revés. */}
+        <NotificationsNav collapsed={collapsed} />
         {SETTINGS_NAV.map((item) => (
           <NavLink
             key={item.to}
@@ -105,7 +110,14 @@ export function Layout() {
       </nav>
 
       <div className="main">
-        <Outlet />
+        {/* La clave por ruta remonta la vista, y ese remontaje es lo que dispara
+            sola la animación de entrada. El envoltorio no pinta caja
+            (`display: contents`): la cabecera y el cuerpo siguen siendo hijos
+            directos de `.main`, así que ni el `sticky` de `.topbar` ni el
+            `flex: 1` de `.content` cambian de sitio. */}
+        <div className="view" key={pathname}>
+          <Outlet />
+        </div>
       </div>
     </div>
   );

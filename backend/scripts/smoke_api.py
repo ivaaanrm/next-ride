@@ -103,6 +103,7 @@ batch = {
             "condition": "km0",
             "fuel_type": "hybrid",
             "transmission": "automatic",
+            "raw": {"color": "Blanco perla", "plazas": 5, "garantia": "2 años oficial"},
         },
         {"url": "no-es-url", "title": "roto", "price": -5, "dealer_name": "X", "make": "X", "model": "Y"},
     ]
@@ -134,7 +135,15 @@ offer_id = result2["offer_ids"][0]
 status, history = call("GET", f"/offers/{offer_id}/price-history", token=token)
 check("historial de precios con 2 puntos", status == 200 and len(history) == 2, f"{len(history or [])} puntos")
 
+status, detail = call("GET", f"/offers/{offer_id}/raw", token=token)
+check(
+    "payload crudo del scraper accesible aparte",
+    status == 200 and detail["raw"]["color"] == "Blanco perla",
+    f"HTTP {status}: {json.dumps(detail)[:70]}",
+)
+
 status, offer = call("GET", f"/offers/{offer_id}", token=token)
+check("raw NO viaja en el listado/detalle", "raw" not in offer)
 m = offer["metrics"]
 check("price_drop_pct calculado", m["price_drop_pct"] is not None, f"{m['price_drop_pct']}%")
 check("discount_pct calculado", m["discount_pct"] is not None, f"{m['discount_pct']}%")
@@ -149,6 +158,21 @@ check("sort=price ascendente", status == 200 and prices == sorted(prices), str([
 status, page = call("GET", "/offers?limit=5&sort=-price", token=token)
 prices = [o["price"] for o in page["items"]]
 check("sort=-price descendente", prices == sorted(prices, reverse=True), str([int(p) for p in prices]))
+
+# Los sentidos que alimentan las cabeceras de la tabla. `year` y `mileage_km`
+# son nullables: los None se van al final en los dos sentidos, así que la
+# comprobación mira solo el tramo con dato.
+status, page = call("GET", "/offers?limit=100&sort=year", token=token)
+years = [o["year"] for o in page["items"] if o["year"] is not None]
+check("sort=year ascendente", status == 200 and years == sorted(years), str(years[:8]))
+
+status, page = call("GET", "/offers?limit=100&sort=-mileage_km", token=token)
+km = [o["mileage_km"] for o in page["items"] if o["mileage_km"] is not None]
+check("sort=-mileage_km descendente", status == 200 and km == sorted(km, reverse=True), str(km[:8]))
+
+status, page = call("GET", "/offers?limit=100&sort=first_seen_at", token=token)
+seen = [o["first_seen_at"] for o in page["items"]]
+check("sort=first_seen_at ascendente", status == 200 and seen == sorted(seen), f"{len(seen)} ofertas")
 
 status, page = call("GET", "/offers?limit=200&sort=value_score", token=token)
 scores = [o["metrics"]["value_score"] for o in page["items"]]
@@ -170,6 +194,99 @@ check("filtro tracked_only", status == 200, f"{len(page['items'])} ofertas de mo
 status, page = call("GET", "/offers?q=golf&limit=100", token=token)
 check("búsqueda por título", all("golf" in o["title"].lower() for o in page["items"]),
       f"{len(page['items'])} coincidencias")
+
+print("\n== métricas del conjunto filtrado ==")
+# Lo que hay que garantizar es que /offers/stats y /offers describan el MISMO
+# conjunto: una media calculada sobre otras filas es peor que no enseñar media.
+status, stats_all = call("GET", "/offers/stats", token=token)
+check("GET /offers/stats no lo captura /offers/{id}", status == 200, f"HTTP {status}")
+
+status, page = call("GET", "/offers?limit=200", token=token)
+check("el recuento coincide con el del listado sin filtro",
+      stats_all["count"] == page["total"], f"{stats_all['count']} vs {page['total']}")
+
+QS = "max_price=25000&condition=used"
+status, stats_f = call("GET", f"/offers/stats?{QS}", token=token)
+status2, page_f = call("GET", f"/offers?{QS}&limit=200", token=token)
+items = page_f["items"]
+check("el recuento coincide con el del listado filtrado",
+      status == 200 and status2 == 200 and stats_f["count"] == page_f["total"],
+      f"{stats_f['count']} vs {page_f['total']}")
+check("filtrar cambia las métricas (no son globales)",
+      stats_f["count"] < stats_all["count"]
+      and stats_f["avg_price"] != stats_all["avg_price"],
+      f"{stats_f['avg_price']} filtrado vs {stats_all['avg_price']} global")
+
+if items and len(items) == page_f["total"]:
+    expected = sum(o["price"] for o in items) / len(items)
+    check("avg_price coincide con la media de las filas devueltas",
+          abs(stats_f["avg_price"] - expected) < 0.5,
+          f"{stats_f['avg_price']} vs {round(expected, 2)}")
+
+    kms = [o["mileage_km"] for o in items if o["mileage_km"] is not None]
+    expected_km = sum(kms) / len(kms) if kms else None
+    check("avg_mileage_km ignora los nulos",
+          expected_km is None or abs(stats_f["avg_mileage_km"] - expected_km) < 1,
+          f"{stats_f['avg_mileage_km']} vs {round(expected_km) if expected_km else None}")
+
+    kpy = [o["metrics"]["km_per_year"] for o in items if o["metrics"]["km_per_year"] is not None]
+    expected_kpy = sum(kpy) / len(kpy) if kpy else None
+    check("avg_km_per_year usa el mismo cálculo que las métricas por oferta",
+          expected_kpy is None or abs(stats_f["avg_km_per_year"] - expected_kpy) < 1,
+          f"{stats_f['avg_km_per_year']} vs {round(expected_kpy) if expected_kpy else None}")
+
+    models = {o["car_model"]["id"] for o in items}
+    check("car_models cuenta modelos distintos del filtro",
+          stats_f["car_models"] == len(models), f"{stats_f['car_models']} vs {len(models)}")
+
+status, empty = call("GET", "/offers/stats?max_price=1", token=token)
+check("filtro sin resultados -> ceros y medias nulas",
+      status == 200 and empty["count"] == 0 and empty["avg_price"] is None
+      and empty["best_deal"] is None,
+      f"count={empty['count']} avg={empty['avg_price']}")
+
+# El dominio del deslizador de precio. La propiedad que importa es que NO se
+# mueva con el propio filtro de precio: si se moviera, cada arrastre encogería
+# el carril a la selección y no habría forma de volver a abrirlo. Se compara
+# contra el mismo filtro sin el precio, no contra el global: `condition=used` sí
+# debe mover el dominio, y compararlo con el global no distinguiría las dos cosas.
+status, stats_c = call("GET", "/offers/stats?condition=used", token=token)
+check("price_floor/ceiling ignoran el filtro de precio",
+      status == 200
+      and stats_f["price_floor"] == stats_c["price_floor"]
+      and stats_f["price_ceiling"] == stats_c["price_ceiling"],
+      f"[{stats_f['price_floor']}, {stats_f['price_ceiling']}] con max_price=25000 vs "
+      f"[{stats_c['price_floor']}, {stats_c['price_ceiling']}] sin él")
+
+check("el dominio sobrevive a un filtro de precio sin resultados",
+      empty["price_floor"] is not None and empty["price_ceiling"] is not None,
+      f"count=0 pero [{empty['price_floor']}, {empty['price_ceiling']}]")
+
+# El dominio de años, igual: inmune a `min_year`/`max_year` pero sensible al
+# resto. Que el de precio SÍ se mueva con `max_price` es lo que demuestra que
+# cada rango se exime del suyo y no de todos.
+status, stats_y = call("GET", "/offers/stats?min_year=2020", token=token)
+check("year_floor/ceiling ignoran el filtro de año",
+      status == 200
+      and stats_y["year_floor"] == stats_all["year_floor"]
+      and stats_y["year_ceiling"] == stats_all["year_ceiling"],
+      f"[{stats_y['year_floor']}, {stats_y['year_ceiling']}] con min_year=2020 vs "
+      f"[{stats_all['year_floor']}, {stats_all['year_ceiling']}] sin él")
+
+status, page_y = call("GET", "/offers?min_year=2020&max_year=2021&limit=200", token=token)
+years = [o["year"] for o in page_y["items"]]
+check("filtro max_year acota por arriba",
+      status == 200 and all(y is not None and 2020 <= y <= 2021 for y in years),
+      f"{len(years)} ofertas, años {sorted(set(years))}")
+
+status, page = call("GET", "/offers?limit=200", token=token)
+prices = [o["price"] for o in page["items"]]
+if prices and len(prices) == page["total"]:
+    check("price_floor/ceiling son los extremos reales del conjunto",
+          abs(stats_all["price_floor"] - min(prices)) < 0.01
+          and abs(stats_all["price_ceiling"] - max(prices)) < 0.01,
+          f"[{stats_all['price_floor']}, {stats_all['price_ceiling']}] vs "
+          f"[{min(prices)}, {max(prices)}]")
 
 print("\n== descarte manual ==")
 status, dismissed = call("DELETE", f"/offers/{offer_id}", {"reason": "smoke test"}, token=token)

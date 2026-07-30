@@ -1,0 +1,42 @@
+/* ------------------------------------------------------------------------- *
+ * Tailwind, solo utilidades.
+ *
+ * La app tiene su propio CSS con tokens y no usa framework de UI. Tailwind entra
+ * únicamente porque el componente `chart` de shadcn/ui está escrito con sus
+ * clases: se importan `theme` y `utilities`, **no** `preflight`, porque el reset
+ * de Tailwind pisaría los estilos de la tabla, los botones y los formularios que
+ * ya existen. Con esto Tailwind solo añade clases que nadie más usa.
+ *
+ * El bloque `@theme` traduce los tokens de `styles.css` a los nombres que espera
+ * shadcn (`--color-border`, `--color-background`, …). Un solo sitio donde mirar:
+ * si cambia la paleta de la app, los gráficos la siguen.
+ * ------------------------------------------------------------------------- */
+@layer theme, base, components, utilities;
+
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+@theme {
+  --color-border: #ebebeb;
+  --color-background: #ffffff;
+  --color-foreground: #1b1b18;
+  --color-muted: #f4f4f4;
+  --color-muted-foreground: #666663;
+  --radius: 4px;
+
+  /* ---- Paleta categórica de los gráficos -----------------------------------
+   *
+   * Tres ranuras, asignadas por entidad y nunca por posición: filtrar un
+   * binomio no debe repintar los que quedan. El azul es el acento de la app;
+   * los otros dos se eligieron con el validador de paletas, no a ojo.
+   *
+   * Las tres pasan las seis comprobaciones sobre fondo blanco con *todos* los
+   * pares (no solo los adyacentes), que es lo que exige el gráfico de dispersión:
+   * separación bajo daltonismo ΔE 9,9 · visión normal ΔE 27,2 · contraste ≥ 3:1.
+   * Tres es también el tope de binomios comparables: con un cuarto color no hay
+   * orden que supere el umbral de visión normal, así que el selector corta ahí.
+   * ------------------------------------------------------------------------- */
+  --color-chart-1: #1961ed;
+  --color-chart-2: #eb6834;
+  --color-chart-3: #1aa572;
+}

@@ -138,6 +138,16 @@ class OfferPricePoint(ORMModel):
     recorded_at: datetime
 
 
+class OfferRawRead(ORMModel):
+    """Payload tal cual lo mandó el scraper.
+
+    Vive en su propio endpoint y no en `OfferRead` a propósito: un listado de 50
+    ofertas con su `raw` dentro pesa lo que no está escrito, y casi nunca se mira.
+    """
+
+    raw: dict[str, Any] | None = None
+
+
 # --------------------------------------------------------------------------- #
 # Estadísticas
 # --------------------------------------------------------------------------- #
@@ -163,3 +173,37 @@ class OverviewStats(BaseModel):
     avg_discount_pct: float | None = None
     best_deal: OfferRead | None = None
     ai_enabled: bool
+
+
+class OfferAggregateStats(BaseModel):
+    """Agregados sobre el conjunto **filtrado**, no sobre todo el catálogo.
+
+    Comparten los filtros exactos del listado (`OfferFilters`), así que describen
+    justo las filas que se están viendo: filtrar por modelo y ver la media de
+    precio de todo el catálogo sería peor que no ver nada.
+
+    Las medias salen de un `AVG` en SQL sobre el conjunto entero. `best_deal` no:
+    la puntuación de valor se calcula en Python, así que se acota igual que el
+    orden por puntuación del listado y puede quedarse corta en catálogos grandes.
+    """
+
+    count: int
+    car_models: int
+    avg_price: float | None = None
+    avg_mileage_km: float | None = None
+    avg_km_per_year: float | None = None
+    avg_discount_pct: float | None = None
+    best_deal: OfferRead | None = None
+    ai_enabled: bool
+
+    # Extremos del conjunto para los controles de rango, calculados **ignorando**
+    # cada uno su propio filtro (`min_price`/`max_price` para el precio,
+    # `min_year`/`max_year` para el año). No son un agregado de lo que se ve, son
+    # el dominio del deslizador: si se recalcularan con el filtro puesto, el
+    # carril se encogería a la propia selección en cada arrastre y no habría
+    # vuelta atrás. Los demás filtros sí cuentan, incluido el del otro rango:
+    # acotar a un modelo, o al precio, sí debe recortar el carril de los años.
+    price_floor: float | None = None
+    price_ceiling: float | None = None
+    year_floor: int | None = None
+    year_ceiling: int | None = None

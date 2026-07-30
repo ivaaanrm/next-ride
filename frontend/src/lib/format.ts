@@ -16,10 +16,17 @@ export const formatNumber = (value: number | null | undefined): string =>
 export const formatKm = (value: number | null | undefined): string =>
   value === null || value === undefined ? "—" : `${number.format(value)} km`;
 
+const percent = new Intl.NumberFormat("es-ES", {
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+});
+
 export function formatPct(value: number | null | undefined, withSign = false): string {
   if (value === null || value === undefined) return "—";
   const sign = withSign && value > 0 ? "+" : "";
-  return `${sign}${value.toFixed(1)}%`;
+  // Con la coma decimal española, como el resto de cifras: un «11.7 %» junto a
+  // un «17.472 km» se lee como si el punto significase lo mismo en los dos.
+  return `${sign}${percent.format(value)}%`;
 }
 
 export function formatDate(value: string | null | undefined): string {
