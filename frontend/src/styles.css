@@ -1645,6 +1645,125 @@ table.records tbody tr:hover .row-actions {
   color: var(--text-tertiary);
 }
 
+/* ---- Desglose de la puntuación ---- */
+.score-breakdown {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-md);
+}
+
+/* Rejilla y no tabla: cinco columnas fijas donde solo la primera cede ancho.
+   Los números van pegados a la derecha para poder sumarse con la vista, que es
+   exactamente lo que promete el desglose. */
+.score-breakdown-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(72px, 96px) auto auto;
+  gap: 6px var(--space-md);
+  align-items: center;
+  font-size: 12px;
+}
+
+.score-breakdown-row {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: center;
+}
+
+.score-breakdown-row.head {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.score-breakdown-row .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.score-mini {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.score-mini .score-bar {
+  flex: 1;
+  min-width: 40px;
+}
+
+.score-mini.positive .score-bar span {
+  background: var(--positive);
+}
+.score-mini.warm .score-bar span {
+  background: var(--warm);
+}
+.score-mini.negative .score-bar span {
+  background: var(--negative);
+}
+
+/* ---- Editor de pesos (Ajustes) ---- */
+.score-weights {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 76px 56px;
+  gap: 10px var(--space-md);
+  align-items: center;
+  margin: 12px 0 4px;
+}
+
+.score-weight-row {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: center;
+}
+
+.score-weight-row.head {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.score-weight-row .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.score-weight-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* El % efectivo es lectura, no control: se ancla a la derecha y en gris. */
+.score-weight-pct {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.score-params {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-lg);
+  border-top: 1px solid var(--border);
+  margin-top: 12px;
+  padding-top: 12px;
+}
+
+.score-param {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 180px;
+}
+
+.score-param.grow {
+  flex: 1;
+}
+
 .verdict-ai {
   display: flex;
   flex-direction: column;

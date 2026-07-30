@@ -1,11 +1,12 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 from app.models.offer import FuelType, OfferStatus, Transmission, VehicleCondition
 from app.schemas.catalog import CarModelRead, DealerRead
 from app.schemas.common import ORMModel
+from app.schemas.scoring import ScoreBreakdownItem
 
 
 class OfferMetrics(BaseModel):
@@ -17,7 +18,15 @@ class OfferMetrics(BaseModel):
     price_drop_pct: float | None = None
     days_listed: int = 0
     km_per_year: float | None = None
+    # Valor teórico hoy (precio de nuevo depreciado por edad y km), desviación
+    # contra él, y de dónde salió el ancla: el PVP curado de la versión o el
+    # estimado del mercado del binomio (curva invertida).
+    expected_price_eur: float | None = None
+    price_vs_expected_pct: float | None = None
+    expected_price_source: Literal["pvp", "mercado"] | None = None
     value_score: float | None = None
+    # Desglose auditable: sum(points) == value_score, con el peso final usado.
+    score_breakdown: list[ScoreBreakdownItem] = Field(default_factory=list)
 
 
 class OfferRankSummary(BaseModel):

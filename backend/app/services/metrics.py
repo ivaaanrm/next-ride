@@ -13,8 +13,17 @@ from sqlalchemy import Float, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.models import CarModel, Offer, OfferPriceHistory, OfferStatus
+from app.models import CarModel, Offer, OfferPriceHistory, OfferStatus, VehicleCondition
 from app.schemas.offer import MakeModelPriceStats, ModelPriceStats, OfferMetrics, PriceStats
+from app.schemas.scoring import ScoreParams
+from app.services.scoring import (
+    DEFAULT_CONFIG,
+    ScoringConfig,
+    expected_price,
+    get_scoring_config,
+    market_new_price,
+    score_offer,
+)
 
 
 async def model_price_stats(
@@ -157,6 +166,42 @@ async def binomio_scope(
     return keys_of, siblings
 
 
+async def market_new_prices(
+    session: AsyncSession, car_model_ids: Sequence[int], params: ScoreParams
+) -> dict[str, float]:
+    """PVP estimado por binomio, invirtiendo la curva de depreciación.
+
+    La consulta trae lo mínimo (precio, año, estado) de las ofertas activas y la
+    mediana de los precios de nuevo implícitos se calcula en Python, que es
+    donde vive la curva. Es el ancla de reserva del valor esperado para los
+    modelos sin `reference_price` curado, es decir, casi todo lo scrapeado.
+    """
+    if not car_model_ids:
+        return {}
+
+    key = make_model_key()
+    rows = (
+        await session.execute(
+            select(key, cast(Offer.price, Float), Offer.year, Offer.condition)
+            .select_from(Offer)
+            .join(CarModel, CarModel.id == Offer.car_model_id)
+            .where(Offer.car_model_id.in_(car_model_ids), Offer.status == OfferStatus.ACTIVE)
+        )
+    ).all()
+
+    by_key: dict[str, list[tuple[float, int | None, VehicleCondition]]] = {}
+    for binomio, price, year, condition in rows:
+        by_key.setdefault(binomio, []).append((price, year, condition))
+
+    now_year = datetime.now(UTC).year
+    anchors = {
+        binomio: anchor
+        for binomio, offers in by_key.items()
+        if (anchor := market_new_price(offers, params, now_year)) is not None
+    }
+    return anchors
+
+
 async def first_seen_prices(
     session: AsyncSession, offer_ids: Sequence[int]
 ) -> dict[int, float]:
@@ -180,16 +225,23 @@ async def first_seen_prices(
     return {row[0]: row[1] for row in (await session.execute(stmt)).all()}
 
 
-def _clamp(value: float, low: float, high: float) -> float:
-    return max(low, min(high, value))
-
-
 def compute_metrics(
     offer: Offer,
     stats: PriceStats | None,
     initial_price: float | None = None,
+    config: ScoringConfig | None = None,
+    market_new_price: float | None = None,
 ) -> OfferMetrics:
+    """Las métricas de una oferta contra el mercado que le pasen.
+
+    `config` son los pesos y parámetros vigentes de la puntuación; sin él rigen
+    los defaults (rutas que no tocan BD, como los scripts de humo).
+    `market_new_price` es el PVP estimado del binomio, el ancla de reserva del
+    valor esperado cuando la versión no tiene `reference_price` curado.
+    """
+    config = config or DEFAULT_CONFIG
     price = float(offer.price)
+    now = datetime.now(UTC)
     metrics = OfferMetrics()
 
     if offer.original_price and float(offer.original_price) > 0:
@@ -214,49 +266,26 @@ def compute_metrics(
     if first_seen is not None:
         if first_seen.tzinfo is None:
             first_seen = first_seen.replace(tzinfo=UTC)
-        metrics.days_listed = max((datetime.now(UTC) - first_seen).days, 0)
+        metrics.days_listed = max((now - first_seen).days, 0)
 
-    now_year = datetime.now(UTC).year
     if offer.mileage_km is not None and offer.year:
-        age = max(now_year - offer.year, 1)
+        age = max(now.year - offer.year, 1)
         metrics.km_per_year = round(offer.mileage_km / age, 1)
 
-    metrics.value_score = _value_score(offer, stats, metrics)
+    # Valor esperado por depreciación media (edad + km). El ancla preferente es
+    # el PVP curado de la versión; sin él, el estimado del mercado del binomio.
+    curated = reference if reference and float(reference) > 0 else None
+    anchor = float(curated) if curated else market_new_price
+    expected = expected_price(offer, anchor, config.params, now.year)
+    if expected and expected > 0:
+        metrics.expected_price_eur = expected
+        metrics.price_vs_expected_pct = round((price - expected) / expected * 100, 2)
+        metrics.expected_price_source = "pvp" if curated else "mercado"
+
+    metrics.value_score, metrics.score_breakdown = score_offer(
+        offer, stats, metrics, initial_price, config, now
+    )
     return metrics
-
-
-def _value_score(
-    offer: Offer, stats: PriceStats | None, metrics: OfferMetrics
-) -> float:
-    """Heurística 0-100. Es la señal *determinista*; el agente de IA aporta la suya aparte."""
-    score = 50.0
-
-    # Un precio por debajo de la mediana del modelo es la señal más fuerte.
-    if metrics.price_vs_median_pct is not None:
-        score += _clamp(-metrics.price_vs_median_pct * 1.2, -28, 28)
-
-    # Descuento anunciado sobre PVP.
-    if metrics.discount_pct is not None:
-        score += _clamp(metrics.discount_pct * 0.6, 0, 14)
-
-    # Bajada de precio desde que la vimos por primera vez.
-    if metrics.price_drop_pct is not None:
-        score += _clamp(metrics.price_drop_pct * 0.8, 0, 8)
-
-    # Kilometraje frente a la media del modelo.
-    if stats and stats.avg_mileage_km and offer.mileage_km is not None:
-        delta = (stats.avg_mileage_km - offer.mileage_km) / max(stats.avg_mileage_km, 1)
-        score += _clamp(delta * 12, -10, 10)
-
-    # Antigüedad frente a la media del modelo.
-    if stats and stats.avg_year and offer.year:
-        score += _clamp((offer.year - stats.avg_year) * 2.5, -8, 8)
-
-    # Un dealer bien valorado suma un poco.
-    if offer.dealer and offer.dealer.rating is not None:
-        score += _clamp((offer.dealer.rating - 3.5) * 3, -5, 5)
-
-    return round(_clamp(score, 0, 100), 1)
 
 
 async def enrich_offers(
@@ -281,12 +310,16 @@ async def enrich_offers(
     )
     stats = await make_model_price_stats(session, siblings)
     initial_prices = await first_seen_prices(session, [offer.id for offer in offer_list])
+    config = await get_scoring_config(session)
+    anchors = await market_new_prices(session, siblings, config.params)
 
     metrics = {
         offer.id: compute_metrics(
             offer,
             stats.get(keys_of.get(offer.car_model_id, "")),
             initial_prices.get(offer.id),
+            config,
+            anchors.get(keys_of.get(offer.car_model_id, "")),
         )
         for offer in offer_list
     }

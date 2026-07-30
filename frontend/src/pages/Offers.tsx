@@ -36,6 +36,7 @@ import {
   formatNumber,
   formatPct,
   formatPrice,
+  scoreTone,
   TRANSMISSION_LABELS,
   VERDICT_LABELS,
   verdictTone,
@@ -48,9 +49,11 @@ import type {
   DealerWithStats,
   Offer,
   OfferAggregateStats,
+  OfferMetrics,
   OfferPricePoint,
   OfferRaw,
   Page,
+  ScoreBreakdownItem,
   SegmentPoint,
 } from "../types";
 
@@ -1381,15 +1384,14 @@ function OfferRadar({ offer }: { offer: Offer }) {
           </span>
           <span className="muted">la oferta típica de {segment?.label}</span>
         </li>
-        {/* «Valor» es el único eje que no se lee en el propio anuncio, así que es
-            el único que hay que desglosar. Los topes van con cada sumando porque
-            son la mitad de la cuenta: un 40 % de descuento no dispara la
-            puntuación, aporta sus 14 puntos y ahí se acaba. */}
+        {/* «Valor» es el único eje que no se lee en el propio anuncio; su cuenta
+            completa —señal a señal, con los pesos finales— está en el desglose
+            de arriba de este mismo panel, así que aquí basta la definición. */}
         <li className="muted note">
-          <span className="chart-note-label">Valor</span> parte de 50 y suma o resta
-          contra la media de su versión exacta: precio frente a la mediana (±28),
-          kilómetros (±10) y año (±8), más el descuento sobre PVP (+14), la bajada desde
-          que se vio (+8) y la valoración del dealer (±5).
+          <span className="chart-note-label">Valor</span> es la media ponderada de las
+          señales del desglose de arriba: precio frente al mercado y frente al valor
+          esperado por depreciación, kilometraje, antigüedad, bajada, descuento, dealer y
+          frescura. Los pesos se ven y se editan en Ajustes.
         </li>
         {dropped.length ? (
           <li className="muted note">
@@ -1398,6 +1400,85 @@ function OfferRadar({ offer }: { offer: Offer }) {
           </li>
         ) : null}
       </ul>
+    </div>
+  );
+}
+
+/** La magnitud de un componente del score, en su unidad y con su signo. */
+function metricText(item: ScoreBreakdownItem): string {
+  if (item.metric === null) return "—";
+  if (item.unit === "%") {
+    // Las desviaciones llevan signo (−12 % es más barato); descuento y bajada
+    // son magnitudes y el signo no aporta.
+    const signed = ["price_vs_market", "price_vs_expected", "mileage"].includes(item.key);
+    return formatPct(item.metric, signed);
+  }
+  if (item.unit === "/5") return `${formatNumber(item.metric)}/5`;
+  return `${formatNumber(item.metric)} ${item.unit}`;
+}
+
+/**
+ * El desglose auditable de la puntuación: cada señal con su valor, su subscore
+ * 0-100, el **peso final** que se usó (ya renormalizado sobre las señales con
+ * dato) y los puntos que aporta. La suma de la última columna ES la
+ * puntuación: no hay nada más en la cifra que lo que se ve aquí.
+ */
+function ScoreBreakdown({ metrics }: { metrics: OfferMetrics }) {
+  const rows = metrics.score_breakdown;
+  if (rows.length === 0) return null;
+  const missing = rows.filter((row) => !row.available);
+
+  return (
+    <div className="score-breakdown">
+      <div className="score-breakdown-grid" role="table" aria-label="Desglose de la puntuación">
+        <div className="score-breakdown-row head" role="row">
+          <span role="columnheader">Señal</span>
+          <span role="columnheader" className="num">
+            Valor
+          </span>
+          <span role="columnheader">Subscore</span>
+          <span role="columnheader" className="num" title="Peso final tras repartir el de las señales sin dato">
+            Peso
+          </span>
+          <span role="columnheader" className="num" title="Subscore × peso: lo que suma al total">
+            Puntos
+          </span>
+        </div>
+        {rows
+          .filter((row) => row.available)
+          .map((row) => (
+            <div className="score-breakdown-row" role="row" key={row.key}>
+              <span role="cell">{row.label}</span>
+              <span role="cell" className="num cell-muted">
+                {metricText(row)}
+              </span>
+              <span role="cell" className={`score-mini ${scoreTone(row.subscore)}`}>
+                <span className="score-bar">
+                  <span style={{ width: `${Math.max(2, Math.min(100, row.subscore ?? 0))}%` }} />
+                </span>
+                <span className="tiny">{Math.round(row.subscore ?? 0)}</span>
+              </span>
+              <span role="cell" className="num cell-muted">
+                {formatNumber(row.weight_pct)} %
+              </span>
+              <span role="cell" className="num" style={{ fontWeight: 500 }}>
+                {(row.points ?? 0).toLocaleString("es-ES", {
+                  minimumFractionDigits: 1,
+                  maximumFractionDigits: 1,
+                })}
+              </span>
+            </div>
+          ))}
+      </div>
+      {missing.length > 0 ? (
+        <p className="tiny muted" style={{ margin: "8px 0 0" }}>
+          Sin dato: {missing.map((row) => row.label.toLowerCase()).join(", ")} — su peso se
+          reparte entre las señales presentes.
+        </p>
+      ) : null}
+      <p className="tiny muted" style={{ margin: "4px 0 0" }}>
+        Los pesos se editan en Ajustes y aplican a todo el catálogo.
+      </p>
     </div>
   );
 }
@@ -1472,6 +1553,22 @@ function ScrapedDrawer({ offer, onClose }: { offer: Offer; onClose: () => void }
               value={formatPct(m.price_vs_reference_pct, true)}
               tone={comparisonTone(m.price_vs_reference_pct)}
             />
+            {/* El ancla de la depreciación: qué debería costar hoy este coche
+                por edad y km, y a cuánto está la oferta de esa cifra. El origen
+                del ancla importa: «PVP» es la cifra curada de la versión,
+                «mercado» la estimada invirtiendo la curva sobre el binomio. */}
+            <Figure
+              label="vs valor esperado"
+              value={formatPct(m.price_vs_expected_pct, true)}
+              tone={comparisonTone(m.price_vs_expected_pct)}
+              hint={
+                m.expected_price_eur
+                  ? `${formatPrice(m.expected_price_eur)} vía ${
+                      m.expected_price_source === "pvp" ? "PVP" : "mercado"
+                    }`
+                  : undefined
+              }
+            />
             <Figure
               label="Bajada"
               value={formatPct(m.price_drop_pct)}
@@ -1484,6 +1581,8 @@ function ScrapedDrawer({ offer, onClose }: { offer: Offer; onClose: () => void }
             />
             <Figure label="Días publicada" value={formatNumber(m.days_listed)} />
           </div>
+
+          <ScoreBreakdown metrics={m} />
 
           {offer.ai ? (
             <div className="verdict-ai">

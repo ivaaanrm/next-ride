@@ -42,7 +42,9 @@ from app.services.metrics import (
     first_seen_prices,
     make_model_key,
     make_model_price_stats,
+    market_new_prices,
 )
+from app.services.scoring import get_scoring_config
 
 logger = logging.getLogger(__name__)
 
@@ -280,6 +282,10 @@ def _offer_payload(candidate: _Candidate) -> dict[str, Any]:
             "discount_pct": metrics.discount_pct,
             "price_vs_median_pct": metrics.price_vs_median_pct,
             "price_vs_reference_pct": metrics.price_vs_reference_pct,
+            # Valor teórico por depreciación media (edad + km): el precio junto
+            # a esta cifra dice si el coche está caro *para lo que es*.
+            "expected_price_eur": metrics.expected_price_eur,
+            "price_vs_expected_pct": metrics.price_vs_expected_pct,
             "price_drop_pct": metrics.price_drop_pct,
             "km_per_year": metrics.km_per_year,
             "days_listed": metrics.days_listed,
@@ -353,11 +359,15 @@ async def build_context(
     stats_map = await make_model_price_stats(session, variant_ids)
     stats = stats_map.get(key) or MakeModelPriceStats(key=key, make="", model="")
     initial_prices = await first_seen_prices(session, [o.id for o in offers])
+    config = await get_scoring_config(session)
+    anchors = await market_new_prices(session, variant_ids, config.params)
 
     candidates = {
         offer.id: _Candidate(
             offer=offer,
-            metrics=compute_metrics(offer, stats, initial_prices.get(offer.id)),
+            metrics=compute_metrics(
+                offer, stats, initial_prices.get(offer.id), config, anchors.get(key)
+            ),
         )
         for offer in offers
     }

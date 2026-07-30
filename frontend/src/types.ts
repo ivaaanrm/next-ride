@@ -151,6 +151,19 @@ export interface ScrapeTargetSelection {
   model: string;
 }
 
+/** Aportación de un componente al score. `sum(points)` es la puntuación. */
+export interface ScoreBreakdownItem {
+  key: string;
+  label: string;
+  available: boolean;
+  metric: number | null;
+  unit: string;
+  subscore: number | null;
+  weight: number;
+  weight_pct: number;
+  points: number | null;
+}
+
 export interface OfferMetrics {
   discount_pct: number | null;
   price_vs_median_pct: number | null;
@@ -158,7 +171,47 @@ export interface OfferMetrics {
   price_drop_pct: number | null;
   days_listed: number;
   km_per_year: number | null;
+  expected_price_eur: number | null;
+  price_vs_expected_pct: number | null;
+  expected_price_source: "pvp" | "mercado" | null;
   value_score: number | null;
+  score_breakdown: ScoreBreakdownItem[];
+}
+
+export interface ScoreComponentInfo {
+  key: string;
+  label: string;
+  description: string;
+  weight: number;
+  weight_pct: number;
+  default_weight: number;
+}
+
+export type ScoreWeights = Record<string, number>;
+
+export interface ScoreParams {
+  expected_km_per_year: number;
+  residual_curve: number[];
+  residual_late_decay: number;
+  residual_floor: number;
+  mileage_adjustment_per_10k_pct: number;
+  market_full_scale_pct: number;
+  expected_full_scale_pct: number;
+  mileage_full_scale_pct: number;
+  price_drop_full_scale_pct: number;
+  discount_full_scale_pct: number;
+  age_zero_score_years: number;
+  freshness_zero_score_days: number;
+  min_market_comparables: number;
+}
+
+export interface ScoreConfig {
+  weights: ScoreWeights;
+  params: ScoreParams;
+  components: ScoreComponentInfo[];
+  default_weights: ScoreWeights;
+  default_params: ScoreParams;
+  updated_at: string | null;
 }
 
 export interface OfferRankSummary {

@@ -116,13 +116,56 @@ entran ofertas nuevas y la mediana del modelo se mueve.
 | `discount_pct` | Descuento sobre el PVP anunciado por el dealer |
 | `price_vs_median_pct` | Desviación respecto a la mediana del modelo (la señal fuerte) |
 | `price_vs_reference_pct` | Desviación respecto al PVP de referencia del modelo |
+| `expected_price_eur` | Valor teórico hoy: precio de nuevo depreciado por edad (curva media) y ajustado por km |
+| `price_vs_expected_pct` | Desviación respecto a ese valor esperado |
+| `expected_price_source` | El ancla usada: `pvp` (curado en la versión) o `mercado` (estimado) |
 | `price_drop_pct` | Bajada desde el primer precio que vimos |
 | `km_per_year` | Kilometraje anualizado |
 | `days_listed` | Días desde que se vio por primera vez |
-| `value_score` | Heurística 0-100 que combina las anteriores |
+| `value_score` | Puntuación 0-100: media ponderada de las señales (ver abajo) |
+| `score_breakdown` | El desglose auditable de esa media, señal a señal |
 
-`value_score` es la señal **determinista** de la plataforma. La puntuación del
-agente de IA es independiente y se muestra aparte: si discrepan, es información.
+### Puntuación de valor (`value_score`)
+
+`backend/app/services/scoring.py`. Es la señal **determinista** de la
+plataforma: los mismos datos y la misma fecha dan siempre la misma cifra. La
+puntuación del agente de IA es independiente y se muestra aparte: si
+discrepan, es información.
+
+Cada señal se normaliza a un subscore 0-100 (50 = neutro, lineal con topes) y
+la puntuación es su **media ponderada**. Si a una oferta le falta una señal
+(sin PVP de referencia, sin valoración del dealer…), su peso se reparte entre
+las presentes: dos ofertas con datos distintos siguen siendo comparables y la
+escala 0-100 se usa entera.
+
+| Señal | Peso por defecto | Subscore |
+|---|---|---|
+| Precio vs mercado | 30 | Desviación frente a la mediana del binomio (mín. 3 comparables); ±25 % cubre la escala |
+| Precio vs valor esperado | 25 | Desviación frente al PVP depreciado por edad y km; ±40 % cubre la escala |
+| Kilometraje | 15 | Km frente a los esperados por edad (15.000 km/año); ±100 % cubre la escala |
+| Antigüedad | 10 | Lineal: 0 años = 100, 15 años = 0 |
+| Bajada de precio | 5 | Desde el primer precio visto; −10 % = 100 |
+| Descuento anunciado | 5 | Sobre el PVP del dealer; 20 % = 100 |
+| Valoración del dealer | 5 | Sus estrellas (0-5) en escala 0-100 |
+| Frescura del anuncio | 5 | Recién publicado = 100; a los 60 días = 0 |
+
+La curva de depreciación por defecto es la media del mercado español (≈ −20 %
+el primer año, ~−10 % anual hasta el quinto, más suave después), con ajuste de
+±1,5 % por cada 10.000 km de desvío sobre el kilometraje esperado.
+
+El ancla del valor esperado es el `reference_price` curado de la versión y, si
+falta —que es lo normal en catálogo scrapeado—, el **PVP estimado del
+mercado**: la mediana de `precio / residual(edad)` de las ofertas activas del
+binomio, es decir, la curva invertida. Con esa ancla la señal funciona como una
+comparación de mercado ajustada por edad y kilometraje, que es justo lo que a
+la mediana simple se le escapa cuando conviven años muy distintos.
+
+**Transparencia y edición.** Cada oferta devuelve `score_breakdown`: señal a
+señal, su valor, su subscore, el **peso final** ya renormalizado y los puntos
+que aporta (`sum(points) == value_score`). Los pesos y parámetros se leen en
+`GET /scoring/config` (con la explicación generada de los propios parámetros)
+y se editan en `PUT /scoring/config` o desde **Ajustes** en la UI; el cambio
+aplica a todo el catálogo porque la puntuación se calcula al leer.
 
 ---
 
@@ -277,6 +320,7 @@ puro ruido, y una pendiente sin su ajuste es un número que aparenta saber algo.
 | `GET` | `/car-model-groups/ranking?key=` | Último ranking completado del binomio |
 | `GET` | `/ranking-runs/{id}` | Estado de un run (polling) |
 | `GET` | `/stats/overview` · `/stats/car-models/{id}` | Métricas de cabecera |
+| `GET`/`PUT` | `/scoring/config` | Pesos y parámetros de la puntuación de valor, con la explicación de cada señal. El `PUT` es parcial y aplica a todo el catálogo al instante |
 
 `POST /tracked-models` acepta el modelo de dos formas: `car_model_id` si ya está
 en el catálogo, o `make` + `model` (+ `trim`) para **crearlo en la misma

@@ -12,6 +12,7 @@ Requiere que el stack esté arriba y con datos (`make up && make seed`).
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 
@@ -149,6 +150,59 @@ check("price_drop_pct calculado", m["price_drop_pct"] is not None, f"{m['price_d
 check("discount_pct calculado", m["discount_pct"] is not None, f"{m['discount_pct']}%")
 check("vs mediana calculado", m["price_vs_median_pct"] is not None, f"{m['price_vs_median_pct']}%")
 check("value_score en rango", 0 <= (m["value_score"] or -1) <= 100, str(m["value_score"]))
+
+print("\n== puntuación de valor: desglose y configuración ==")
+breakdown = m["score_breakdown"]
+check("desglose con los 8 componentes", len(breakdown) == 8, f"{len(breakdown)} componentes")
+
+available = [b for b in breakdown if b["available"]]
+points = sum(b["points"] for b in available)
+check("sum(points) del desglose == value_score", abs(points - m["value_score"]) <= 0.1,
+      f"{round(points, 2)} vs {m['value_score']}")
+check("los pesos finales suman 100%",
+      abs(sum(b["weight_pct"] for b in breakdown) - 100) <= 0.5,
+      str(round(sum(b["weight_pct"] for b in breakdown), 1)))
+check("un componente sin dato pesa 0",
+      all(b["weight_pct"] == 0 and b["points"] is None for b in breakdown if not b["available"]))
+
+# Casi ningún modelo scrapeado tiene PVP curado: el valor esperado debe salir
+# igualmente, anclado al PVP estimado del mercado (curva de depreciación invertida).
+status, page_big = call("GET", "/offers?limit=200", token=token)
+via_mercado = [
+    o for o in page_big["items"]
+    if o["metrics"]["expected_price_eur"] and o["metrics"]["expected_price_source"] == "mercado"
+]
+check("el valor esperado se estima sin PVP curado (ancla de mercado)",
+      len(via_mercado) > 0, f"{len(via_mercado)} ofertas con valor esperado vía mercado")
+
+status, config = call("GET", "/scoring/config", token=token)
+check("GET /scoring/config", status == 200 and len(config["components"]) == 8, f"HTTP {status}")
+check("cada componente se explica solo",
+      all(c["description"] and c["label"] for c in config["components"]))
+original_weights = config["weights"]
+
+# Editar pesos cambia la puntuación de forma predecible: todo el peso a la
+# frescura y una oferta recién ingestada (0 días) debe puntuar 100.
+solo_freshness = dict.fromkeys(original_weights, 0) | {"freshness": 100}
+status, updated = call("PUT", "/scoring/config", {"weights": solo_freshness}, token=token)
+check("PUT /scoring/config aplica pesos", status == 200
+      and updated["weights"]["freshness"] == 100, f"HTTP {status}")
+
+status, offer_fresh = call("GET", f"/offers/{offer_id}", token=token)
+check("con todo el peso en frescura, la oferta recién vista puntúa 100",
+      offer_fresh["metrics"]["value_score"] == 100,
+      str(offer_fresh["metrics"]["value_score"]))
+
+todos_cero = {"weights": dict.fromkeys(original_weights, 0)}
+status, _ = call("PUT", "/scoring/config", todos_cero, token=token)
+check("todos los pesos a cero -> 422", status == 422, f"HTTP {status}")
+negativo = {"weights": dict(original_weights, mileage=-5)}
+status, _ = call("PUT", "/scoring/config", negativo, token=token)
+check("peso negativo -> 422", status == 422, f"HTTP {status}")
+
+status, restored_cfg = call("PUT", "/scoring/config", {"weights": original_weights}, token=token)
+check("restaurar pesos originales", status == 200
+      and restored_cfg["weights"] == original_weights, f"HTTP {status}")
 
 print("\n== ofertas: filtros y ordenación ==")
 status, page = call("GET", "/offers?limit=5&sort=price", token=token)
@@ -442,18 +496,33 @@ status, _ = call("DELETE", f"/tracked-models/{created['car_model_id']}", token=t
 check("limpiar el seguimiento creado", status == 204, f"HTTP {status}")
 
 print("\n== ranking IA ==")
-status, body = call("POST", f"/car-models/{sample['id']}/rank", {"priorities": "bajo km"}, token=token)
-check(
-    "sin ANTHROPIC_API_KEY -> 503 claro",
-    status == 503 and "ANTHROPIC_API_KEY" in json.dumps(body),
-    f"HTTP {status}: {json.dumps(body)[:90]}",
-)
+# El ranking va por binomio marca-modelo (clave en query, no en la ruta).
+binomio = urllib.parse.quote(f"{sample['make'].lower()}|{sample['model'].lower()}")
+status, overview = call("GET", "/stats/overview", token=token)
+if overview["ai_enabled"]:
+    # Con API key configurada no se lanza un run real (cuesta dinero): se
+    # comprueba el contrato de errores, que no depende del agente.
+    status, body = call("POST", "/car-model-groups/rank?key=zzz%7Czzz", {}, token=token)
+    check("binomio desconocido -> 404 claro", status == 404 and "zzz" in json.dumps(body),
+          f"HTTP {status}: {json.dumps(body)[:70]}")
+else:
+    status, body = call(
+        "POST", f"/car-model-groups/rank?key={binomio}", {"priorities": "bajo km"}, token=token
+    )
+    check(
+        "sin ANTHROPIC_API_KEY -> 503 claro",
+        status == 503 and "ANTHROPIC_API_KEY" in json.dumps(body),
+        f"HTTP {status}: {json.dumps(body)[:90]}",
+    )
 
-status, body = call("GET", f"/car-models/{sample['id']}/ranking", token=token)
+status, body = call("GET", "/car-model-groups/ranking?key=zzz%7Czzz", token=token)
 check("sin rankings -> 404 explicativo", status == 404, f"HTTP {status}")
 
-status, runs = call("GET", f"/car-models/{sample['id']}/ranking-runs", token=token)
-check("listar runs", status == 200 and isinstance(runs, list), f"{len(runs or [])} runs")
+status, runs = call("GET", f"/car-model-groups/ranking-runs?key={binomio}", token=token)
+check("listar runs del binomio", status == 200 and isinstance(runs, list), f"{len(runs or [])}")
+
+status, _ = call("GET", "/ranking-runs/99999999", token=token)
+check("run inexistente -> 404", status == 404, f"HTTP {status}")
 
 print("\n== stats ==")
 status, overview = call("GET", "/stats/overview", token=token)
