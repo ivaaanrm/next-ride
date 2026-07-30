@@ -27,3 +27,8 @@ npm-debug.log*
 
 .claude
 skill-next-ride
+
+logs/
+fixtures/
+state/
+reports/
