@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { Fragment, useEffect, useRef, useState, type FormEvent } from "react";
 
 import { PageHeader } from "../components/Layout";
+import { ScrapingConfigDrawer } from "../components/ScrapingConfigDrawer";
 import { Banner, Chip, Drawer, Empty, Loading, Score } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import {
@@ -13,44 +14,150 @@ import {
   verdictTone,
 } from "../lib/format";
 import { useAsync, useDebounced } from "../lib/hooks";
-import type { CarModelWithStats, RankingRunDetail } from "../types";
+import type { CarModelGroup, CarModelWithStats, RankingRunDetail } from "../types";
 
 const POLL_MS = 3000;
+
+/**
+ * Qué está editando el panel de seguimiento.
+ *
+ * `group` aplica los mismos criterios a todas las versiones del binomio, porque
+ * el seguimiento vive en `car_models` y «sigo el Audi A3» son veintitrés
+ * seguimientos. El PVP de referencia se queda fuera de ese caso —es de la
+ * versión, y un RS3 no comparte precio de catálogo con un 1.0 TFSI— y solo se
+ * edita desde `variant`.
+ */
+type TrackTarget =
+  | { kind: "pick" }
+  | { kind: "variant"; model: CarModelWithStats }
+  | { kind: "group"; group: CarModelGroup };
+
+/** «las 23 versiones» / «la versión»: los botones hablan de todas a la vez. */
+const theVersions = (count: number) => (count === 1 ? "la versión" : `las ${count} versiones`);
+
+/**
+ * Pliega el mismo criterio de varias versiones: el valor si todas coinciden y,
+ * si no, `null` más la señal de que discrepan. Hacen falta las dos cosas: un
+ * `null` a secas no distingue «ninguna lo tiene puesto» de «cada una el suyo».
+ */
+function fold<T>(values: T[]): { value: T | null; mixed: boolean } {
+  if (values.length === 0) return { value: null, mixed: false };
+  const [first] = values;
+  const same = values.every((value) => value === first);
+  return { value: same ? first : null, mixed: !same };
+}
+
+interface CurrentCriteria {
+  target_price: number | null;
+  max_mileage_km: number | null;
+  min_year: number | null;
+  notes: string | null;
+  /** El binomio tiene criterios dispares, o versiones sin seguir. */
+  mixed: boolean;
+}
+
+/** Con qué llega relleno el formulario de criterios. */
+function currentCriteria(target: TrackTarget): CurrentCriteria {
+  if (target.kind !== "group") {
+    const prefs = target.kind === "variant" ? target.model.tracking : null;
+    return {
+      target_price: prefs?.target_price ?? null,
+      max_mileage_km: prefs?.max_mileage_km ?? null,
+      min_year: prefs?.min_year ?? null,
+      notes: prefs?.notes ?? null,
+      mixed: false,
+    };
+  }
+
+  const tracked = target.group.variants
+    .map((variant) => variant.tracking)
+    .filter((prefs) => prefs !== null);
+  const price = fold(tracked.map((prefs) => prefs.target_price));
+  const mileage = fold(tracked.map((prefs) => prefs.max_mileage_km));
+  const year = fold(tracked.map((prefs) => prefs.min_year));
+  const note = fold(tracked.map((prefs) => prefs.notes));
+
+  return {
+    target_price: price.value,
+    max_mileage_km: mileage.value,
+    min_year: year.value,
+    notes: note.value,
+    // Discrepan entre sí, o hay versiones sin seguimiento: en los dos casos,
+    // guardar cambia más de lo que el formulario está enseñando.
+    mixed:
+      price.mixed ||
+      mileage.mixed ||
+      year.mixed ||
+      note.mixed ||
+      (tracked.length > 0 && tracked.length < target.group.variant_count),
+  };
+}
 
 export function ModelsPage() {
   const [search, setSearch] = useState("");
   const [trackedOnly, setTrackedOnly] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [busyId, setBusyId] = useState<number | null>(null);
-  const [openModel, setOpenModel] = useState<CarModelWithStats | null>(null);
-  // `null` = panel cerrado. `{ model: null }` = abierto sin modelo elegido todavía.
-  const [tracking, setTracking] = useState<{ model: CarModelWithStats | null } | null>(null);
+  // Clave del binomio, o `variant:{id}`: hay un botón por fila y por versión.
+  const [busy, setBusy] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string[]>([]);
+  const [ranking, setRanking] = useState<CarModelGroup | null>(null);
+  const [tracking, setTracking] = useState<TrackTarget | null>(null);
+  const [scrapingConfig, setScrapingConfig] = useState(false);
 
   const debouncedSearch = useDebounced(search);
-  const models = useAsync<CarModelWithStats[]>(
+  const groups = useAsync<CarModelGroup[]>(
     () =>
-      api.get("/car-models", {
+      api.get("/car-models/groups", {
         q: debouncedSearch || undefined,
         tracked_only: trackedOnly || undefined,
       }),
     [debouncedSearch, trackedOnly],
   );
 
-  /** Atajo de un clic. Los criterios se editan en el panel «Criterios». */
-  async function toggleTracking(model: CarModelWithStats) {
+  const rows = groups.data ?? [];
+  const versions = rows.reduce((total, group) => total + group.variant_count, 0);
+
+  function toggleExpanded(key: string) {
+    setExpanded((open) =>
+      open.includes(key) ? open.filter((other) => other !== key) : [...open, key],
+    );
+  }
+
+  /** Atajo de un clic sobre el binomio entero. Los criterios, en «Criterios». */
+  async function toggleGroup(group: CarModelGroup) {
     setError(null);
-    setBusyId(model.id);
+    setBusy(group.key);
+    const ids = group.variants.map((variant) => variant.id).join(",");
+    try {
+      // Seguido a medias cuenta como seguido: el clic lo deja en un estado
+      // conocido en vez de completar un seguimiento que nadie ha pedido.
+      if (group.tracked_variants > 0) {
+        await api.delete("/tracked-models/bulk", { car_model_ids: ids });
+      } else {
+        await api.post("/tracked-models/bulk", { car_model_ids: group.variants.map((v) => v.id) });
+      }
+      groups.reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo actualizar el seguimiento");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function toggleVariant(model: CarModelWithStats) {
+    setError(null);
+    setBusy(`variant:${model.id}`);
     try {
       if (model.is_tracked) {
         await api.delete(`/tracked-models/${model.id}`);
       } else {
         await api.post("/tracked-models", { car_model_id: model.id });
       }
-      models.reload();
+      groups.reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo actualizar el seguimiento");
     } finally {
-      setBusyId(null);
+      setBusy(null);
     }
   }
 
@@ -58,16 +165,20 @@ export function ModelsPage() {
     <>
       <PageHeader
         title="Modelos"
-        meta={models.data ? `${models.data.length} modelos` : undefined}
+        meta={
+          groups.data
+            ? `${formatNumber(rows.length)} modelos · ${formatNumber(versions)} versiones`
+            : undefined
+        }
         actions={
           <>
-            <button className="btn btn-sm" onClick={() => models.reload()}>
+            <button className="btn btn-sm" onClick={() => groups.reload()}>
               Actualizar
             </button>
-            <button
-              className="btn btn-sm btn-primary"
-              onClick={() => setTracking({ model: null })}
-            >
+            <button className="btn btn-sm" onClick={() => setScrapingConfig(true)}>
+              Configurar captación
+            </button>
+            <button className="btn btn-sm btn-primary" onClick={() => setTracking({ kind: "pick" })}>
               Seguir un modelo
             </button>
           </>
@@ -81,7 +192,7 @@ export function ModelsPage() {
             <input
               id="q"
               className="input"
-              placeholder="Marca o modelo…"
+              placeholder="Marca, modelo o versión…"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
             />
@@ -97,12 +208,12 @@ export function ModelsPage() {
         </div>
 
         {error ? <Banner kind="error">{error}</Banner> : null}
-        {models.error ? <Banner kind="error">{models.error}</Banner> : null}
+        {groups.error ? <Banner kind="error">{groups.error}</Banner> : null}
 
         <div className="table-wrap">
-          {models.loading ? (
+          {groups.loading ? (
             <Loading />
-          ) : (models.data ?? []).length === 0 ? (
+          ) : rows.length === 0 ? (
             <Empty
               title="Todavía no hay modelos"
               hint="Se crean automáticamente al ingestar ofertas, o a mano con «Seguir un modelo»."
@@ -111,7 +222,7 @@ export function ModelsPage() {
             <table className="records">
               <thead>
                 <tr>
-                  <th style={{ width: 90 }}>Seguir</th>
+                  <th style={{ width: 96 }}>Seguir</th>
                   <th>Modelo</th>
                   <th className="num">Ofertas</th>
                   <th className="num">Dealers</th>
@@ -125,84 +236,195 @@ export function ModelsPage() {
                 </tr>
               </thead>
               <tbody>
-                {(models.data ?? []).map((model) => (
-                  <tr key={model.id}>
-                    <td>
-                      <button
-                        className={`btn btn-sm${model.is_tracked ? " btn-primary" : ""}`}
-                        disabled={busyId === model.id}
-                        onClick={() => toggleTracking(model)}
-                      >
-                        {model.is_tracked ? "Siguiendo" : "Seguir"}
-                      </button>
-                    </td>
-                    <td className="cell-primary">{model.display_name}</td>
-                    <td className="num">{model.active_offers}</td>
-                    <td className="num cell-muted">{model.dealers_count}</td>
-                    <td className="num">{formatPrice(model.min_price)}</td>
-                    <td className="num" style={{ fontWeight: 500 }}>
-                      {formatPrice(model.median_price)}
-                    </td>
-                    <td className="num cell-muted">{formatPrice(model.max_price)}</td>
-                    <td className="num cell-muted">{formatPrice(model.reference_price)}</td>
-                    <td className="num">
-                      <TargetCell model={model} />
-                    </td>
-                    <td className="cell-muted tiny">
-                      {model.last_ranked_at ? formatDateTime(model.last_ranked_at) : "—"}
-                    </td>
-                    <td>
-                      <div className="row" style={{ justifyContent: "flex-end" }}>
-                        <button
-                          className="btn btn-sm"
-                          onClick={() => setTracking({ model })}
+                {rows.map((group) => {
+                  const open = expanded.includes(group.key);
+                  const all = group.tracked_variants === group.variant_count;
+                  return (
+                    <Fragment key={group.key}>
+                      <tr className="group-row">
+                        <td>
+                          <button
+                            className={`btn btn-sm${group.tracked_variants > 0 ? " btn-primary" : ""}`}
+                            disabled={busy === group.key}
+                            onClick={() => toggleGroup(group)}
+                            title={
+                              group.tracked_variants === 0
+                                ? `Seguir ${theVersions(group.variant_count)}`
+                                : all
+                                  ? `Dejar de seguir ${theVersions(group.variant_count)}`
+                                  : `Sigues ${group.tracked_variants} de ${group.variant_count} versiones. Dejarás de seguirlas.`
+                            }
+                          >
+                            {group.tracked_variants === 0
+                              ? "Seguir"
+                              : all
+                                ? "Siguiendo"
+                                : `${group.tracked_variants}/${group.variant_count}`}
+                          </button>
+                        </td>
+                        <td className="cell-primary">
+                          <button
+                            className="row-expand"
+                            aria-expanded={open}
+                            onClick={() => toggleExpanded(group.key)}
+                            title={open ? "Plegar las versiones" : "Ver las versiones"}
+                          >
+                            <span className="row-expand-caret" aria-hidden="true">
+                              ▸
+                            </span>
+                            {group.label}
+                            <span className="tiny muted">
+                              {group.variant_count}{" "}
+                              {group.variant_count === 1 ? "versión" : "versiones"}
+                            </span>
+                          </button>
+                        </td>
+                        <td className="num">{group.active_offers}</td>
+                        <td className="num cell-muted">{group.dealers_count}</td>
+                        <td className="num">{formatPrice(group.min_price)}</td>
+                        <td className="num" style={{ fontWeight: 500 }}>
+                          {formatPrice(group.median_price)}
+                        </td>
+                        <td className="num cell-muted">{formatPrice(group.max_price)}</td>
+                        <td
+                          className="num cell-muted"
                           title={
-                            model.is_tracked
-                              ? "Editar los criterios de seguimiento"
-                              : "Seguir con criterios (precio objetivo, km, año)"
+                            group.reference_variants > 0
+                              ? `Mediana del PVP de ${group.reference_variants} de ${group.variant_count} versiones. El PVP se pone por versión.`
+                              : undefined
                           }
                         >
-                          Criterios
-                        </button>
-                        <button
-                          className="btn btn-sm"
-                          disabled={model.active_offers === 0}
-                          onClick={() => setOpenModel(model)}
-                          title={
-                            model.active_offers === 0
-                              ? "Este modelo no tiene ofertas activas"
-                              : "Ver / generar ranking con IA"
-                          }
-                        >
-                          Ranking IA
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                          {formatPrice(group.reference_price)}
+                          {group.reference_variants > 0 &&
+                          group.reference_variants < group.variant_count ? (
+                            <span className="tiny muted"> ({group.reference_variants})</span>
+                          ) : null}
+                        </td>
+                        <td className="num">
+                          <TargetCell
+                            target={group.target_price}
+                            minPrice={group.min_price}
+                            hint={
+                              group.tracked_variants > 1
+                                ? "El objetivo más bajo de las versiones que sigues"
+                                : undefined
+                            }
+                          />
+                        </td>
+                        <td className="cell-muted tiny">
+                          {group.last_ranked_at ? formatDateTime(group.last_ranked_at) : "—"}
+                        </td>
+                        <td>
+                          <div className="row" style={{ justifyContent: "flex-end" }}>
+                            <button
+                              className="btn btn-sm"
+                              onClick={() => setTracking({ kind: "group", group })}
+                              title={`Criterios para ${theVersions(group.variant_count)}`}
+                            >
+                              Criterios
+                            </button>
+                            <button
+                              className="btn btn-sm"
+                              disabled={group.active_offers === 0}
+                              onClick={() => setRanking(group)}
+                              title={
+                                group.active_offers === 0
+                                  ? "Este modelo no tiene ofertas activas"
+                                  : `Ver / generar ranking con IA sobre sus ${group.active_offers} ofertas`
+                              }
+                            >
+                              Ranking IA
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+
+                      {open
+                        ? group.variants.map((variant) => (
+                            <tr key={variant.id} className="variant-row">
+                              <td>
+                                <button
+                                  className={`btn btn-sm${variant.is_tracked ? " btn-primary" : ""}`}
+                                  disabled={busy === `variant:${variant.id}`}
+                                  onClick={() => toggleVariant(variant)}
+                                >
+                                  {variant.is_tracked ? "Siguiendo" : "Seguir"}
+                                </button>
+                              </td>
+                              <td className="cell-clip variant-name" title={variant.display_name}>
+                                {variant.trim || variant.display_name}
+                              </td>
+                              <td className="num">{variant.active_offers}</td>
+                              <td className="num cell-muted">{variant.dealers_count}</td>
+                              <td className="num">{formatPrice(variant.min_price)}</td>
+                              <td className="num">{formatPrice(variant.median_price)}</td>
+                              <td className="num cell-muted">{formatPrice(variant.max_price)}</td>
+                              <td className="num cell-muted">
+                                {formatPrice(variant.reference_price)}
+                              </td>
+                              <td className="num">
+                                <TargetCell
+                                  target={variant.tracking?.target_price ?? null}
+                                  minPrice={variant.min_price}
+                                />
+                              </td>
+                              {/* El ranking es del modelo entero: la celda es del
+                                  binomio y aquí queda vacía a propósito. */}
+                              <td className="cell-muted tiny">—</td>
+                              <td>
+                                <div className="row" style={{ justifyContent: "flex-end" }}>
+                                  <button
+                                    className="btn btn-sm"
+                                    onClick={() => setTracking({ kind: "variant", model: variant })}
+                                    title={
+                                      variant.is_tracked
+                                        ? "Editar los criterios de esta versión"
+                                        : "Seguir esta versión con criterios"
+                                    }
+                                  >
+                                    Criterios
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))
+                        : null}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           )}
         </div>
       </div>
 
-      {openModel ? (
+      {ranking ? (
         <RankingDrawer
-          model={openModel}
+          group={ranking}
           onClose={() => {
-            setOpenModel(null);
-            models.reload();
+            setRanking(null);
+            groups.reload();
           }}
         />
       ) : null}
 
       {tracking ? (
         <TrackModelDrawer
-          model={tracking.model}
+          target={tracking}
           onClose={() => setTracking(null)}
           onSaved={() => {
             setTracking(null);
-            models.reload();
+            groups.reload();
+          }}
+        />
+      ) : null}
+
+      {scrapingConfig ? (
+        <ScrapingConfigDrawer
+          onClose={() => setScrapingConfig(false)}
+          onSaved={() => {
+            setScrapingConfig(false);
+            groups.reload();
           }}
         />
       ) : null}
@@ -213,20 +435,23 @@ export function ModelsPage() {
 /* ------------------------------------------------------------------------- */
 
 /** Precio objetivo del seguimiento, y si ya hay una oferta por debajo. */
-function TargetCell({ model }: { model: CarModelWithStats }) {
-  const target = model.tracking?.target_price ?? null;
+function TargetCell({
+  target,
+  minPrice,
+  hint,
+}: {
+  target: number | null;
+  minPrice: number | null;
+  hint?: string;
+}) {
   if (target === null) return <span className="muted">—</span>;
 
-  const reached = model.min_price !== null && model.min_price <= target;
+  const reached = minPrice !== null && minPrice <= target;
+  const status = reached
+    ? `Ya hay una oferta desde ${formatPrice(minPrice)}`
+    : "Ninguna oferta baja todavía del objetivo";
   return (
-    <Chip
-      tone={reached ? "positive" : "neutral"}
-      title={
-        reached
-          ? `Ya hay una oferta desde ${formatPrice(model.min_price)}`
-          : "Ninguna oferta baja todavía del objetivo"
-      }
-    >
+    <Chip tone={reached ? "positive" : "neutral"} title={hint ? `${hint}. ${status}` : status}>
       {formatPrice(target)}
       {reached ? " ✓" : ""}
     </Chip>
@@ -235,11 +460,19 @@ function TargetCell({ model }: { model: CarModelWithStats }) {
 
 /* ------------------------------------------------------------------------- */
 
+/**
+ * Ranking de IA del binomio marca-modelo.
+ *
+ * El agente compara todas las ofertas activas del modelo, vengan de la versión
+ * que vengan: es el conjunto en el que elige un comprador. Por versión no había
+ * nada que rankear —casi todas tienen una sola oferta— y el veredicto salía de
+ * comparar un coche consigo mismo.
+ */
 function RankingDrawer({
-  model,
+  group,
   onClose,
 }: {
-  model: CarModelWithStats;
+  group: CarModelGroup;
   onClose: () => void;
 }) {
   const [run, setRun] = useState<RankingRunDetail | null>(null);
@@ -260,7 +493,7 @@ function RankingDrawer({
   useEffect(() => {
     let active = true;
     api
-      .get<RankingRunDetail>(`/car-models/${model.id}/ranking`)
+      .get<RankingRunDetail>("/car-model-groups/ranking", { key: group.key })
       .then((detail) => {
         if (!active) return;
         setRun(detail);
@@ -280,7 +513,7 @@ function RankingDrawer({
       active = false;
       stopPolling();
     };
-  }, [model.id]);
+  }, [group.key]);
 
   function pollRun(runId: number) {
     stopPolling();
@@ -309,10 +542,14 @@ function RankingDrawer({
     setStatus("running");
     setMessage("El agente está analizando el mercado…");
     try {
-      const created = await api.post<{ id: number }>(`/car-models/${model.id}/rank`, {
-        priorities: priorities.trim() || null,
-        max_budget: maxBudget ? Number(maxBudget) : null,
-      });
+      const created = await api.post<{ id: number }>(
+        "/car-model-groups/rank",
+        {
+          priorities: priorities.trim() || null,
+          max_budget: maxBudget ? Number(maxBudget) : null,
+        },
+        { key: group.key },
+      );
       pollRun(created.id);
     } catch (error) {
       setStatus("error");
@@ -324,10 +561,10 @@ function RankingDrawer({
 
   return (
     <Drawer
-      title={model.display_name}
-      subtitle={`${model.active_offers} ofertas activas · mediana ${formatPrice(
-        model.median_price,
-      )}`}
+      title={group.label}
+      subtitle={`${group.active_offers} ofertas activas de ${theVersions(
+        group.variant_count,
+      )} · mediana ${formatPrice(group.median_price)}`}
       onClose={onClose}
       actions={
         <button className="btn btn-sm btn-primary" disabled={running} onClick={startRanking}>
@@ -491,21 +728,30 @@ function RankingDrawer({
 /* ------------------------------------------------------------------------- */
 
 /**
- * Panel único para seguir un modelo: elegir uno del catálogo o crearlo al vuelo,
- * y fijar los criterios (precio objetivo, km, año, notas) en el mismo paso.
+ * Panel único para seguir: elegir un modelo del catálogo o crearlo al vuelo, y
+ * fijar los criterios (precio objetivo, km, año, notas) en el mismo paso.
  *
  * Antes eran tres pasos desconectados —crear el modelo, buscarlo en la tabla,
  * pulsar «Seguir»— y los criterios no había forma de tocarlos desde la UI.
+ *
+ * Sobre un binomio marca-modelo hace lo mismo, pero de una vez sobre todas sus
+ * versiones. Ahí no aparece el PVP de referencia: es de la versión, y ponerle a
+ * las veintitrés el precio de catálogo de una sola falsearía el descuento de
+ * cada una de sus ofertas.
  */
 function TrackModelDrawer({
-  model,
+  target,
   onClose,
   onSaved,
 }: {
-  model: CarModelWithStats | null;
+  target: TrackTarget;
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const group = target.kind === "group" ? target.group : null;
+  const model = target.kind === "variant" ? target.model : null;
+  const current = currentCriteria(target);
+
   const [source, setSource] = useState<"existing" | "new">("existing");
   const [picked, setPicked] = useState<CarModelWithStats | null>(model);
   const [search, setSearch] = useState("");
@@ -518,27 +764,28 @@ function TrackModelDrawer({
     model?.reference_price != null ? String(model.reference_price) : "",
   );
   const [targetPrice, setTargetPrice] = useState(
-    model?.tracking?.target_price != null ? String(model.tracking.target_price) : "",
+    current.target_price != null ? String(current.target_price) : "",
   );
   const [maxMileage, setMaxMileage] = useState(
-    model?.tracking?.max_mileage_km != null ? String(model.tracking.max_mileage_km) : "",
+    current.max_mileage_km != null ? String(current.max_mileage_km) : "",
   );
   const [minYear, setMinYear] = useState(
-    model?.tracking?.min_year != null ? String(model.tracking.min_year) : "",
+    current.min_year != null ? String(current.min_year) : "",
   );
-  const [notes, setNotes] = useState(model?.tracking?.notes ?? "");
+  const [notes, setNotes] = useState(current.notes ?? "");
 
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // El buscador solo hace falta cuando el modelo no viene fijado desde la tabla.
+  const picking = target.kind === "pick";
+  // El buscador solo hace falta cuando no viene nada fijado desde la tabla.
   const debouncedSearch = useDebounced(search);
   const results = useAsync<CarModelWithStats[]>(
     () =>
-      model === null && source === "existing"
+      picking && source === "existing"
         ? api.get("/car-models", { q: debouncedSearch || undefined })
         : Promise.resolve([]),
-    [model, source, debouncedSearch],
+    [picking, source, debouncedSearch],
   );
 
   const numberOrNull = (value: string) => (value.trim() === "" ? null : Number(value));
@@ -547,7 +794,7 @@ function TrackModelDrawer({
     event.preventDefault();
     setError(null);
 
-    if (source === "existing" && picked === null) {
+    if (!group && source === "existing" && picked === null) {
       setError("Elige un modelo del catálogo o crea uno nuevo.");
       return;
     }
@@ -561,7 +808,12 @@ function TrackModelDrawer({
         notes: notes.trim() || null,
       };
 
-      if (source === "new") {
+      if (group) {
+        await api.post("/tracked-models/bulk", {
+          ...criteria,
+          car_model_ids: group.variants.map((variant) => variant.id),
+        });
+      } else if (source === "new") {
         await api.post("/tracked-models", {
           ...criteria,
           make: make.trim(),
@@ -587,11 +839,16 @@ function TrackModelDrawer({
   }
 
   async function untrack() {
-    if (!picked) return;
     setError(null);
     setBusy(true);
     try {
-      await api.delete(`/tracked-models/${picked.id}`);
+      if (group) {
+        await api.delete("/tracked-models/bulk", {
+          car_model_ids: group.variants.map((variant) => variant.id).join(","),
+        });
+      } else if (picked) {
+        await api.delete(`/tracked-models/${picked.id}`);
+      }
       onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo dejar de seguir");
@@ -600,24 +857,33 @@ function TrackModelDrawer({
     }
   }
 
-  const alreadyTracked = picked?.is_tracked ?? false;
+  const alreadyTracked = group ? group.tracked_variants > 0 : (picked?.is_tracked ?? false);
+  const versions = group ? theVersions(group.variant_count) : "";
 
   return (
     <Drawer
-      title={model ? model.display_name : "Seguir un modelo"}
+      title={group ? group.label : model ? model.display_name : "Seguir un modelo"}
       subtitle={
-        model
-          ? alreadyTracked
-            ? "Editando los criterios de seguimiento"
-            : "Empezar a seguirlo con criterios"
-          : "Elige un modelo del catálogo o créalo al vuelo"
+        group
+          ? `Criterios para ${versions} del binomio · ${group.tracked_variants} en seguimiento`
+          : model
+            ? alreadyTracked
+              ? "Editando los criterios de seguimiento"
+              : "Empezar a seguirlo con criterios"
+            : "Elige un modelo del catálogo o créalo al vuelo"
       }
       onClose={onClose}
     >
       {error ? <Banner kind="error">{error}</Banner> : null}
+      {current.mixed ? (
+        <Banner kind="warn">
+          Los criterios que tienes puestos no son los mismos en todas las versiones que
+          sigues. Al guardar, estos se aplican a {versions}.
+        </Banner>
+      ) : null}
 
       <form className="stack" onSubmit={submit}>
-        {model === null ? (
+        {picking ? (
           <>
             <div className="row">
               <button
@@ -757,18 +1023,20 @@ function TrackModelDrawer({
                   onChange={(event) => setTargetPrice(event.target.value)}
                 />
               </div>
-              <div className="field grow">
-                <label htmlFor="ref">PVP de referencia (€)</label>
-                <input
-                  id="ref"
-                  className="input"
-                  type="number"
-                  min={0}
-                  step={500}
-                  value={referencePrice}
-                  onChange={(event) => setReferencePrice(event.target.value)}
-                />
-              </div>
+              {group ? null : (
+                <div className="field grow">
+                  <label htmlFor="ref">PVP de referencia (€)</label>
+                  <input
+                    id="ref"
+                    className="input"
+                    type="number"
+                    min={0}
+                    step={500}
+                    value={referencePrice}
+                    onChange={(event) => setReferencePrice(event.target.value)}
+                  />
+                </div>
+              )}
             </div>
 
             <div className="row">
@@ -810,14 +1078,16 @@ function TrackModelDrawer({
             </div>
           </div>
           <p className="tiny muted" style={{ margin: "10px 0 0" }}>
-            El PVP de referencia es del modelo y lo ven todos; el resto son tus criterios.
+            {group
+              ? `Se aplican a ${versions} del binomio. El PVP de referencia no: es de la versión y se pone en cada una.`
+              : "El PVP de referencia es del modelo y lo ven todos; el resto son tus criterios."}
           </p>
         </div>
 
         <div className="row">
           <button className="btn btn-primary" type="submit" disabled={busy}>
             {busy ? <span className="spinner" /> : null}
-            {alreadyTracked ? "Guardar criterios" : "Seguir modelo"}
+            {alreadyTracked ? "Guardar criterios" : group ? `Seguir ${versions}` : "Seguir modelo"}
           </button>
           <button className="btn" type="button" onClick={onClose}>
             Cancelar
@@ -830,7 +1100,7 @@ function TrackModelDrawer({
               disabled={busy}
               onClick={untrack}
             >
-              Dejar de seguir
+              {group ? `Dejar de seguir (${group.tracked_variants})` : "Dejar de seguir"}
             </button>
           ) : null}
         </div>

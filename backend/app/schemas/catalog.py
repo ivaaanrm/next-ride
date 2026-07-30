@@ -122,6 +122,22 @@ class TrackedModelCreate(TrackedModelCriteria):
         return self
 
 
+class TrackedModelBulkCreate(TrackedModelCriteria):
+    """Sigue varias versiones a la vez con los mismos criterios.
+
+    Es lo que hace falta para seguir un binomio marca-modelo desde la vista de
+    modelos: el seguimiento vive en `car_models`, que está partido por acabado,
+    así que seguir «el Audi A3» son veintitrés seguimientos. Van en una llamada
+    y una transacción, no en veintitrés.
+
+    El PVP de referencia no se toca aquí a propósito: es de la versión —un RS3 y
+    un 1.0 TFSI no comparten precio de catálogo— y ponerle el mismo a todas
+    estropearía el descuento de cada oferta.
+    """
+
+    car_model_ids: list[int] = Field(min_length=1)
+
+
 class TrackedModelUpdate(TrackedModelCriteria):
     is_active: bool | None = None
 
@@ -159,4 +175,48 @@ class CarModelWithStats(CarModelRead):
     is_tracked: bool = False
     # Criterios del usuario actual; `None` si no lo sigue.
     tracking: TrackedModelPrefs | None = None
+    # El ranking de IA no vive aquí: es del binomio, no de la versión. Está en
+    # `CarModelGroup.last_ranked_at`.
+
+
+class CarModelGroup(BaseModel):
+    """Un binomio marca-modelo con sus versiones colgando.
+
+    Los agregados de precio son del binomio entero —todas las ofertas activas de
+    todas sus versiones— y vienen de `make_model_price_stats`, no de sumar los de
+    cada versión. El resto sí se pliega aquí desde `variants`, que es donde vive:
+    el seguimiento y el PVP son de la versión, no del binomio.
+    """
+
+    key: str
+    make: str
+    model: str
+    variants: list[CarModelWithStats] = Field(default_factory=list)
+
+    active_offers: int = 0
+    min_price: float | None = None
+    median_price: float | None = None
+    max_price: float | None = None
+    dealers_count: int = 0
+
+    # PVP de referencia: es de la versión, así que el binomio enseña la mediana
+    # de las que lo tienen y dice cuántas son. Sin ese recuento, un PVP puesto en
+    # una de veintitrés versiones aparentaría describir el binomio entero.
+    reference_price: float | None = None
+    reference_variants: int = 0
+
+    tracked_variants: int = 0
+    # El objetivo más bajo de las versiones seguidas: es el que decide si ya hay
+    # algo que mirar en el binomio.
+    target_price: float | None = None
     last_ranked_at: datetime | None = None
+
+    @computed_field
+    @property
+    def label(self) -> str:
+        return f"{self.make} {self.model}"
+
+    @computed_field
+    @property
+    def variant_count(self) -> int:
+        return len(self.variants)

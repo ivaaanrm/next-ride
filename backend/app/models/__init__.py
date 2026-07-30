@@ -13,6 +13,7 @@ from app.models.offer import (
     VehicleCondition,
 )
 from app.models.ranking import OfferRanking, RankingRun, RunStatus, Verdict
+from app.models.scraping import ScrapeSource, ScrapeTarget
 from app.models.user import ApiKey, User
 
 __all__ = [
@@ -28,6 +29,8 @@ __all__ = [
     "OfferStatus",
     "RankingRun",
     "RunStatus",
+    "ScrapeSource",
+    "ScrapeTarget",
     "TimestampMixin",
     "TrackedModel",
     "Transmission",

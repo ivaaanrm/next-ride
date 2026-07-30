@@ -1,5 +1,18 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type UIEvent,
+} from "react";
 
+import {
+  RadarMark,
+  RadarProfile,
+  RadarReading,
+  type RadarSeries,
+} from "../components/charts";
 import { PageHeader } from "../components/Layout";
 import {
   Banner,
@@ -16,6 +29,7 @@ import { api } from "../lib/api";
 import {
   CONDITION_LABELS,
   FUEL_LABELS,
+  FUEL_MARKS,
   formatDate,
   formatDateTime,
   formatKm,
@@ -27,7 +41,9 @@ import {
   verdictTone,
 } from "../lib/format";
 import { useAsync, useDebounced } from "../lib/hooks";
+import { buildRadar, RADAR_MIN_AXES, type RadarAxis } from "../lib/radar";
 import type {
+  AnalyticsSegments,
   CarModelWithStats,
   DealerWithStats,
   Offer,
@@ -35,9 +51,12 @@ import type {
   OfferPricePoint,
   OfferRaw,
   Page,
+  SegmentPoint,
 } from "../types";
 
-const PAGE_SIZE = 50;
+/** Tamaño del tramo que se pide por vez. La tabla ya no pagina: es un único
+ *  scroll que trae el siguiente tramo cuando el final se acerca. */
+const CHUNK_SIZE = 50;
 
 type SortDir = "asc" | "desc";
 
@@ -144,8 +163,8 @@ function SortTh({
   // Único sentido disponible y ya puesto: no hay nada que aplicar.
   const inert = token === null || token === sort;
 
-  // El tope se dice aquí, antes de pulsar, y no solo debajo de la tabla cuando
-  // ya se ha ordenado: es lo que hay que saber para decidir si merece la pena.
+  // El tope se dice aquí porque es el único sitio donde se dice, y llega antes
+  // de pulsar: es lo que hay que saber para decidir si merece la pena ordenar.
   const title = inert
     ? `Ordenado por ${spec.what}${spec.capped ? `. ${CAP_HINT}` : ""}`
     : `Ordenar por ${spec.what}${spec.capped ? `. ${CAP_HINT}` : ""}`;
@@ -184,8 +203,9 @@ function SortTh({
  * contra la mediana de **todas** las ofertas activas del mismo modelo y es la
  * que alimenta `value_score` y al agente de IA. Esta es local a la vista:
  * responde «de lo que estoy mirando, ¿cuál sale barato?», y por eso se mueve al
- * filtrar y al pasar de página. La cabecera de la columna enseña el valor para
- * que el porcentaje no quede colgando de una referencia invisible.
+ * filtrar y a medida que el scroll trae más tramos. La cabecera de la columna
+ * enseña el valor para que el porcentaje no quede colgando de una referencia
+ * invisible.
  *
  * Con una sola fila la mediana es su propio precio y saldría un 0,0 % que
  * parece «justo en mercado» sin serlo: por debajo de dos filas, no hay dato.
@@ -227,7 +247,6 @@ export function OffersPage() {
   const [trackedOnly, setTrackedOnly] = useState(false);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [showDismissed, setShowDismissed] = useState(false);
-  const [page, setPage] = useState(0);
   const [actionError, setActionError] = useState<string | null>(null);
   const [favBusyId, setFavBusyId] = useState<number | null>(null);
   const [scraped, setScraped] = useState<Offer | null>(null);
@@ -277,27 +296,100 @@ export function OffersPage() {
     filterDeps,
   );
 
-  const offers = useAsync<Page<Offer>>(
-    () =>
-      api.get("/offers", {
+  /* ---- La lista, por tramos ----------------------------------------------
+   *
+   * Sin paginación: la tabla es un único scroll que pide el siguiente tramo de
+   * 50 cuando el final se acerca. `useAsync` no vale aquí porque reemplaza sus
+   * datos en cada petición y esto los acumula, así que la lista lleva su propio
+   * estado.
+   *
+   * `epoch` invalida lo que llegue tarde: cambiar un filtro pide el tramo cero
+   * de un conjunto nuevo, y un tramo viejo que aterrice después no debe
+   * mezclarse con él. El offset del siguiente tramo es `rows.length` y no un
+   * número de página: descartar o desmarcar encogen la lista cargada, y lo ya
+   * cargado es exactamente lo que el siguiente tramo tiene que continuar.
+   * ------------------------------------------------------------------------ */
+  const [rows, setRows] = useState<Offer[]>([]);
+  const [total, setTotal] = useState(0);
+  const [listLoading, setListLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [listError, setListError] = useState<string | null>(null);
+  const epochRef = useRef(0);
+  const rowsRef = useRef<Offer[]>([]);
+  // Candado contra la ráfaga de eventos de scroll: un tramo en vuelo por vez.
+  const busyRef = useRef(false);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    rowsRef.current = rows;
+  }, [rows]);
+
+  async function loadChunk(reset: boolean) {
+    if (busyRef.current && !reset) return;
+    const epoch = reset ? ++epochRef.current : epochRef.current;
+    busyRef.current = true;
+    if (reset) {
+      setListLoading(true);
+      setListError(null);
+    } else {
+      setLoadingMore(true);
+    }
+    try {
+      const chunk = await api.get<Page<Offer>>("/offers", {
         ...filters,
         sort,
-        limit: PAGE_SIZE,
-        offset: page * PAGE_SIZE,
-      }),
-    [...filterDeps, sort, page],
-  );
-
-  function resetPageAnd<T>(setter: (value: T) => void) {
-    return (value: T) => {
-      setPage(0);
-      setter(value);
-    };
+        limit: CHUNK_SIZE,
+        offset: reset ? 0 : rowsRef.current.length,
+      });
+      if (epoch !== epochRef.current) return;
+      setRows((previous) => (reset ? chunk.items : [...previous, ...chunk.items]));
+      setTotal(chunk.total);
+    } catch (error) {
+      if (epoch !== epochRef.current) return;
+      setListError(
+        error instanceof Error ? error.message : "No se pudieron cargar las ofertas",
+      );
+    } finally {
+      // Un tramo invalidado no toca los cerrojos: son de la petición que lo invalidó.
+      if (epoch === epochRef.current) {
+        busyRef.current = false;
+        setListLoading(false);
+        setLoadingMore(false);
+      }
+    }
   }
 
-  /** Reordenar vuelve a la primera página: la fila 51 del orden anterior no es
-   *  la fila 51 del nuevo, y quedarse en la página 2 esconde lo que se buscaba. */
-  const sortBy = resetPageAnd(setSort);
+  /** Cambiar cualquier filtro o el orden pide un conjunto nuevo desde arriba;
+   *  el scroll vuelve al principio, que es donde está lo que se acaba de pedir. */
+  useEffect(() => {
+    wrapRef.current?.scrollTo({ top: 0 });
+    void loadChunk(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [...filterDeps, sort]);
+
+  // En una pantalla muy alta el primer tramo puede no llenar el scroll: si no
+  // hay dónde hacer scroll y quedan más ofertas, se trae el siguiente ya.
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap || listLoading || rows.length === 0 || rows.length >= total) return;
+    if (wrap.scrollHeight <= wrap.clientHeight) void loadChunk(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, total, listLoading]);
+
+  /** A ~600px del final —unas quince filas— se pide el siguiente tramo: llega
+   *  antes de que el scroll toque fondo y la lista se lee como una sola. */
+  function onTableScroll(event: UIEvent<HTMLDivElement>) {
+    const wrap = event.currentTarget;
+    if (listLoading || rows.length >= total) return;
+    if (wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 600) {
+      void loadChunk(false);
+    }
+  }
+
+  function refresh() {
+    wrapRef.current?.scrollTo({ top: 0 });
+    void loadChunk(true);
+  }
 
   // Los dominios de los deslizadores se guardan en vez de leerse directos de
   // `stats` porque `stats` puede devolverlos vacíos: un filtro de modelo y
@@ -330,7 +422,6 @@ export function OffersPage() {
 
   /** Devuelve la vista a su estado por defecto. El orden no es un filtro y se queda. */
   function clearFilters() {
-    setPage(0);
     setSearch("");
     setModelId("");
     setDealerId("");
@@ -354,18 +445,14 @@ export function OffersPage() {
         ? await api.delete<Offer>(`/offers/${offer.id}/favorite`)
         : await api.post<Offer>(`/offers/${offer.id}/favorite`);
 
-      const current = offers.data;
-      if (current) {
-        // Si estamos viendo solo favoritos, al desmarcar la fila desaparece.
-        const drop = favoritesOnly && !updated.is_favorite;
-        offers.setData({
-          ...current,
-          items: drop
-            ? current.items.filter((item) => item.id !== updated.id)
-            : current.items.map((item) => (item.id === updated.id ? updated : item)),
-          total: drop ? Math.max(0, current.total - 1) : current.total,
-        });
-      }
+      // Si estamos viendo solo favoritos, al desmarcar la fila desaparece.
+      const drop = favoritesOnly && !updated.is_favorite;
+      setRows((previous) =>
+        drop
+          ? previous.filter((item) => item.id !== updated.id)
+          : previous.map((item) => (item.id === updated.id ? updated : item)),
+      );
+      if (drop) setTotal((value) => Math.max(0, value - 1));
 
       // Viendo solo favoritos, desmarcar cambia el conjunto: las medias de
       // arriba dejan de ser las de la tabla hasta que se recalculan.
@@ -379,34 +466,40 @@ export function OffersPage() {
     }
   }
 
+  /** Quita la fila en sitio en vez de recargar: recargar reordenaría todo el
+   *  conjunto y devolvería el scroll arriba; que falte la fila ya lo cuenta. */
+  function dropRow(id: number) {
+    setRows((previous) => previous.filter((item) => item.id !== id));
+    setTotal((value) => Math.max(0, value - 1));
+    stats.reload();
+  }
+
   async function dismiss(offer: Offer) {
     if (!confirm(`¿Descartar "${offer.title}" de la lista?`)) return;
     setActionError(null);
     try {
       await api.delete(`/offers/${offer.id}`);
-      offers.reload();
-      stats.reload();
+      dropRow(offer.id);
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "No se pudo descartar");
     }
   }
 
+  /** Restaurar solo se ofrece viendo las descartadas: al volver a la lista
+   *  activa, la fila deja de pertenecer a la vista que se está mirando. */
   async function restore(offer: Offer) {
     setActionError(null);
     try {
       await api.post(`/offers/${offer.id}/restore`);
-      offers.reload();
-      stats.reload();
+      dropRow(offer.id);
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "No se pudo restaurar");
     }
   }
 
-  const total = offers.data?.total ?? 0;
-  const items = offers.data?.items ?? [];
   const overview = stats.data;
 
-  const shownMedian = useMemo(() => medianPrice(offers.data?.items ?? []), [offers.data]);
+  const shownMedian = useMemo(() => medianPrice(rows), [rows]);
 
   return (
     <>
@@ -414,13 +507,15 @@ export function OffersPage() {
         title="Ofertas"
         meta={total ? `${formatNumber(total)} resultados` : undefined}
         actions={
-          <button className="btn btn-sm" onClick={() => offers.reload()}>
+          <button className="btn btn-sm" onClick={refresh}>
             Actualizar
           </button>
         }
       />
 
-      <div className="content">
+      {/* `content-fill`: el alto sobrante es de la tabla, que hace scroll por
+          dentro; las métricas y los filtros quedan siempre a la vista. */}
+      <div className="content content-fill">
         {/* El aviso de «ranking con IA desactivado» ya no vive aquí: es estado del
             sistema, no de esta tabla, y como banner empujaba las métricas y la
             tabla hacia abajo en cada carga. Ahora está en la campana de la barra
@@ -474,7 +569,7 @@ export function OffersPage() {
               aria-label="Buscar por título"
               placeholder="Buscar por título…"
               value={search}
-              onChange={(event) => resetPageAnd(setSearch)(event.target.value)}
+              onChange={(event) => setSearch(event.target.value)}
             />
           </div>
 
@@ -482,7 +577,7 @@ export function OffersPage() {
             className="select"
             aria-label="Filtrar por modelo"
             value={modelId}
-            onChange={(event) => resetPageAnd(setModelId)(event.target.value)}
+            onChange={(event) => setModelId(event.target.value)}
           >
             <option value="">Todos los modelos</option>
             {(models.data ?? []).map((model) => (
@@ -496,7 +591,7 @@ export function OffersPage() {
             className="select"
             aria-label="Filtrar por dealer"
             value={dealerId}
-            onChange={(event) => resetPageAnd(setDealerId)(event.target.value)}
+            onChange={(event) => setDealerId(event.target.value)}
           >
             <option value="">Todos los dealers</option>
             {(dealers.data ?? []).map((dealer) => (
@@ -510,7 +605,7 @@ export function OffersPage() {
             className="select"
             aria-label="Filtrar por estado del vehículo"
             value={condition}
-            onChange={(event) => resetPageAnd(setCondition)(event.target.value)}
+            onChange={(event) => setCondition(event.target.value)}
           >
             <option value="">Cualquier estado</option>
             {Object.entries(CONDITION_LABELS).map(([value, label]) => (
@@ -528,7 +623,6 @@ export function OffersPage() {
             formatShort={formatNumber}
             emptyTitle="Todavía no hay precios que acotar"
             onChange={([min, max]) => {
-              setPage(0);
               setPriceMin(min);
               setPriceMax(max);
             }}
@@ -541,7 +635,6 @@ export function OffersPage() {
             format={formatYear}
             emptyTitle="Ninguna oferta trae año"
             onChange={([min, max]) => {
-              setPage(0);
               setYearMin(min);
               setYearMax(max);
             }}
@@ -550,14 +643,14 @@ export function OffersPage() {
           <div className="filter-scopes">
             <Toggle
               on={trackedOnly}
-              onChange={resetPageAnd(setTrackedOnly)}
+              onChange={setTrackedOnly}
               title="Solo modelos que sigues"
             >
               Seguidos
             </Toggle>
             <Toggle
               on={favoritesOnly}
-              onChange={resetPageAnd(setFavoritesOnly)}
+              onChange={setFavoritesOnly}
               title="Solo tus favoritos"
             >
               {/* La misma estrella que marca la fila: el filtro y la acción que
@@ -569,7 +662,7 @@ export function OffersPage() {
             </Toggle>
             <Toggle
               on={showDismissed}
-              onChange={resetPageAnd(setShowDismissed)}
+              onChange={setShowDismissed}
               title="Ver las ofertas descartadas en lugar de las activas"
             >
               Descartadas
@@ -592,12 +685,12 @@ export function OffersPage() {
         </div>
 
         {actionError ? <Banner kind="error">{actionError}</Banner> : null}
-        {offers.error ? <Banner kind="error">{offers.error}</Banner> : null}
+        {listError ? <Banner kind="error">{listError}</Banner> : null}
 
-        <div className="table-wrap">
-          {offers.loading ? (
+        <div className="table-wrap" ref={wrapRef} onScroll={onTableScroll}>
+          {listLoading ? (
             <Loading />
-          ) : items.length === 0 ? (
+          ) : rows.length === 0 ? (
             <Empty
               title="No hay ofertas que cumplan el filtro"
               hint={
@@ -613,12 +706,12 @@ export function OffersPage() {
                   <th style={{ width: 32 }}>
                     <span className="sr-only">Favorito</span>
                   </th>
-                  <SortTh column="ai" label="IA" sort={sort} onSort={sortBy} width={56} />
+                  <SortTh column="ai" label="IA" sort={sort} onSort={setSort} width={56} />
                   <th>Marca</th>
                   <th>Modelo</th>
                   <th>Versión</th>
                   <th>Ubicación</th>
-                  <SortTh column="price" label="Precio" sort={sort} onSort={sortBy} numeric />
+                  <SortTh column="price" label="Precio" sort={sort} onSort={setSort} numeric />
                   {/* No ordena: la desviación se calcula contra la mediana de las
                       filas en pantalla, así que ordenar por ella reordenaría su
                       propia referencia. La referencia va en la cabecera porque
@@ -630,19 +723,25 @@ export function OffersPage() {
                       <span className="th-note">{formatPrice(shownMedian)}</span>
                     ) : null}
                   </th>
-                  <SortTh column="year" label="Año" sort={sort} onSort={sortBy} numeric />
-                  <SortTh column="km" label="Km" sort={sort} onSort={sortBy} numeric />
+                  <SortTh column="year" label="Año" sort={sort} onSort={setSort} numeric />
+                  <SortTh column="km" label="Km" sort={sort} onSort={setSort} numeric />
                   {/* Tampoco ordena: es una métrica derivada que el backend no
-                      tiene en columna, y ordenar solo la página visible daría un
-                      orden que se deshace al pasar a la siguiente. */}
+                      tiene en columna, y ordenar solo lo ya cargado daría un
+                      orden que se deshace con cada tramo que llega. */}
                   <th className="num">Km / año</th>
-                  <th>Combustible</th>
-                  <SortTh column="value" label="Valor" sort={sort} onSort={sortBy} numeric />
+                  {/* Sin rótulo visible: la columna es una marca de una letra y
+                      el rótulo pedía el triple de ancho que su propio contenido.
+                      El nombre sigue estando para quien navega con lector de
+                      pantalla, igual que en la columna de la estrella. */}
+                  <th style={{ width: 44 }}>
+                    <span className="sr-only">Combustible</span>
+                  </th>
+                  <SortTh column="value" label="Valor" sort={sort} onSort={setSort} numeric />
                   <th style={{ width: 44 }} />
                 </tr>
               </thead>
               <tbody>
-                {items.map((offer) => (
+                {rows.map((offer) => (
                   <tr
                     key={offer.id}
                     className="row-clickable"
@@ -696,7 +795,16 @@ export function OffersPage() {
                       {offer.car_model.model}
                     </td>
 
-                    <td className="cell-muted">{offer.car_model.trim || "—"}</td>
+                    {/* La versión trae la motorización al principio, que es lo que
+                        distingue; el resto se recorta y vive en el `title` y en el
+                        panel de detalle. Sin el recorte, un «Sportback Advanced 30
+                        TFSI…» obliga a la tabla entera a hacer scroll horizontal. */}
+                    <td
+                      className="cell-muted cell-clip-md"
+                      title={offer.car_model.trim || undefined}
+                    >
+                      {offer.car_model.trim || "—"}
+                    </td>
 
                     {/* El scraper no siempre manda `location`; la ciudad del
                         dealer es la mejor aproximación cuando falta. */}
@@ -721,8 +829,21 @@ export function OffersPage() {
                         : "—"}
                     </td>
 
-                    <td className="cell-muted">
-                      {offer.fuel_type ? FUEL_LABELS[offer.fuel_type] : "—"}
+                    {/* La marca es lo único que se ve; el rótulo entero viaja en
+                        el `title` para el ratón y en el `aria-label` para quien
+                        no lo tiene, porque una «D» suelta no se lee sola. */}
+                    <td className="fuel-cell">
+                      {offer.fuel_type ? (
+                        <span
+                          className="fuel-mark"
+                          title={FUEL_LABELS[offer.fuel_type]}
+                          aria-label={FUEL_LABELS[offer.fuel_type]}
+                        >
+                          {FUEL_MARKS[offer.fuel_type]}
+                        </span>
+                      ) : (
+                        <span className="muted tiny">—</span>
+                      )}
                     </td>
 
                     <td className="num">
@@ -763,40 +884,15 @@ export function OffersPage() {
               </tbody>
             </table>
           )}
+
+          {/* Dentro del scroll, pegado al final de lo cargado: aparece justo
+              donde se está mirando cuando el tramo siguiente viene de camino. */}
+          {loadingMore ? (
+            <div className="table-more" role="status">
+              Cargando más ofertas…
+            </div>
+          ) : null}
         </div>
-
-        {total > PAGE_SIZE ? (
-          <div className="row" style={{ marginTop: 12, justifyContent: "flex-end" }}>
-            <span className="tiny muted">
-              {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} de{" "}
-              {formatNumber(total)}
-            </span>
-            <button
-              className="btn btn-sm"
-              disabled={page === 0}
-              onClick={() => setPage((value) => Math.max(0, value - 1))}
-            >
-              Anterior
-            </button>
-            <button
-              className="btn btn-sm"
-              disabled={(page + 1) * PAGE_SIZE >= total}
-              onClick={() => setPage((value) => value + 1)}
-            >
-              Siguiente
-            </button>
-          </div>
-        ) : null}
-
-        {/* El tope de las ordenaciones por puntuación se dice dos veces y en dos
-            momentos distintos: en el `title` de las cabeceras «IA» y «Valor»,
-            que se lee antes de pulsarlas, y aquí abajo mientras una de las dos
-            está puesta, porque es lo que acota el recuento que hay justo encima. */}
-        {SORT_COLUMNS.ai.asc === sort || SORT_COLUMNS.value.desc === sort ? (
-          <p className="tiny muted" style={{ marginTop: 10 }}>
-            {CAP_HINT}
-          </p>
-        ) : null}
       </div>
 
       {scraped ? <ScrapedDrawer offer={scraped} onClose={() => setScraped(null)} /> : null}
@@ -1113,6 +1209,199 @@ function RawPayload({ offerId }: { offerId: number }) {
   );
 }
 
+/* -------------------------------------------------------------------------- *
+ * Perfil frente a sus comparables
+ * -------------------------------------------------------------------------- */
+
+/** Lo que hace falta de una oferta para colocarla en el radar. */
+type Comparable = Pick<
+  SegmentPoint,
+  "price" | "mileage_km" | "year" | "km_per_year" | "value_score"
+>;
+
+const asComparable = (offer: Offer): Comparable => ({
+  price: offer.price,
+  mileage_km: offer.mileage_km,
+  year: offer.year,
+  km_per_year: offer.metrics.km_per_year,
+  value_score: offer.metrics.value_score,
+});
+
+/**
+ * Los cinco ejes, todos orientados a favor de quien compra: más lejos del centro
+ * es mejor, siempre. Es la misma escala que la Analítica —mediana en el centro,
+ * mayor desviación del conjunto en el borde, con un recorrido mínimo para que
+ * una diferencia pequeña no se estire—, solo que aquí el conjunto son las otras
+ * ofertas del mismo binomio marca-modelo.
+ *
+ * El descuento sobre PVP no tiene eje propio: solo una de cada tres ofertas trae
+ * `original_price`, así que el eje se caía casi siempre y cuando no, comparaba
+ * contra una mediana de cuatro anuncios. Sigue contando donde tiene sentido, que
+ * es dentro de «Valor».
+ *
+ * «Valor» es la puntuación de la plataforma, o sea el resumen que ya sale arriba
+ * del panel. Está aquí porque no es una función de los otros cuatro ejes: mira el
+ * precio contra la mediana de *su versión exacta*, no contra la del binomio, y
+ * suma el descuento, la bajada de precio y la valoración del dealer, que no
+ * tienen eje propio.
+ */
+const OFFER_AXES: (Omit<RadarAxis, "cohort" | "values"> & {
+  of: (item: Comparable) => number | null;
+})[] = [
+  {
+    label: "Precio",
+    hint: "frente al binomio, no a la versión",
+    direction: -1,
+    minSpan: 0.15,
+    relative: true,
+    format: formatPrice,
+    of: (item) => item.price,
+  },
+  {
+    label: "Kilómetros",
+    hint: "recorridos",
+    direction: -1,
+    minSpan: 0.2,
+    relative: true,
+    format: formatKm,
+    of: (item) => item.mileage_km,
+  },
+  {
+    label: "Año",
+    hint: "de matrícula",
+    direction: 1,
+    minSpan: 1.5,
+    format: (value) => String(Math.round(value)),
+    of: (item) => item.year,
+  },
+  {
+    label: "Km / año",
+    hint: "uso",
+    direction: -1,
+    minSpan: 0.2,
+    relative: true,
+    format: formatNumber,
+    of: (item) => item.km_per_year,
+  },
+  {
+    label: "Valor",
+    hint: "puntuación de la plataforma",
+    direction: 1,
+    minSpan: 8,
+    format: (value) => `${formatNumber(value)}/100`,
+    of: (item) => item.value_score,
+  },
+];
+
+/**
+ * Dónde cae esta oferta dentro de su mercado.
+ *
+ * El conjunto de comparación es el **binomio marca-modelo**, no la fila de
+ * `car_models`: el catálogo se fragmenta por acabado —un «Audi A4 Allroad
+ * Quattro» son once filas— y contra dos o tres ofertas de la misma versión
+ * exacta no hay mediana que valga. Por eso el cohorte se pide a `/analytics`,
+ * que agrupa por marca y modelo, y no al listado filtrando por modelo.
+ *
+ * La propia oferta cuenta dentro del cohorte, como cualquier otra: quitarla
+ * movería la mediana de un mercado del que forma parte, y con dos docenas de
+ * anuncios la diferencia sería de todos modos invisible.
+ *
+ * Vive en su propio componente para que la petición salga al abrir el panel de
+ * *esta* oferta y no con la tabla entera.
+ */
+function OfferRadar({ offer }: { offer: Offer }) {
+  const key = `${offer.car_model.make.toLowerCase()}|${offer.car_model.model.toLowerCase()}`;
+  const cohort = useAsync<AnalyticsSegments>(
+    () => api.get("/analytics/segments", { keys: key }),
+    [key],
+  );
+
+  if (cohort.loading) return <Loading label="Buscando comparables…" />;
+  if (cohort.error) return <Banner kind="error">{cohort.error}</Banner>;
+
+  const segment = cohort.data?.segments.find((item) => item.key === key);
+  const points = segment?.points ?? [];
+
+  // El cohorte lo forman las ofertas **activas**: una descartada o expirada se
+  // sigue pudiendo mirar, y compararla contra el mercado que hay hoy es
+  // justamente la pregunta («¿qué me perdí?»). Solo hay que decirlo.
+  if (points.length < 4) {
+    const n = points.length;
+    return (
+      <p className="tiny muted" style={{ margin: 0 }}>
+        {segment
+          ? `Solo hay ${formatNumber(n)} oferta${n === 1 ? "" : "s"} activa${n === 1 ? "" : "s"} de ${segment.label}: hacen falta al menos cuatro para que la mediana signifique algo.`
+          : "No hay ofertas activas de este binomio marca-modelo contra las que comparar."}
+      </p>
+    );
+  }
+
+  const { rows, dropped } = buildRadar(
+    OFFER_AXES.map((axis) => ({
+      ...axis,
+      cohort: points.map(axis.of),
+      values: [axis.of(asComparable(offer))],
+    })),
+    ["offer"],
+  );
+
+  if (rows.length < RADAR_MIN_AXES) {
+    return (
+      <p className="tiny muted" style={{ margin: 0 }}>
+        Esta oferta y sus comparables no comparten datos suficientes para dibujar un
+        perfil: {dropped.join(", ").toLowerCase()} se quedan fuera.
+      </p>
+    );
+  }
+
+  const series: RadarSeries[] = [
+    { key: "offer", label: "Esta oferta", color: "var(--color-chart-1)" },
+  ];
+
+  return (
+    <div className="radar-split">
+      <RadarProfile
+        rows={rows}
+        series={series}
+        referenceLabel={`Mediana de ${formatNumber(points.length)} comparables`}
+      />
+
+      {/* La lista hace de leyenda y de lectura a la vez, y es el equivalente
+          accesible del dibujo: lo que ahí es posición, aquí es una frase. */}
+      <ul className="chart-notes radar-notes">
+        <li>
+          <RadarMark color="var(--color-chart-1)" />
+          <span className="chart-note-label">Esta oferta</span>
+          <RadarReading rows={rows} seriesKey="offer" />
+        </li>
+        <li>
+          <RadarMark color="var(--text-tertiary)" dashed />
+          <span className="chart-note-label">
+            Mediana de {formatNumber(points.length)} comparables
+          </span>
+          <span className="muted">la oferta típica de {segment?.label}</span>
+        </li>
+        {/* «Valor» es el único eje que no se lee en el propio anuncio, así que es
+            el único que hay que desglosar. Los topes van con cada sumando porque
+            son la mitad de la cuenta: un 40 % de descuento no dispara la
+            puntuación, aporta sus 14 puntos y ahí se acaba. */}
+        <li className="muted note">
+          <span className="chart-note-label">Valor</span> parte de 50 y suma o resta
+          contra la media de su versión exacta: precio frente a la mediana (±28),
+          kilómetros (±10) y año (±8), más el descuento sobre PVP (+14), la bajada desde
+          que se vio (+8) y la valoración del dealer (±5).
+        </li>
+        {dropped.length ? (
+          <li className="muted note">
+            Fuera del radar: {dropped.join(", ").toLowerCase()}. Un eje se cae cuando esta
+            oferta no trae el dato o cuando sus comparables no lo traen.
+          </li>
+        ) : null}
+      </ul>
+    </div>
+  );
+}
+
 /**
  * Todo lo que se sabe de una oferta, en tres franjas de densidad distinta.
  *
@@ -1273,6 +1562,15 @@ function ScrapedDrawer({ offer, onClose }: { offer: Offer; onClose: () => void }
               </dl>
             </div>
           </div>
+        </div>
+
+        {/* El radar va detrás de la ficha y no pegado al veredicto: sus ejes son
+            el año, los kilómetros y el precio que se acaban de leer ahí arriba,
+            así que aquí lo que hace es contestar «¿y eso es mucho o poco?» sobre
+            unas cifras que el lector todavía tiene en la cabeza. */}
+        <div className="fact-group">
+          <p className="fact-label">Perfil frente a sus comparables</p>
+          <OfferRadar offer={offer} />
         </div>
 
         {/* El historial explica la «Bajada» de arriba: va junto, no 400 px más abajo. */}

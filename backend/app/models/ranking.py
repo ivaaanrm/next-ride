@@ -20,7 +20,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base
 
 if TYPE_CHECKING:
-    from app.models.car_model import CarModel
     from app.models.offer import Offer
 
 
@@ -46,15 +45,26 @@ def _enum_col(enum_cls: type[enum.Enum], name: str):
 
 
 class RankingRun(Base):
-    """Una ejecución del agente de IA sobre las ofertas de un modelo."""
+    """Una ejecución del agente de IA sobre las ofertas de un binomio marca-modelo.
+
+    El objetivo es el binomio y no la fila de `car_models` porque el catálogo está
+    partido por acabado: rankear «Audi A3 Sportback 35 TDI» era rankear una sola
+    oferta contra sí misma. La comparación que decide una compra es entre las
+    ofertas de un mismo modelo, vengan de la versión que vengan.
+    """
 
     __tablename__ = "ranking_runs"
-    __table_args__ = (Index("ix_ranking_runs_model_created", "car_model_id", "created_at"),)
+    __table_args__ = (Index("ix_ranking_runs_binomio_created", "make_model_key", "created_at"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    car_model_id: Mapped[int] = mapped_column(
-        ForeignKey("car_models.id", ondelete="CASCADE"), index=True, nullable=False
-    )
+    # `marca|modelo` en minúsculas. No es una FK: el binomio no es una fila de
+    # ninguna tabla, es el grupo que forman las versiones que comparten marca y
+    # modelo. La clave es la misma de `/analytics/segments` y `/car-models/groups`.
+    make_model_key: Mapped[str] = mapped_column(String(200), index=True, nullable=False)
+    # La grafía con la que se enseñó («Audi A3»), congelada al lanzar el run: la
+    # clave está en minúsculas y el run tiene que poder decir qué analizó aunque
+    # después desaparezcan del catálogo todas las versiones del binomio.
+    label: Mapped[str] = mapped_column(String(200), default="", nullable=False)
     status: Mapped[RunStatus] = mapped_column(
         _enum_col(RunStatus, "run_status"), default=RunStatus.PENDING, nullable=False
     )
@@ -79,7 +89,6 @@ class RankingRun(Base):
     )
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    car_model: Mapped[CarModel] = relationship(lazy="joined")
     items: Mapped[list[OfferRanking]] = relationship(
         back_populates="run", cascade="all, delete-orphan", order_by="OfferRanking.rank"
     )

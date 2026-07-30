@@ -40,7 +40,10 @@
   --space-xl: 24px;
   --space-2xl: 32px;
 
-  --sidebar-width: 224px;
+  /* 192px es lo que pide la etiqueta más larga de la navegación —«Ajustes / API
+     keys», con su icono y sus sangrados— y ni un píxel más: lo que sobraba se
+     lo queda la tabla, que es donde se mira. */
+  --sidebar-width: 192px;
   --sidebar-width-collapsed: 52px;
   --row-height: 36px;
 
@@ -384,6 +387,64 @@ textarea {
   container-type: inline-size;
 }
 
+/* Variante para páginas cuyo cuerpo es una tabla: el marco se fija al alto del
+   viewport y el scroll vive dentro de la tabla, que va trayendo tramos a
+   medida que se baja. Sin esto, las filas empujan el resto de la página debajo
+   del pliegue.
+
+   El candado va en `.main` y vía :has() porque el flex de columnas no basta:
+   la altura intrínseca de `.app` crece con el contenido por mucho
+   `flex-basis: 0` que lleve la vista, y `height` aquí pararía el crecimiento
+   de todas las páginas, también de las que sí quieren scroll de documento. */
+.main:has(> .view > .content-fill) {
+  height: 100vh;
+}
+
+/* La cabecera no entra al reparto: sus 48px son suyos también en ventanas bajas. */
+.main:has(> .view > .content-fill) > .view > .topbar {
+  flex-shrink: 0;
+}
+
+.content-fill {
+  display: flex;
+  flex-direction: column;
+  /* Sin esto no hay reparto que hacer: el mínimo automático de un item flex es
+     su min-content, que aquí incluye la tabla entera, y la vista se negaría a
+     encogerse por debajo de sus filas. */
+  min-height: 0;
+  /* Debajo de la tabla ya no vive nada: queda un respiro mínimo hasta el borde
+     de la ventana y el resto del alto es de la tabla. */
+  padding-bottom: var(--space-sm);
+}
+
+/* Las métricas y los filtros no ceden: son el marco que se quiere tener
+   siempre a la vista. */
+.content-fill > * {
+  flex-shrink: 0;
+}
+
+/* Solo la tabla cede alto. Con pocas filas se queda en su tamaño natural —sin
+   crecer: una caja con borde medio vacía parecería una tabla a la que le faltan
+   datos—; con muchas, se encoge hasta su carril y el scroll pasa por dentro,
+   que es donde la cabecera pegajosa hace por fin su trabajo. El suelo de 180px
+   es el respaldo para ventanas muy bajas: antes que una tabla de dos filas, se
+   prefiere recuperar el scroll de documento. */
+.content-fill > .table-wrap {
+  flex-shrink: 1;
+  min-height: 180px;
+}
+
+/* El aviso de tramo en camino. Vive dentro del scroll, pegado al final de lo
+   ya cargado: se ve justo donde se está mirando cuando hace falta, y no ocupa
+   nada el resto del tiempo. */
+.table-more {
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
 /* ------------------------------------------------------------------------- *
  * Cambio de vista
  *
@@ -400,14 +461,19 @@ textarea {
 /* La barra superior solo funde. Es parte del marco —está en el mismo sitio
    antes y después—, y desplazarla la despega del borde durante la entrada. */
 .view > .topbar {
-  animation: view-fade 140ms ease-out both;
+  animation: view-fade 140ms ease-out backwards;
 }
 
 /* El cuerpo sí sube, 4px: lo justo para leerse como una página que llega y no
    como un salto. Coincide con los 140ms del plegado de la barra lateral más un
-   poco, porque recorre distancia además de opacidad. */
+   poco, porque recorre distancia además de opacidad.
+
+   `backwards` y no `both`: el fill hacia delante no aporta nada —el último
+   fotograma es el estilo base— y Chrome se lo cobra: mientras la animación
+   siga aplicada, sus 4px de translateY cuentan como desbordamiento y sacan una
+   barra de scroll de documento en las vistas que fijan su alto al viewport. */
 .view > .content {
-  animation: view-enter 180ms ease-out both;
+  animation: view-enter 180ms ease-out backwards;
 }
 
 @keyframes view-fade {
@@ -948,6 +1014,61 @@ th.num {
   text-decoration: underline;
 }
 
+/* Binomio marca-modelo desplegable, y sus versiones.
+
+   La jerarquía se lleva en la primera columna y no con un fondo por fila: las
+   versiones tienen los mismos números que su binomio, así que lo que hay que
+   distinguir es de quién es cada cifra, no separar dos tablas. La sangría y el
+   registro más ligero bastan; teñir la fila entera pesaría más que el dato. */
+.row-expand {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.row-expand:hover {
+  color: var(--accent);
+}
+
+.row-expand-caret {
+  display: inline-block;
+  width: 10px;
+  flex: none;
+  color: var(--text-tertiary);
+  transition: transform 120ms ease;
+}
+
+.row-expand[aria-expanded="true"] .row-expand-caret {
+  transform: rotate(90deg);
+}
+
+table.records tbody tr.variant-row td {
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+/* Sangrada hasta la etiqueta del binomio, no hasta su flecha: la versión cuelga
+   del nombre, y es de ahí de donde tiene que salir el escalón. El selector es
+   largo para ganarle al `padding` de `table.records tbody td` y al ancho de
+   `.cell-clip` sin recurrir a `!important`.
+
+   El techo de 260px es lo que cabe sin que la tabla se desborde a 1.280px, que
+   es donde antes se cortaba la columna de acciones al desplegar: el acabado más
+   largo no cabe entero de ninguna manera —va recortado con su `title`—, así que
+   el ancho lo decide la tabla y no el texto. */
+table.records tbody tr.variant-row td.variant-name {
+  padding-left: 26px;
+  max-width: 260px;
+}
+
 .cell-muted {
   color: var(--text-secondary);
 }
@@ -959,8 +1080,36 @@ th.num {
   text-overflow: ellipsis;
 }
 
+/* El recorte medio existe por la columna de versión, que es la que de verdad
+   distingue una oferta de otra y por eso se lleva todo el ancho que sobre.
+
+   Lo que fija este tope no es el ancho de la columna sino a partir de qué
+   ventana aparece el scroll horizontal: cada píxel que se le da aquí sube ese
+   umbral uno a uno. Medido con la barra lateral abierta y barras de scroll
+   clásicas —que se cobran ~15px—: 224px aguanta sin scroll hasta los 1.451px de
+   ventana, y a 272 el umbral se pone en 1.499, que en un portátil de 1.512 es
+   ir al filo. 224 deja ~60px de holgura y, de paso, es lo último que no le
+   quita ancho a «Modelo» por debajo de lo que miden sus nombres.
+
+   Es un tope y no un ancho: con sitio de sobra la columna crece sola con el
+   reparto de la tabla —en 1.512px se planta en ~234px—. El texto completo vive
+   en el `title` de la celda y sin recortar en el panel de detalle. */
+.cell-clip-md {
+  max-width: 224px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* El recorte corto es el de la ubicación, que cede ancho a la versión: es el
+   dato menos decisivo de la fila —la mitad de las ofertas ni siquiera lo traen
+   y se rellena con la ciudad del dealer— y el que más se repite entre filas.
+
+   96px deja unos once caracteres: las ciudades sueltas —Madrid, Zaragoza,
+   Málaga, A Coruña— caben enteras, que son la mayoría, y los nombres compuestos
+   se reconocen por el principio («Esplugues d…»). Por debajo de 86px no bajaría
+   de todos modos: es lo que mide el propio rótulo de la cabecera. */
 .cell-clip-sm {
-  max-width: 132px;
+  max-width: 96px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -1073,6 +1222,34 @@ th.sort-th.on .sort-caret {
 
 table.records tbody tr:hover .row-actions {
   opacity: 1;
+}
+
+/* ---- Marca de combustible ---------------------------------------------------
+ *
+ * Una inicial en lugar de la palabra: la columna pasa de ~137px a 44 y esos
+ * casi cien píxeles se los queda la versión. La celda centra porque no hay
+ * rótulo de cabecera con el que alinearse, y el ancho lo fija el `th`.
+ * --------------------------------------------------------------------------- */
+.fuel-cell {
+  text-align: center;
+}
+
+.fuel-mark {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: var(--radius);
+  background: var(--neutral-soft);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  /* En mayúsculas siempre: distingue la marca del texto corriente de la fila y
+     evita que una «e» minúscula se confunda con el símbolo de otra columna. */
+  text-transform: uppercase;
+  /* La marca explica su significado al posarse encima; el cursor lo anuncia. */
+  cursor: help;
 }
 
 .rank-badge {
@@ -1741,6 +1918,190 @@ table.records tbody tr:hover .row-actions {
   font-weight: 500;
 }
 
+/* Matriz de captación: la decisión real es el cruce modelo × fuente. */
+.scrape-config {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.scrape-config-intro {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-lg);
+  padding: var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-sunken);
+}
+
+.scrape-config-intro p:last-child {
+  max-width: 62ch;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.scrape-limit {
+  width: 176px;
+  flex: none;
+}
+
+.scrape-limit .input {
+  font-variant-numeric: tabular-nums;
+}
+
+.scrape-matrix-wrap {
+  min-height: 220px;
+  max-height: min(54vh, 580px);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.scrape-matrix {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+}
+
+.scrape-matrix th,
+.scrape-matrix td {
+  height: 42px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.scrape-matrix thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  color: var(--text-secondary);
+  font-weight: 600;
+  text-align: center;
+  box-shadow: 0 1px 0 var(--border);
+}
+
+.scrape-matrix thead th:first-child {
+  left: 0;
+  z-index: 3;
+  min-width: 220px;
+  text-align: left;
+}
+
+.scrape-matrix thead th small {
+  display: block;
+  margin-top: 1px;
+  color: var(--text-tertiary);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.scrape-matrix tbody th {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  min-width: 220px;
+  text-align: left;
+}
+
+.scrape-matrix tbody td {
+  min-width: 110px;
+  text-align: center;
+}
+
+.scrape-matrix tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+.scrape-matrix tbody tr:hover > * {
+  background: var(--surface-hover);
+}
+
+.scrape-model-toggle {
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+
+.scrape-model-toggle:hover,
+.scrape-model-toggle.on {
+  color: var(--accent);
+}
+
+.scrape-check {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: white;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease,
+    transform 120ms ease;
+}
+
+.scrape-check:hover {
+  border-color: var(--accent);
+  transform: scale(1.05);
+}
+
+.scrape-check.on {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.scrape-check input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.scrape-check:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.scrape-config-actions {
+  position: sticky;
+  bottom: calc(var(--drawer-pad) * -1);
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin: 0 calc(var(--drawer-pad) * -1) calc(var(--drawer-pad) * -1);
+  padding: var(--space-md) var(--drawer-pad);
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+@container (max-width: 620px) {
+  .scrape-config-intro {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .scrape-limit {
+    width: 100%;
+  }
+}
+
 /* Pares etiqueta / valor del panel de detalle.
  *
  * Los pares fluyen en columnas en vez de apilarse: un `dd` de ocho caracteres
@@ -2159,7 +2520,8 @@ table.records tbody tr:hover .row-actions {
 .chart-box,
 .chart-plot,
 .chart-tall,
-.chart-scatter {
+.chart-scatter,
+.chart-radar {
   aspect-ratio: auto;
   width: 100%;
   font-size: 11px;
@@ -2180,6 +2542,71 @@ table.records tbody tr:hover .row-actions {
 
 .chart-scatter {
   height: 320px;
+}
+
+/* ---- Perfil radial -------------------------------------------------------- *
+ *
+ * El radar necesita alto y ancho parecidos: su radio sale del lado menor, así
+ * que en una tarjeta ancha y baja el polígono se encoge y deja dos huecos a los
+ * lados. Por eso no ocupa el ancho entero de su tarjeta, sino que lo comparte
+ * con la lectura en texto —que es además su equivalente accesible: lo que el
+ * dibujo codifica en posición, ahí es una frase.
+ * --------------------------------------------------------------------------- */
+/* El radio sale del lado menor menos la leyenda, así que aquí manda el alto:
+   340 px dejan un polígono de ~98 px de radio, que es lo que hace falta para que
+   cinco o seis rótulos quepan alrededor sin pisarse. */
+.chart-radar {
+  height: 340px;
+}
+
+/* Centrado y con tope en las dos columnas: en una tarjeta de fila entera, dejar
+   que crezcan hasta el borde separa el polígono de su propia leyenda con medio
+   metro de blanco. Con tope, el par se queda junto y el aire va a los lados. */
+.radar-split {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-lg);
+  flex-wrap: wrap;
+}
+
+/* El tope de ancho no es estético: pasados unos 270 px el que limita el radio es
+   el alto, así que todo lo que se le dé de más al gráfico es hueco a los lados
+   del polígono. Ese ancho se lo queda la lectura en texto, que sí lo usa. */
+.radar-split .chart-radar {
+  flex: 1 1 340px;
+  max-width: 380px;
+  min-width: 0;
+}
+
+/* Sin la raya de arriba de `.chart-notes`: aquí las notas van al lado del
+   gráfico, no debajo, y una línea horizontal partiría la tarjeta en vertical. */
+.radar-notes {
+  flex: 1 1 260px;
+  max-width: 54ch;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border-top: none;
+  gap: var(--space-sm);
+}
+
+.radar-notes li {
+  line-height: 1.5;
+}
+
+/* Una nota al pie, no una fila de leyenda: sin marca de color y con un párrafo
+   por contenido. En bloque, su rótulo entra en el mismo renglón que el texto; en
+   la fila flexible que usan las demás se partía en dos y parecía un titular. */
+.radar-notes li.note {
+  display: block;
+}
+
+@container (max-width: 720px) {
+  .radar-notes {
+    border-top: 1px solid var(--border);
+    padding-top: var(--space-sm);
+  }
 }
 
 /* ---- Tooltips ------------------------------------------------------------ */
@@ -2266,6 +2693,15 @@ table.records tbody tr:hover .row-actions {
   border-radius: 2px;
   flex: 0 0 8px;
   transform: translateY(1px);
+}
+
+/* La marca del anillo de referencia. Hueca y punteada porque en el gráfico eso
+   es un trazo, no un relleno: si aquí fuera un cuadrado macizo, la leyenda
+   prometería una serie más de las que hay. */
+.chart-note-dot.dashed {
+  background: none;
+  border: 1px dashed currentColor;
+  border-radius: 999px;
 }
 
 .chart-note-label {

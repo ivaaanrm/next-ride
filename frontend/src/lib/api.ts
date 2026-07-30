@@ -136,8 +136,12 @@ export const api = {
   get: <T>(path: string, query?: RequestOptions["query"]) => request<T>(path, { query }),
   post: <T>(path: string, body?: unknown, query?: RequestOptions["query"]) =>
     request<T>(path, { method: "POST", body, query }),
+  put: <T>(path: string, body?: unknown) => request<T>(path, { method: "PUT", body }),
   patch: <T>(path: string, body?: unknown) => request<T>(path, { method: "PATCH", body }),
-  delete: <T>(path: string, body?: unknown) => request<T>(path, { method: "DELETE", body }),
+  // Con `query` y no con `body`: un DELETE con cuerpo no lo tratan igual todos
+  // los intermediarios, y lo que se borra se identifica en la URL.
+  delete: <T>(path: string, query?: RequestOptions["query"]) =>
+    request<T>(path, { method: "DELETE", query }),
   login: (email: string, password: string) =>
     request<TokenPair>("/auth/login", {
       method: "POST",

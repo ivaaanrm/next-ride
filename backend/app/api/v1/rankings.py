@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
+from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, status
-from sqlalchemy import desc, select
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
+from sqlalchemy import desc, func, select
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import CurrentUser, SessionDep
@@ -19,7 +20,7 @@ from app.schemas.ranking import (
     RankingRunDetail,
     RankingRunRead,
 )
-from app.services.metrics import enrich_offers
+from app.services.metrics import enrich_offers, make_model_key
 from app.services.offers import favorite_offer_ids
 from app.services.ranking_agent import execute_ranking_run
 
@@ -65,8 +66,32 @@ async def _load_detail(session: SessionDep, run_id: int, user_id: int) -> Rankin
     return detail
 
 
+async def _resolve_binomio(session: SessionDep, key: str) -> str:
+    """Comprueba que el binomio existe y devuelve su etiqueta («Audi A3»).
+
+    La etiqueta sale de `mode()`, la grafía más frecuente, igual que en el
+    listado agrupado: la clave viene en minúsculas y no vale para enseñarla.
+    """
+    row = (
+        await session.execute(
+            select(
+                func.mode().within_group(CarModel.make),
+                func.mode().within_group(CarModel.model),
+            ).where(make_model_key() == key)
+        )
+    ).first()
+    if row is None or row[0] is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Binomio '{key}' no encontrado"
+        )
+    return f"{row[0]} {row[1]}"
+
+
+# El binomio va en query y no en la ruta: la clave lleva una barra vertical y
+# espacios («audi|a4 allroad quattro»), y un segmento de ruta con eso dentro
+# depende de que nadie normalice el porcentaje por el camino.
 @router.post(
-    "/car-models/{car_model_id}/rank",
+    "/car-model-groups/rank",
     response_model=RankingRunRead,
     status_code=status.HTTP_202_ACCEPTED,
 )
@@ -74,10 +99,10 @@ async def trigger_ranking(
     session: SessionDep,
     user: CurrentUser,
     background: BackgroundTasks,
-    car_model_id: int,
+    key: Annotated[str, Query(description="Binomio marca-modelo, `marca|modelo` en minúsculas")],
     payload: RankingRequest | None = None,
 ) -> RankingRun:
-    """Lanza el agente de IA sobre las ofertas activas del modelo.
+    """Lanza el agente de IA sobre las ofertas activas del binomio marca-modelo.
 
     Responde 202 de inmediato: el run se completa en segundo plano y se consulta
     con `GET /ranking-runs/{id}`.
@@ -88,13 +113,11 @@ async def trigger_ranking(
             detail="El ranking con IA no está configurado (falta ANTHROPIC_API_KEY)",
         )
 
-    car_model = await session.get(CarModel, car_model_id)
-    if car_model is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Modelo no encontrado")
+    label = await _resolve_binomio(session, key)
 
     in_flight = await session.scalar(
         select(RankingRun.id).where(
-            RankingRun.car_model_id == car_model_id,
+            RankingRun.make_model_key == key,
             RankingRun.status.in_([RunStatus.PENDING, RunStatus.RUNNING]),
         )
     )
@@ -105,7 +128,8 @@ async def trigger_ranking(
         )
 
     run = RankingRun(
-        car_model_id=car_model_id,
+        make_model_key=key,
+        label=label,
         triggered_by_id=user.id,
         status=RunStatus.PENDING,
         model_used=settings.ANTHROPIC_MODEL,
@@ -119,15 +143,17 @@ async def trigger_ranking(
     return run
 
 
-@router.get("/car-models/{car_model_id}/ranking", response_model=RankingRunDetail)
+@router.get("/car-model-groups/ranking", response_model=RankingRunDetail)
 async def get_latest_ranking(
-    session: SessionDep, user: CurrentUser, car_model_id: int
+    session: SessionDep,
+    user: CurrentUser,
+    key: Annotated[str, Query(description="Binomio marca-modelo, `marca|modelo` en minúsculas")],
 ) -> RankingRunDetail:
-    """Último ranking completado del modelo, con todas las ofertas valoradas."""
+    """Último ranking completado del binomio, con todas las ofertas valoradas."""
     run_id = await session.scalar(
         select(RankingRun.id)
         .where(
-            RankingRun.car_model_id == car_model_id,
+            RankingRun.make_model_key == key,
             RankingRun.status == RunStatus.COMPLETED,
         )
         .order_by(desc(RankingRun.created_at))
@@ -141,13 +167,16 @@ async def get_latest_ranking(
     return await _load_detail(session, run_id, user.id)
 
 
-@router.get("/car-models/{car_model_id}/ranking-runs", response_model=list[RankingRunRead])
-async def list_runs_for_model(
-    session: SessionDep, _: CurrentUser, car_model_id: int, limit: int = 20
+@router.get("/car-model-groups/ranking-runs", response_model=list[RankingRunRead])
+async def list_runs_for_binomio(
+    session: SessionDep,
+    _: CurrentUser,
+    key: Annotated[str, Query(description="Binomio marca-modelo, `marca|modelo` en minúsculas")],
+    limit: int = 20,
 ) -> list[RankingRun]:
     stmt = (
         select(RankingRun)
-        .where(RankingRun.car_model_id == car_model_id)
+        .where(RankingRun.make_model_key == key)
         .order_by(desc(RankingRun.created_at))
         .limit(min(limit, 100))
     )

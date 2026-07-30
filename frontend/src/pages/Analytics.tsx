@@ -30,6 +30,13 @@ import {
   ZAxis,
 } from "recharts";
 
+import {
+  RadarMark,
+  RadarProfile,
+  RadarReading,
+  TipRow,
+  type RadarSeries,
+} from "../components/charts";
 import { PageHeader } from "../components/Layout";
 import { Banner, Empty, Loading } from "../components/ui";
 import {
@@ -51,6 +58,7 @@ import {
   formatPrice,
 } from "../lib/format";
 import { useAsync } from "../lib/hooks";
+import { buildRadar, RADAR_MIN_AXES, type RadarAxis } from "../lib/radar";
 import type {
   AnalyticsSegments,
   FuelType,
@@ -321,7 +329,9 @@ export function AnalyticsPage() {
             <Headline series={series} />
 
             {/* La nube de puntos primero: es la que decide una compra. Lo demás
-                la acota (dónde está el precio, de qué años, de quién). */}
+                la acota (dónde está el precio, de qué años, de quién). El radar
+                cierra: resume en qué se diferencian los binomios una vez vistas
+                las dimensiones una a una. */}
             <div className="chart-grid">
               <PriceVsKmChart series={series} config={config} />
               <PriceRangeChart series={series} config={config} />
@@ -334,6 +344,7 @@ export function AnalyticsPage() {
                 onDimension={setMixDimension}
               />
               <DealerStockChart series={series} config={config} />
+              <ProfileRadarChart series={series} catalog={catalog} />
             </div>
 
             <ComparisonTable series={series} />
@@ -561,23 +572,6 @@ function RangeTip({ active, payload }: { active?: boolean; payload?: { payload: 
         <TipRow label="P25" value={formatPrice(row.p25)} />
         <TipRow label="Mínimo" value={formatPrice(row.min)} />
       </dl>
-    </div>
-  );
-}
-
-function TipRow({
-  label,
-  value,
-  strong = false,
-}: {
-  label: string;
-  value: string;
-  strong?: boolean;
-}) {
-  return (
-    <div className={`chart-tip-row${strong ? " strong" : ""}`}>
-      <dt>{label}</dt>
-      <dd>{value}</dd>
     </div>
   );
 }
@@ -1116,6 +1110,167 @@ function MixChart({
             <ChartLegend content={<ChartLegendContent />} />
           </BarChart>
         </ChartContainer>
+      )}
+    </ChartCard>
+  );
+}
+
+/* -------------------------------------------------------------------------- *
+ * 7 · Perfil comparado
+ * -------------------------------------------------------------------------- */
+
+/**
+ * Los seis ejes del radar, con la dirección puesta desde el punto de vista de
+ * quien compra: en todos, más lejos del centro es mejor. Sin esa regla un radar
+ * mezcla ejes que suben y ejes que bajan y el polígono deja de significar nada.
+ *
+ * El `minSpan` es el recorrido por debajo del cual las diferencias no se
+ * estiran: 15 % en precio, 20 % en kilómetros, un año y medio de matrícula,
+ * cuatro puntos de descuento. Por debajo de eso los binomios se quedan pegados
+ * al centro, que es la lectura correcta —son parecidos—, en vez de separarse por
+ * un ruido de dos decimales.
+ */
+const PROFILE_AXES: (Omit<RadarAxis, "cohort" | "values"> & {
+  of: (segment: Segment) => number | null;
+})[] = [
+  {
+    label: "Precio",
+    hint: "mediana del binomio",
+    direction: -1,
+    minSpan: 0.15,
+    relative: true,
+    format: formatPrice,
+    of: (segment) => segment.median_price,
+  },
+  {
+    label: "Kilómetros",
+    hint: "media del binomio",
+    direction: -1,
+    minSpan: 0.2,
+    relative: true,
+    format: formatKm,
+    of: (segment) => segment.avg_mileage_km,
+  },
+  {
+    label: "Año",
+    hint: "matrícula media",
+    direction: 1,
+    minSpan: 1.5,
+    format: (value) => decimal.format(value),
+    of: (segment) => segment.avg_year,
+  },
+  {
+    label: "Km / año",
+    hint: "uso medio",
+    direction: -1,
+    minSpan: 0.2,
+    relative: true,
+    format: formatNumber,
+    of: (segment) => segment.avg_km_per_year,
+  },
+  {
+    label: "Descuento",
+    hint: "medio sobre PVP",
+    direction: 1,
+    minSpan: 4,
+    format: formatPct,
+    of: (segment) => segment.avg_discount_pct,
+  },
+  {
+    label: "Oferta",
+    hint: "cuánto donde elegir",
+    direction: 1,
+    minSpan: 0.5,
+    relative: true,
+    format: (value) => `${formatNumber(value)} ofertas`,
+    of: (segment) => segment.offers,
+  },
+];
+
+/**
+ * La silueta de cada binomio, en un solo dibujo.
+ *
+ * Los otros seis gráficos contestan cada uno a una dimensión; este contesta a la
+ * pregunta que va antes: **en qué se diferencian estos coches**. Un binomio
+ * barato y viejo y otro caro y nuevo salen como dos polígonos volcados a lados
+ * opuestos, y eso no se ve en seis gráficos separados por mucho que los seis
+ * lleven el mismo color.
+ *
+ * Se normaliza contra **todo el catálogo**, no contra los seleccionados: así la
+ * forma de un binomio no cambia al añadir o quitar otro. Contra los
+ * seleccionados, comparar dos dejaría siempre a uno en el borde y a otro en el
+ * centro en todos los ejes, que es un dibujo que se puede predecir sin mirar los
+ * datos y por tanto no informa de nada.
+ */
+function ProfileRadarChart({ series, catalog }: { series: Series; catalog: Segment[] }) {
+  const keys = series.map(({ slot }) => SERIES[slot]);
+
+  const { rows, dropped } = buildRadar(
+    PROFILE_AXES.map((axis) => ({
+      ...axis,
+      cohort: catalog.map(axis.of),
+      values: series.map(({ segment }) => axis.of(segment)),
+    })),
+    keys,
+    // Dos binomios ya son una comparación: cada uno es el agregado de sus
+    // ofertas, no una oferta suelta que pueda ser un caso raro.
+    { minCohort: 2 },
+  );
+
+  const radarSeries: RadarSeries[] = series.map(({ slot, segment }) => ({
+    key: SERIES[slot],
+    label: segment.label,
+    color: SERIES_COLOR[slot],
+  }));
+
+  return (
+    <ChartCard
+      title="Perfil comparado"
+      hint="El anillo discontinuo es el binomio típico del catálogo; fuera de él está lo que es mejor para quien compra. El borde es la mayor diferencia que hay en el catálogo, así que la posición compara, no puntúa."
+      wide
+    >
+      {rows.length < RADAR_MIN_AXES ? (
+        <Empty
+          title="No hay ejes suficientes que comparar"
+          hint={
+            catalog.length < 2
+              ? "Hace falta más de un binomio marca-modelo en el catálogo para tener contra qué normalizar."
+              : "Los binomios comparados no comparten datos suficientes en ninguna dimensión."
+          }
+        />
+      ) : (
+        <div className="radar-split">
+          <RadarProfile
+            rows={rows}
+            series={radarSeries}
+            referenceLabel="Mediana del catálogo"
+          />
+
+          {/* Esta lista es la leyenda del radar y su lectura a la vez: el mismo
+              color, el mismo orden, y lo que el polígono dice de cada binomio
+              escrito en una línea. */}
+          <ul className="chart-notes radar-notes">
+            <li>
+              <RadarMark color="var(--text-tertiary)" dashed />
+              <span className="chart-note-label">Mediana del catálogo</span>
+              <span className="muted">el binomio típico, eje a eje</span>
+            </li>
+            {series.map(({ slot, segment }) => (
+              <li key={segment.key}>
+                <RadarMark color={SERIES_COLOR[slot]} />
+                <span className="chart-note-label">{segment.label}</span>
+                <RadarReading rows={rows} seriesKey={SERIES[slot]} />
+              </li>
+            ))}
+            {dropped.length ? (
+              <li className="muted">
+                Fuera del radar: {dropped.join(", ").toLowerCase()}. Un eje se cae cuando
+                alguno de los binomios comparados no trae el dato o cuando todo el catálogo
+                vale lo mismo.
+              </li>
+            ) : null}
+          </ul>
+        </div>
       )}
     </ChartCard>
   );

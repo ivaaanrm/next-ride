@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.core.security import api_key_prefix, hash_api_key, hash_password
 from app.db.session import SessionFactory, engine
 from app.models import ApiKey, Base, User
+from app.services.scraping_config import seed_scraping_config
 
 logger = logging.getLogger(__name__)
 
@@ -74,3 +75,5 @@ async def init_db() -> None:
         await create_schema()
     await seed_superuser()
     await seed_bootstrap_api_key()
+    async with SessionFactory() as session:
+        await seed_scraping_config(session)

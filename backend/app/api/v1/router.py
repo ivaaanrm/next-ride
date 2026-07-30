@@ -8,6 +8,7 @@ from app.api.v1 import (
     dealers,
     offers,
     rankings,
+    scraping,
     stats,
     tracking,
 )
@@ -18,6 +19,7 @@ api_router.include_router(api_keys.router)
 api_router.include_router(dealers.router)
 api_router.include_router(car_models.router)
 api_router.include_router(tracking.router)
+api_router.include_router(scraping.router)
 api_router.include_router(offers.router)
 api_router.include_router(rankings.router)
 api_router.include_router(stats.router)

@@ -35,9 +35,14 @@ from app.models import (
     Verdict,
     utcnow,
 )
-from app.schemas.offer import ModelPriceStats, OfferMetrics
+from app.schemas.offer import MakeModelPriceStats, OfferMetrics
 from app.schemas.ranking import RankingRequest
-from app.services.metrics import compute_metrics, first_seen_prices, model_price_stats
+from app.services.metrics import (
+    compute_metrics,
+    first_seen_prices,
+    make_model_key,
+    make_model_price_stats,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,10 +60,11 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "get_market_stats",
         "description": (
-            "Estadísticas agregadas del mercado para el modelo que se está analizando: "
-            "número de ofertas activas, precio mínimo/mediano/máximo, kilometraje y año "
-            "medios, número de dealers distintos y precio de referencia (PVP) si se conoce. "
-            "Úsala primero para situar el rango de precios antes de juzgar ofertas concretas."
+            "Estadísticas agregadas del mercado del modelo que se está analizando, con "
+            "todas sus versiones dentro: número de ofertas activas, cuántas versiones "
+            "distintas hay, precio mínimo/mediano/máximo, kilometraje y año medios y "
+            "número de dealers distintos. Úsala primero para situar el rango de precios "
+            "antes de juzgar ofertas concretas."
         ),
         "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
@@ -161,6 +167,12 @@ Eres un analista experto en compraventa de vehículos. Tu trabajo es rankear las
 ofertas de un mismo modelo procedentes de distintos dealers y decidir cuáles son \
 realmente buenas oportunidades.
 
+Las ofertas son de un modelo (marca + modelo), y dentro conviven sus **versiones**: \
+motorizaciones, acabados y carrocerías distintas, en el campo `version` de cada \
+oferta. El mercado con el que comparas es el del modelo entero —es el conjunto real \
+en el que elige un comprador—, pero la versión explica buena parte de la diferencia \
+de precio, así que tenla en cuenta antes de llamar cara a una y barata a otra.
+
 Método:
 1. Llama a `get_market_stats` para situar el rango de precios del modelo.
 2. Llama a `list_offers` para ver las ofertas candidatas y sus métricas.
@@ -171,8 +183,9 @@ candidatas.
 
 Cómo valorar:
 - El precio frente a la mediana del modelo es la señal principal, pero corrígelo \
-siempre por kilometraje, año, potencia y estado (nuevo / km0 / usado). Un coche \
-barato con el doble de kilómetros no es una buena oferta.
+siempre por versión, kilometraje, año, potencia y estado (nuevo / km0 / usado). Un \
+coche barato con el doble de kilómetros no es una buena oferta, y una versión tope de \
+gama por encima de la mediana puede seguir siéndolo.
 - Desconfía del precio anormalmente bajo sin explicación: márcalo y dilo en `cons`.
 - Un descuento anunciado grande sobre un PVP inflado no es un descuento real.
 - La valoración del dealer y los días publicada son señales secundarias, útiles para \
@@ -196,21 +209,20 @@ class _Candidate:
 
 @dataclass
 class _AgentContext:
-    car_model: CarModel
-    stats: ModelPriceStats
+    label: str
+    stats: MakeModelPriceStats
     candidates: dict[int, _Candidate]
     request: RankingRequest
     tool_trace: list[dict[str, Any]] = field(default_factory=list)
 
     def market_stats_payload(self) -> dict[str, Any]:
         return {
-            "car_model": self.car_model.display_name,
-            "reference_price_eur": (
-                float(self.car_model.reference_price)
-                if self.car_model.reference_price
-                else None
-            ),
+            "model": self.label,
             "active_offers": self.stats.count,
+            # El mercado son todas las versiones del modelo, así que se dice
+            # cuántas hay: un rango de 7.900 a 39.490 € se lee distinto sabiendo
+            # que dentro conviven un 1.0 TFSI y un RS3.
+            "distinct_versions": self.stats.versions,
             "min_price_eur": _round(self.stats.min_price),
             "median_price_eur": _round(self.stats.median_price),
             "max_price_eur": _round(self.stats.max_price),
@@ -243,6 +255,15 @@ def _offer_payload(candidate: _Candidate) -> dict[str, Any]:
     return {
         "offer_id": offer.id,
         "title": offer.title,
+        # La versión y su PVP son de la fila de `car_models`, no del binomio: el
+        # mercado es el modelo entero, pero un RS3 y un 1.0 TFSI no se comparan
+        # como si fueran el mismo coche, y el agente necesita poder distinguirlos.
+        "version": (offer.car_model.trim or None) if offer.car_model else None,
+        "version_reference_price_eur": (
+            float(offer.car_model.reference_price)
+            if offer.car_model and offer.car_model.reference_price
+            else None
+        ),
         "dealer": offer.dealer.name if offer.dealer else None,
         "dealer_rating": offer.dealer.rating if offer.dealer else None,
         "dealer_city": offer.dealer.city if offer.dealer else None,
@@ -269,8 +290,9 @@ def _offer_payload(candidate: _Candidate) -> dict[str, Any]:
 
 def _user_prompt(ctx: _AgentContext) -> str:
     lines = [
-        f"Analiza y rankea las ofertas de: {ctx.car_model.display_name}.",
-        f"Hay {len(ctx.candidates)} ofertas candidatas activas.",
+        f"Analiza y rankea las ofertas de: {ctx.label}.",
+        f"Hay {len(ctx.candidates)} ofertas candidatas activas, repartidas entre "
+        f"{ctx.stats.versions} versiones del modelo.",
     ]
     req = ctx.request
     constraints = []
@@ -297,14 +319,21 @@ def _user_prompt(ctx: _AgentContext) -> str:
 # Carga de candidatos
 # --------------------------------------------------------------------------- #
 async def build_context(
-    session: AsyncSession, car_model: CarModel, request: RankingRequest
+    session: AsyncSession, key: str, label: str, request: RankingRequest
 ) -> _AgentContext:
+    """Carga las ofertas activas del binomio y sus métricas contra ese mercado."""
+    variant_ids = list(
+        await session.scalars(select(CarModel.id).where(make_model_key() == key))
+    )
+    if not variant_ids:
+        raise RankingError(f"El binomio '{key}' ya no está en el catálogo.")
+
     offers = list(
         (
             await session.scalars(
                 select(Offer)
                 .where(
-                    Offer.car_model_id == car_model.id,
+                    Offer.car_model_id.in_(variant_ids),
                     Offer.status == OfferStatus.ACTIVE,
                 )
                 # El historial se carga por adelantado: la tool
@@ -319,8 +348,10 @@ async def build_context(
     if not offers:
         raise RankingError("No hay ofertas activas para este modelo.")
 
-    stats_map = await model_price_stats(session, [car_model.id])
-    stats = stats_map.get(car_model.id) or ModelPriceStats(car_model_id=car_model.id, count=0)
+    # Las métricas se calculan contra el mercado del binomio, no contra el de
+    # cada versión: es la mediana con la que se compara al rankear.
+    stats_map = await make_model_price_stats(session, variant_ids)
+    stats = stats_map.get(key) or MakeModelPriceStats(key=key, make="", model="")
     initial_prices = await first_seen_prices(session, [o.id for o in offers])
 
     candidates = {
@@ -330,9 +361,7 @@ async def build_context(
         )
         for offer in offers
     }
-    return _AgentContext(
-        car_model=car_model, stats=stats, candidates=candidates, request=request
-    )
+    return _AgentContext(label=label, stats=stats, candidates=candidates, request=request)
 
 
 # --------------------------------------------------------------------------- #
@@ -558,21 +587,13 @@ async def execute_ranking_run(
     if run is None:
         raise RankingError(f"RankingRun {run_id} no existe.")
 
-    car_model = await session.get(CarModel, run.car_model_id)
-    if car_model is None:
-        run.status = RunStatus.FAILED
-        run.error = "El modelo asociado al run ya no existe."
-        run.finished_at = utcnow()
-        await session.commit()
-        return run
-
     run.status = RunStatus.RUNNING
     run.effort = settings.ANTHROPIC_EFFORT
     run.model_used = settings.ANTHROPIC_MODEL
     await session.commit()
 
     try:
-        ctx = await build_context(session, car_model, request)
+        ctx = await build_context(session, run.make_model_key, run.label, request)
         payload = await _agent_loop(session, ctx, run)
         _persist_ranking(session, run, ctx, payload)
     except RankingError as exc:

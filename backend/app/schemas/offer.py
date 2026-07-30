@@ -151,9 +151,15 @@ class OfferRawRead(ORMModel):
 # --------------------------------------------------------------------------- #
 # Estadísticas
 # --------------------------------------------------------------------------- #
-class ModelPriceStats(BaseModel):
-    car_model_id: int
-    count: int
+class PriceStats(BaseModel):
+    """Agregados de precio sobre un conjunto de ofertas activas.
+
+    Los comparten la versión y el binomio marca-modelo porque `compute_metrics`
+    no necesita saber cuál de los dos está mirando: puntúa una oferta contra el
+    mercado que le pasen.
+    """
+
+    count: int = 0
     min_price: float | None = None
     median_price: float | None = None
     max_price: float | None = None
@@ -161,6 +167,25 @@ class ModelPriceStats(BaseModel):
     avg_mileage_km: float | None = None
     avg_year: float | None = None
     dealers_count: int = 0
+
+
+class ModelPriceStats(PriceStats):
+    car_model_id: int
+
+
+class MakeModelPriceStats(PriceStats):
+    """Los mismos agregados, pero del binomio marca-modelo entero.
+
+    No se componen a partir de los de cada versión: ni la mediana de un conjunto
+    sale de las medianas de sus partes, ni los dealers distintos de sumar los de
+    cada una. `make` y `model` son la grafía más frecuente del binomio, no la de
+    una versión concreta.
+    """
+
+    key: str
+    make: str
+    model: str
+    versions: int = 0
 
 
 class OverviewStats(BaseModel):

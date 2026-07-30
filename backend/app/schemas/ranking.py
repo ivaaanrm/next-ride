@@ -34,7 +34,9 @@ class RankedOffer(ORMModel):
 
 class RankingRunRead(ORMModel):
     id: int
-    car_model_id: int
+    # El run es de un binomio marca-modelo, no de una fila de `car_models`.
+    make_model_key: str
+    label: str
     status: RunStatus
     model_used: str | None
     effort: str | None

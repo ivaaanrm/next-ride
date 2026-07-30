@@ -78,18 +78,31 @@ añadir un valor no requiera migrar un tipo de Postgres.
 ### Esquema y migraciones
 
 En la v1 el esquema se crea al arrancar (`AUTO_CREATE_TABLES=true`), lo que
-garantiza que coincide con los modelos. Alembic ya está configurado; cuando el
-esquema empiece a evolucionar:
-
-```bash
-docker compose exec backend alembic revision --autogenerate -m "init"
-```
+garantiza que coincide con los modelos. Eso vale para crear tablas, pero no para
+**cambiar** una que ya existe, así que los cambios sobre tablas vivas llevan su
+revisión de Alembic:
 
 ```bash
 docker compose exec backend alembic upgrade head
 ```
 
-y pon `AUTO_CREATE_TABLES=false`.
+Hay una: `0001_ranking_por_binomio`, que mueve el objetivo de `ranking_runs` de
+`car_model_id` al binomio marca-modelo. Se salta a sí misma si la tabla ya tiene
+la forma nueva, para que una base recién creada por `create_all` no falle al
+aplicarla.
+
+Para regenerar el esquema desde cero (borra los datos):
+
+```bash
+make clean && make up
+```
+
+Cuando el esquema pase a gestionarse solo con Alembic, genera la revisión base y
+pon `AUTO_CREATE_TABLES=false`:
+
+```bash
+docker compose exec backend alembic revision --autogenerate -m "init"
+```
 
 ---
 
@@ -120,13 +133,22 @@ Anthropic (`claude-opus-5`) con cuatro tools:
 
 | Tool | Qué hace |
 |---|---|
-| `get_market_stats` | Mediana, mín/máx, km y año medios, nº de dealers |
-| `list_offers` | Ofertas candidatas con todas sus métricas ya calculadas |
+| `get_market_stats` | Mediana, mín/máx, km y año medios, nº de dealers y de versiones |
+| `list_offers` | Ofertas candidatas con su versión y todas sus métricas ya calculadas |
 | `get_offer_price_history` | Historial de precios de una oferta |
 | `submit_ranking` | **Terminal.** Entrega el ranking con salida estructurada (`strict: true`) |
 
 Decisiones que merecen explicación:
 
+- **El run es del binomio marca-modelo, no de la fila de `car_models`.** El
+  catálogo está partido por acabado, así que rankear «Audi A3 Sportback 35 TDI»
+  era rankear una oferta contra sí misma: sale un ranking de un elemento y un
+  «vs mediana» del 0,0 % que compara un coche consigo mismo. El agente compara
+  ahora las 27 ofertas del Audi A3, vengan de la versión que vengan, que es el
+  conjunto en el que elige un comprador. Cada oferta lleva su `version` y el PVP
+  de esa versión, y el prompt le dice explícitamente que la versión explica parte
+  de la diferencia de precio: un RS3 por encima de la mediana del A3 puede seguir
+  siendo buena oferta.
 - **Loop manual en lugar del tool runner del SDK** (que está en beta): hace falta
   acotar iteraciones, tener una tool terminal y persistir la traza y el consumo
   de tokens en `ranking_runs`.
@@ -143,8 +165,8 @@ Decisiones que merecen explicación:
 - **Fallbacks de servidor** activados por defecto (`ANTHROPIC_ENABLE_FALLBACKS`);
   si la cuenta no tiene el beta habilitado, se degrada solo y sigue.
 
-El run es asíncrono: `POST /car-models/{id}/rank` responde `202` y el frontend
-hace polling sobre `GET /ranking-runs/{id}`.
+El run es asíncrono: `POST /car-model-groups/rank?key=audi|a3` responde `202` y
+el frontend hace polling sobre `GET /ranking-runs/{id}`.
 
 ---
 
@@ -247,10 +269,12 @@ puro ruido, y una pendiente sin su ajuste es un número que aparenta saber algo.
 | Método | Ruta | |
 |---|---|---|
 | `GET`/`POST`/`PATCH` | `/car-models` | Modelos con stats de precio, `is_tracked` y el bloque `tracking` (los criterios del usuario) |
+| `GET` | `/car-models/groups` | Lo mismo por **binomio marca-modelo**, con las versiones colgando. Filtros: `q`, `tracked_only`, `include_inactive` |
 | `GET`/`POST`/`PATCH`/`DELETE` | `/tracked-models` | Modelos a seguir, con precio objetivo, km máx., año mín. y notas |
+| `POST`/`DELETE` | `/tracked-models/bulk` | Los mismos criterios sobre varias versiones a la vez, en una transacción |
 | `GET`/`POST`/`PATCH` | `/dealers` | Dealers con agregados. Filtros: `q`, `include_inactive` |
-| `POST` | `/car-models/{id}/rank` | Lanza el agente → `202` |
-| `GET` | `/car-models/{id}/ranking` | Último ranking completado |
+| `POST` | `/car-model-groups/rank?key=` | Lanza el agente sobre el binomio → `202` |
+| `GET` | `/car-model-groups/ranking?key=` | Último ranking completado del binomio |
 | `GET` | `/ranking-runs/{id}` | Estado de un run (polling) |
 | `GET` | `/stats/overview` · `/stats/car-models/{id}` | Métricas de cabecera |
 
@@ -259,6 +283,26 @@ en el catálogo, o `make` + `model` (+ `trim`) para **crearlo en la misma
 llamada**. Seguir un modelo que todavía no existe no debería ser un flujo de dos
 pasos con un 409 en medio. Re-seguir un modelo ya seguido actualiza sus criterios
 en lugar de fallar.
+
+`GET /car-models/groups` es la vista Modelos. `car_models` está partido por
+acabado —un «Audi A3» son veintitrés filas— y a ese nivel casi cada fila tiene
+una sola oferta, con mínimo, mediana y máximo iguales: tres columnas para decir
+un precio. Agrupa por `lower(make)|lower(model)`, la misma clave que
+`/analytics/segments`, así que además une las grafías que solo difieren en
+mayúsculas («A4 Allroad Quattro» y «A4 Allroad quattro»). Los precios se calculan
+sobre todas las ofertas del binomio, no componiendo los de cada versión: la
+mediana de un conjunto no sale de las medianas de sus partes, ni los dealers
+distintos de sumar los de cada una. El filtro `q` selecciona **binomios
+enteros** —buscar «sportback» devuelve el A3 completo, sus veintitrés
+versiones—, porque un grupo recortado daría una mediana que no es la del mercado
+que dice describir.
+
+`/tracked-models/bulk` existe porque el seguimiento vive en `car_models`: seguir
+un binomio son veintitrés seguimientos, y van en una llamada y no en veintitrés.
+El `DELETE` lleva los ids en `car_model_ids` separados por coma y es idempotente
+—se dispara sobre un binomio del que normalmente solo algunas versiones estaban
+seguidas—. El PVP de referencia no se toca en lote a propósito: es de la versión,
+y un RS3 no comparte precio de catálogo con un 1.0 TFSI.
 
 ---
 
@@ -289,7 +333,7 @@ sigue oculta, como antes.
 |---|---|
 | **Ofertas** | Tabla principal (marca / modelo / versión, ubicación, precio, km, km/año, métricas, filtros, orden, favoritos ★, descarte) y panel de detalle con todo lo scrapeado |
 | **Analítica** | Hasta tres binomios marca-modelo comparados en seis gráficos y un cuadro de dieciséis métricas |
-| **Modelos** | Panel único de seguimiento (elegir del catálogo o crear al vuelo + criterios) y panel de ranking IA con pros/cons y traza de tools |
+| **Modelos** | Una fila por binomio marca-modelo, desplegable en sus versiones. Panel único de seguimiento (elegir del catálogo o crear al vuelo + criterios) y panel de ranking IA con pros/cons y traza de tools |
 | **Dealers** | Agregados por concesionario, con edición y aviso de duplicados |
 | **Ajustes** | API keys y contrato de ingesta |
 
@@ -302,8 +346,12 @@ Dos decisiones de interacción que no son obvias:
   son tarjetas: son contexto de la tabla, y el «mejor chollo», que es una oferta
   concreta y no un agregado, se separa con un filete y abre su panel.
 - **Hay dos «vs mediana» y no son la misma.** La del panel de detalle es
-  `price_vs_median_pct`: mediana de **todas** las ofertas activas del mismo
-  modelo, la que alimenta `value_score` y al agente de IA. La de la **tabla** se
+  `price_vs_median_pct`: mediana de **todas** las ofertas activas del binomio
+  marca-modelo, la que alimenta `value_score` y al agente de IA. Es del binomio y
+  no de la fila de `car_models` por la misma razón que el resto: con una oferta
+  por acabado, la mediana de la versión es el precio del propio coche y salía un
+  0,0 % que decía «justo en mercado» comparándolo consigo mismo, con
+  `value_score` clavado en la mitad de la escala. La de la **tabla** se
   calcula en el navegador sobre las filas que hay en pantalla y responde otra
   pregunta: «de lo que estoy mirando, ¿cuál sale barato?». Por eso se mueve al
   filtrar y al cambiar de página, y por eso la cabecera de la columna enseña la
@@ -344,6 +392,23 @@ Dos decisiones de interacción que no son obvias:
   no había forma de tocarlos desde la UI. Ahora el panel «Seguir un modelo» /
   «Criterios» hace las dos cosas a la vez. La columna **Objetivo** marca en verde
   el modelo cuya oferta más baja ya está por debajo del precio objetivo.
+- **La fila de Modelos es el binomio, no el acabado.** Un «Audi A3» son
+  veintitrés filas de `car_models`, así que la tabla enseñaba veintitrés líneas de
+  una oferta cada una, con mínimo, mediana y máximo iguales: tres columnas para
+  decir un precio. Ahora la fila es «Audi A3» con los precios de sus veintisiete
+  ofertas, calculados en el servidor (`/car-models/groups`), y se despliega en sus
+  versiones. La jerarquía se lleva en la primera columna —sangría y registro más
+  ligero— y no tiñendo la fila: las versiones tienen las mismas cifras que su
+  binomio, así que lo que hay que distinguir es de quién es cada número, no
+  separar dos tablas.
+- **«Seguir» y «Ranking IA» son del binomio; los criterios se pueden afinar por
+  versión.** El seguimiento se aplica en lote —es la pregunta real: «avísame si
+  algún A3 baja de 18.000 €»— y el botón enseña `4/11` cuando solo algunas están
+  seguidas, en cuyo caso el clic las suelta todas en vez de completar un
+  seguimiento que nadie ha pedido. El PVP de referencia no viaja en lote: es de
+  la versión, y por eso «Criterios» sigue existiendo en las filas desplegadas.
+  La columna **Último ranking** solo tiene dato en la fila del binomio, que es de
+  quien es el run.
 
 ### Analítica
 

@@ -77,7 +77,78 @@ export interface CarModelWithStats extends CarModel {
   dealers_count: number;
   is_tracked: boolean;
   tracking: TrackedModelPrefs | null;
+  // El ranking de IA no está aquí: es del binomio, no de la versión.
+}
+
+/**
+ * Un binomio marca-modelo con sus versiones colgando: la unidad del catálogo.
+ *
+ * `car_models` está partido por acabado —un «Audi A3» son veintitrés filas— y a
+ * ese nivel casi cada fila tiene una sola oferta, con mínimo, mediana y máximo
+ * iguales. Los precios de aquí son del binomio entero, calculados en el servidor
+ * sobre todas sus ofertas: no salen de componer los de cada versión.
+ */
+export interface CarModelGroup {
+  key: string;
+  make: string;
+  model: string;
+  label: string;
+  variants: CarModelWithStats[];
+  variant_count: number;
+
+  active_offers: number;
+  min_price: number | null;
+  median_price: number | null;
+  max_price: number | null;
+  dealers_count: number;
+
+  /** Mediana de los PVP puestos, y sobre cuántas versiones. El PVP es de la versión. */
+  reference_price: number | null;
+  reference_variants: number;
+
+  tracked_variants: number;
+  /** El objetivo más bajo entre las versiones seguidas. */
+  target_price: number | null;
   last_ranked_at: string | null;
+}
+
+export type ScrapeAccess = "fetch" | "playwright" | "browser" | "manual";
+
+/** Fuente operativa del scraper; no es el vendedor que figura en una oferta. */
+export interface ScrapeSource {
+  id: number;
+  key: string;
+  name: string;
+  base_url: string;
+  search_url_template: string | null;
+  listing_url: string | null;
+  access: ScrapeAccess;
+  notes: string | null;
+  config: Record<string, unknown>;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ScrapeTarget {
+  id: number;
+  source_id: number;
+  make_model_key: string;
+  make: string;
+  model: string;
+  max_results: number;
+  search_url: string | null;
+  search_params: Record<string, unknown>;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  source: ScrapeSource;
+}
+
+export interface ScrapeTargetSelection {
+  source_id: number;
+  make: string;
+  model: string;
 }
 
 export interface OfferMetrics {
@@ -159,7 +230,10 @@ export interface RankedOffer {
 
 export interface RankingRun {
   id: number;
-  car_model_id: number;
+  /** El run es del binomio marca-modelo (`marca|modelo` en minúsculas). */
+  make_model_key: string;
+  /** La grafía con la que se lanzó («Audi A3»), congelada en el run. */
+  label: string;
   status: RunStatus;
   model_used: string | null;
   effort: string | null;

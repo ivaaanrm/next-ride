@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 from app.api.deps import CurrentUser, IngestDep, SessionDep
 from app.core.config import settings
 from app.models import (
+    CarModel,
     FuelType,
     Offer,
     OfferFavorite,
@@ -36,7 +37,7 @@ from app.schemas.offer import (
     OfferRawRead,
     OfferRead,
 )
-from app.services.metrics import enrich_offers
+from app.services.metrics import enrich_offers, make_model_key
 from app.services.offers import favorite_offer_ids, ingest_offers, upsert_offer
 
 router = APIRouter(prefix="/offers", tags=["offers"])
@@ -81,19 +82,31 @@ _DB_SORTS = {
 async def _latest_ai_summaries(
     session: SessionDep, offers: list[Offer]
 ) -> dict[int, OfferRankSummary]:
-    """Último veredicto del agente por oferta (del run completado más reciente de su modelo)."""
+    """Último veredicto del agente por oferta (del run completado más reciente de su modelo).
+
+    El run es del binomio marca-modelo, así que la oferta se une por su binomio y
+    no por su `car_model_id`: dos versiones del mismo modelo comparten ranking.
+    """
     if not offers:
         return {}
 
-    model_ids = list({offer.car_model_id for offer in offers})
+    # La clave se pide a SQL, que es quien la escribió en `ranking_runs`:
+    # componerla aquí con `str.lower` metería otras minúsculas en la comparación.
+    keys = list(
+        await session.scalars(
+            select(make_model_key())
+            .where(CarModel.id.in_({offer.car_model_id for offer in offers}))
+            .distinct()
+        )
+    )
     latest_runs = (
         await session.execute(
-            select(RankingRun.car_model_id, func.max(RankingRun.id))
+            select(RankingRun.make_model_key, func.max(RankingRun.id))
             .where(
-                RankingRun.car_model_id.in_(model_ids),
+                RankingRun.make_model_key.in_(keys),
                 RankingRun.status == RunStatus.COMPLETED,
             )
-            .group_by(RankingRun.car_model_id)
+            .group_by(RankingRun.make_model_key)
         )
     ).all()
     run_ids = [row[1] for row in latest_runs]

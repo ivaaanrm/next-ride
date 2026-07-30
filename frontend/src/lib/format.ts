@@ -65,6 +65,28 @@ export const FUEL_LABELS: Record<FuelType, string> = {
   other: "Otro",
 };
 
+/**
+ * El combustible reducido a una marca, para la tabla.
+ *
+ * Son iniciales y no pictogramas porque son siete categorías y cuatro de ellas
+ * —híbrido, híbrido enchufable, eléctrico, GLP— no tienen un dibujo que se
+ * reconozca sin haberlo aprendido antes; una inicial se lee al primer intento.
+ * El «+» del enchufable dice lo que lo separa del híbrido a secas: que además
+ * se enchufa.
+ *
+ * La marca nunca va sola: la celda lleva el rótulo entero en el `title` y en su
+ * etiqueta accesible, y el panel de detalle lo escribe sin abreviar.
+ */
+export const FUEL_MARKS: Record<FuelType, string> = {
+  petrol: "G",
+  diesel: "D",
+  hybrid: "H",
+  plugin_hybrid: "H+",
+  electric: "E",
+  lpg: "GLP",
+  other: "·",
+};
+
 export const TRANSMISSION_LABELS: Record<Transmission, string> = {
   manual: "Manual",
   automatic: "Automático",
