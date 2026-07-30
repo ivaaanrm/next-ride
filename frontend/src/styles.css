@@ -30,6 +30,16 @@
   --radius-lg: 8px;
   --shadow: 0 2px 4px rgba(0, 0, 0, 0.04), 0 12px 24px rgba(0, 0, 0, 0.04);
 
+  /* Escala de 4 pt, nombrada por relación y no por valor. Lo apretado agrupa
+     (xs/sm), lo generoso separa (xl/2xl): esa es toda la jerarquía espacial. */
+  --space-2xs: 2px;
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
+  --space-2xl: 32px;
+
   --sidebar-width: 224px;
   --sidebar-width-collapsed: 52px;
   --row-height: 36px;
@@ -232,6 +242,61 @@ textarea {
   font-size: 11px;
 }
 
+/* Entrada de la barra que abre un panel en vez de navegar: se ve igual que un
+   `NavLink` porque hace el mismo papel en la lista. `relative` es para que el
+   contador pueda anclarse al icono cuando la barra está plegada. */
+.nav-button {
+  position: relative;
+  width: 100%;
+  border: none;
+  background: none;
+  text-align: left;
+  font-weight: 500;
+}
+
+.nav-badge {
+  margin-left: auto;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  background: var(--neutral-soft);
+  color: var(--text-secondary);
+}
+
+.nav-badge.warm {
+  background: var(--warm);
+  color: #fff;
+}
+
+.nav-badge.negative {
+  background: var(--negative);
+  color: #fff;
+}
+
+/* Plegada quedan 52 px y no hay sitio para el contador en su columna: se monta
+   sobre el icono. El número no cabría en 16 px sobre un glifo de 16, así que
+   ahí solo queda el punto: «hay algo», y el cuántos lo dice el tooltip. */
+.sidebar.collapsed .nav-badge {
+  position: absolute;
+  top: 3px;
+  right: 8px;
+  min-width: 8px;
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border: 1.5px solid var(--bg);
+  border-radius: 50%;
+  font-size: 0;
+  color: transparent;
+}
+
 .sidebar-footer {
   margin-top: auto;
   border-top: 1px solid var(--border);
@@ -314,6 +379,57 @@ textarea {
   padding: 20px;
   flex: 1;
   min-width: 0;
+  /* El ancho útil depende de si la barra lateral está plegada, no del viewport:
+     lo que hay dentro se mide contra este contenedor. */
+  container-type: inline-size;
+}
+
+/* ------------------------------------------------------------------------- *
+ * Cambio de vista
+ *
+ * El envoltorio no genera caja: la cabecera y el cuerpo de cada página siguen
+ * siendo hijos directos de `.main`. Sin esto haría falta repetirle el
+ * `flex: 1` y el `min-height: 0`, y cualquier `transform` suyo convertiría a
+ * `.topbar` en pegajosa respecto al envoltorio en vez de al documento. Como no
+ * pinta caja, tampoco puede animarse él: se anima cada hijo.
+ * ------------------------------------------------------------------------- */
+.view {
+  display: contents;
+}
+
+/* La barra superior solo funde. Es parte del marco —está en el mismo sitio
+   antes y después—, y desplazarla la despega del borde durante la entrada. */
+.view > .topbar {
+  animation: view-fade 140ms ease-out both;
+}
+
+/* El cuerpo sí sube, 4px: lo justo para leerse como una página que llega y no
+   como un salto. Coincide con los 140ms del plegado de la barra lateral más un
+   poco, porque recorre distancia además de opacidad. */
+.view > .content {
+  animation: view-enter 180ms ease-out both;
+}
+
+@keyframes view-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes view-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+/* Quien pide menos movimiento no pide contenido a medio pintar: la vista
+   aparece entera y de golpe, sin fundido ni desplazamiento. */
+@media (prefers-reduced-motion: reduce) {
+  .view > .topbar,
+  .view > .content {
+    animation: none;
+  }
 }
 
 /* ------------------------------------------------------------------------- *
@@ -426,16 +542,225 @@ textarea {
   color: var(--text-secondary);
 }
 
+/* ---- Barra de filtros ------------------------------------------------------
+ *
+ * Una sola fila de 28 px, sin etiquetas apiladas. Antes eran seis pares
+ * etiqueta/control repartidos en dos filas (~90 px) para decir lo que los
+ * propios controles ya dicen: encima de un desplegable cuya primera opción es
+ * «Todos los modelos» no hace falta escribir «Modelo». Las etiquetas siguen ahí
+ * en `aria-label`; simplemente no ocupan alto, y ese alto se lo queda la tabla.
+ *
+ * Aquí solo hay controles que filtran. El orden se fue a las cabeceras de la
+ * tabla: era el único que no filtraba y, con él dentro, la fila pedía ~1.413 px
+ * de ancho útil, más de los ~1.248 que deja un portátil de 1.512 px descontada
+ * la barra lateral, así que se partía en dos filas en todos ellos.
+ * --------------------------------------------------------------------------- */
 .filters {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 8px;
-  padding: 0 0 14px;
+  align-items: center;
+  gap: var(--space-sm);
+  padding-bottom: var(--space-md);
 }
 
-.filters .grow {
-  flex: 1 1 200px;
+/* Un desplegable de modelos con «Audi A4 Allroad Quattro 2.0 TDI (12)» dentro
+   se comería media fila si se dejara crecer al ancho de su opción más larga. */
+.filters > .select {
+  max-width: 172px;
+}
+
+/* Encoge pero no crece: dejarlo crecer le daría todo el hueco que ha quedado
+   libre al salir el orden, y un campo de búsqueda de 400 px no es mejor que uno
+   de 232 —solo deja los demás controles más lejos del que se acaba de tocar. */
+.filter-search {
+  flex: 0 1 232px;
+  min-width: 128px;
+}
+
+.filter-search .input {
+  width: 100%;
+}
+
+/* Grupo que no se parte: al envolver, la fila se corta antes o después de los
+   tres interruptores, no en medio. */
+.filter-scopes {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+/* Interruptor de ámbito. Es un `.btn` con estado y no una casilla nativa: en una
+   fila de 28 px la casilla de 13 px es cromo del sistema al lado de todo lo
+   demás, y su etiqueta de al lado obligaba a una segunda fila. */
+.toggle {
+  gap: var(--space-xs);
+  padding: 0 9px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.toggle[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.toggle-mark {
+  font-size: 11px;
+  line-height: 1;
+}
+
+/* ---- Panel anclado --------------------------------------------------------- */
+.popover-wrap {
+  position: relative;
+  display: flex;
+}
+
+.popover-trigger {
+  gap: var(--space-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.popover-trigger.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.popover-caret {
+  font-size: 9px;
+  color: var(--text-tertiary);
+}
+
+.popover-trigger.on .popover-caret {
+  color: inherit;
+}
+
+/* Por encima de la cabecera fija de la tabla (2) y de la barra superior (5),
+   por debajo del panel lateral (20/21). */
+.popover {
+  position: absolute;
+  top: calc(100% + var(--space-xs));
+  left: 0;
+  z-index: 10;
+  min-width: 248px;
+  padding: var(--space-md);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+/* ---- Deslizador de rango ---------------------------------------------------
+ *
+ * Los dos `input[type=range]` están fuera de la vista (`.sr-only`) y solo
+ * atienden al teclado; lo que se ve son el carril, el relleno y dos pomos
+ * corrientes colocados con el mismo porcentaje, así que no pueden desalinearse.
+ * El motivo está en el comentario de `RangeSlider`, en `ui.tsx`.
+ * --------------------------------------------------------------------------- */
+/* Ancho fijo, no ajustado al contenido: «Sin límite» aparece al acotar y sin
+   esto el panel daría un salto de 70 px justo al mover el pomo. Prefiere crecer
+   hacia abajo, que es donde no hay nada. */
+.range-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  width: 222px;
+}
+
+.range {
+  position: relative;
+  height: 16px;
+}
+
+/* Sangrado de medio pomo a cada lado: así el pomo en un extremo queda dentro del
+   panel y el recorrido del carril coincide con el del pomo. */
+.range-rail {
+  position: absolute;
+  top: 50%;
+  left: 7px;
+  right: 7px;
+  height: 3px;
+  margin-top: -2px;
+  border-radius: 999px;
+  background: var(--border-strong);
+  cursor: pointer;
+  /* Sin esto, arrastrar en un táctil desplaza la página en vez del pomo. */
+  touch-action: none;
+}
+
+/* Un carril de 3 px es un blanco imposible: la zona de agarre son 19 px. */
+.range-rail::before {
+  content: "";
+  position: absolute;
+  inset: -8px 0;
+}
+
+.range-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--lo);
+  right: calc(100% - var(--hi));
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.range-thumb {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+  transition:
+    border-color 80ms ease,
+    box-shadow 80ms ease;
+}
+
+.range-thumb.lo {
+  left: var(--lo);
+}
+
+.range-thumb.hi {
+  left: var(--hi);
+}
+
+/* El foco del `input` invisible se pinta sobre el pomo que le corresponde: sin
+   esto, tabular hasta el deslizador no se vería en ninguna parte. */
+.range:has(.range-key.lo:focus-visible) .range-thumb.lo,
+.range:has(.range-key.hi:focus-visible) .range-thumb.hi,
+.range[data-dragging="lo"] .range-thumb.lo,
+.range[data-dragging="hi"] .range-thumb.hi {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.range-scale {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.range-bounds {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.range-bounds .input {
+  width: 82px;
+  font-variant-numeric: tabular-nums;
+}
+
+.range-dash {
+  color: var(--text-tertiary);
 }
 
 /* ------------------------------------------------------------------------- *
@@ -455,39 +780,89 @@ textarea {
   margin: 0 0 10px;
 }
 
-.metric-grid {
+/* ---- Métricas de cabecera de Ofertas --------------------------------------
+ *
+ * Antes eran cinco tarjetas idénticas en fila. Ya no son tarjetas: describen la
+ * tabla que tienen debajo, no son cinco objetos que comparar entre sí, y la
+ * caja no aportaba nada salvo cuatro bordes y una fila desigual cuando el
+ * nombre del modelo del «mejor chollo» se partía en dos líneas.
+ *
+ * Las cifras van a la izquierda; el mejor chollo, que es una oferta concreta y
+ * no un agregado, se separa a la derecha con un filete y sí se puede pulsar.
+ * --------------------------------------------------------------------------- */
+.stat-bar {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: var(--space-lg) var(--space-2xl);
+  padding-bottom: var(--space-lg);
+  margin-bottom: var(--space-lg);
+  border-bottom: 1px solid var(--border);
+}
+
+.stat-figures {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 10px;
-  margin-bottom: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: var(--space-md) var(--space-xl);
+  flex: 1 1 460px;
+  min-width: 0;
+  /* Las cifras de página pesan más que las del panel de detalle. */
+  --figure-size: 19px;
 }
 
-.metric {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 12px 14px;
+.stat-deal {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2xs);
+  max-width: 260px;
+  min-width: 0;
+  padding: 0 0 0 var(--space-2xl);
+  border: none;
+  border-left: 1px solid var(--border);
+  background: none;
+  color: inherit;
+  text-align: left;
+  transition: color 150ms ease;
 }
 
-.metric-label {
-  font-size: 11px;
-  color: var(--text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+.stat-deal:hover .stat-deal-price,
+.stat-deal:focus-visible .stat-deal-price {
+  color: var(--accent);
 }
 
-.metric-value {
-  font-size: 20px;
+.stat-deal-price {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: 19px;
   font-weight: 600;
   letter-spacing: -0.02em;
-  margin-top: 2px;
   font-variant-numeric: tabular-nums;
+  transition: color 150ms ease;
 }
 
-.metric-hint {
+/* Una línea y puntos suspensivos: «Audi A4 Allroad Quattro 2.0 TDI 120kW…»
+   partido en dos desnivelaba toda la fila. */
+.stat-deal-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 11px;
   color: var(--text-tertiary);
-  margin-top: 2px;
+}
+
+/* Cuando la fila se parte, el filete de la izquierda deja de separar dos grupos
+   y queda como una raya vertical suelta: pasa a ser un filete superior. */
+@container (max-width: 800px) {
+  .stat-deal {
+    width: 100%;
+    max-width: none;
+    padding: var(--space-md) 0 0;
+    border-left: none;
+    border-top: 1px solid var(--border);
+  }
 }
 
 /* ------------------------------------------------------------------------- *
@@ -541,6 +916,20 @@ table.records tbody tr:hover td {
   background: var(--surface-hover);
 }
 
+/* La fila entera abre el detalle. El foco se marca en las celdas: un `outline`
+   sobre un <tr> no se pinta de forma fiable. */
+table.records tbody tr.row-clickable {
+  cursor: pointer;
+}
+
+table.records tbody tr.row-clickable:focus {
+  outline: none;
+}
+
+table.records tbody tr.row-clickable:focus-visible td {
+  background: var(--accent-soft);
+}
+
 td.num,
 th.num {
   text-align: right;
@@ -562,6 +951,117 @@ th.num {
 .cell-muted {
   color: var(--text-secondary);
 }
+
+/* Recorta con puntos suspensivos; el texto completo va en el `title`. */
+.cell-clip {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cell-clip-sm {
+  max-width: 132px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- Cabeceras que ordenan -------------------------------------------------
+ *
+ * El orden vive aquí y no en la barra de filtros: es lo que se busca en una
+ * tabla de datos, y de paso la barra deja de pedir dos filas de alto.
+ *
+ * El `padding` pasa de la celda al botón para que el botón sea la celda entera:
+ * en una cabecera de 32 px, apuntar solo al rótulo de 11 px es apuntar a nada.
+ * --------------------------------------------------------------------------- */
+table.records thead th.sort-th {
+  padding: 0;
+}
+
+th.sort-th button {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  background: none;
+  /* Hereda la versalita de la cabecera: el botón se lee como cabecera, no como
+     un botón metido dentro de una. */
+  color: inherit;
+  font: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+
+/* La cifra manda: el rótulo se alinea con la columna de números que encabeza. */
+th.sort-th.num button {
+  justify-content: flex-end;
+}
+
+th.sort-th button:hover {
+  background: var(--surface-hover);
+}
+
+th.sort-th button:hover,
+th.sort-th.on button {
+  color: var(--text);
+}
+
+/* Por dentro: un `outline` por fuera lo taparía la celda de al lado, que también
+   es `position: sticky` y llega después. */
+th.sort-th button:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* Único sentido y ya puesto —«Valor» e «IA» solo van de mejor a peor—. Conserva
+   el aspecto de siempre, porque es la columna ordenada y no un control apagado;
+   solo el cursor deja de prometer que el clic hará algo. */
+th.sort-th button[aria-disabled="true"] {
+  cursor: default;
+}
+
+/* El carrete reserva su hueco aunque la columna no sea la ordenada: si apareciera
+   al ordenar, el rótulo se desplazaría justo debajo del puntero que acaba de
+   pulsarlo. Apagado es invisible; al pasar por encima se insinúa, y lo que
+   insinúa es el sentido que daría el clic. */
+.sort-caret {
+  /* Ancho fijo y no el del glifo: `▴` y `▾` no tienen que medir lo mismo en la
+     fuente que acabe resolviéndose, y si no lo miden el rótulo se corre unos
+     píxeles al cambiar de sentido —exactamente el salto que el hueco reservado
+     venía a evitar—. */
+  flex: 0 0 8px;
+  text-align: center;
+  font-size: 9px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 80ms ease;
+}
+
+th.sort-th button:hover .sort-caret,
+th.sort-th button:focus-visible .sort-caret {
+  opacity: 0.45;
+}
+
+th.sort-th.on .sort-caret {
+  opacity: 1;
+  color: var(--accent);
+}
+
+/* Segunda línea de una cabecera: el valor de referencia de la columna. Cae del
+   versalita de la cabecera al registro normal, porque es un dato y no una
+   etiqueta. */
+.th-note {
+  display: block;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
 
 .row-actions {
   display: flex;
@@ -591,6 +1091,34 @@ table.records tbody tr:hover .row-actions {
 .rank-badge.top {
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+/* Botón de icono para acciones de fila (descartar, restaurar) */
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--text-tertiary);
+  font-size: 13px;
+  line-height: 1;
+  transition:
+    background 80ms ease,
+    color 80ms ease;
+}
+
+.icon-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.icon-btn.danger:hover:not(:disabled) {
+  background: var(--negative-soft);
+  color: var(--negative);
 }
 
 /* Estrella de favorito */
@@ -675,11 +1203,15 @@ table.records tbody tr:hover .row-actions {
   font-weight: 500;
 }
 
+/* El carril va en `--border-strong` y no en `--neutral-soft`: sobre el blanco de
+   la tabla el gris claro se ve, pero sobre `--bg` o sobre el fondo hundido de la
+   franja de veredicto desaparece y la puntuación parece un guion suelto. Además,
+   sin carril visible no se puede juzgar la proporción de relleno. */
 .score-bar {
   width: 34px;
   height: 4px;
   border-radius: 999px;
-  background: var(--neutral-soft);
+  background: var(--border-strong);
   overflow: hidden;
 }
 
@@ -764,6 +1296,12 @@ table.records tbody tr:hover .row-actions {
 
 /* ------------------------------------------------------------------------- *
  * Panel lateral (detalle IA)
+ *
+ * El 20/21 solo gana a la barra superior (5) y a la cabecera fija de la tabla
+ * (2) porque `Drawer` se monta en `document.body` con un portal: desde dentro
+ * del árbol, la barra lateral —`position: sticky`, y eso ya crea contexto de
+ * apilado— encerraba el panel en un contexto de `z-index: auto` y ningún número
+ * de aquí podía sacarlo. Si el portal desaparece, esto se rompe otra vez.
  * ------------------------------------------------------------------------- */
 .drawer-backdrop {
   position: fixed;
@@ -786,6 +1324,356 @@ table.records tbody tr:hover .row-actions {
   flex-direction: column;
 }
 
+.drawer.wide {
+  width: min(880px, 96vw);
+}
+
+/* ---- Detalle de la oferta -------------------------------------------------
+ *
+ * Tres franjas con densidades distintas, en vez de seis tarjetas iguales:
+ *
+ *   1. Veredicto  — sangra a los bordes, fondo hundido. Responde «¿merece la
+ *                   pena abrir esto?» sin hacer scroll.
+ *   2. Evidencia  — foto + ficha, a dos columnas. Densa.
+ *   3. Procedencia — plegada. Datos de diagnóstico, no de decisión.
+ *
+ * El ritmo lo marca el espacio: 4-8 px dentro de un grupo, 24 px entre franjas.
+ * --------------------------------------------------------------------------- */
+.offer-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+  min-width: 0;
+}
+
+/* Dentro del detalle, «cargando» es un renglón de una sección secundaria, no
+   una pantalla de 48 px de alto. */
+.offer-detail .loading {
+  padding: var(--space-xs) 0;
+  text-align: left;
+}
+
+/* ---- 1. Veredicto ---- */
+.verdict {
+  margin: calc(var(--drawer-pad) * -1) calc(var(--drawer-pad) * -1) 0;
+  padding: var(--space-lg) var(--space-lg) var(--space-md);
+  background: var(--surface-sunken);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.verdict-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-sm) var(--space-lg);
+}
+
+.verdict-price {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+/* El dato primario del panel: el doble que el cuerpo, y con aire alrededor. */
+.verdict-amount {
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.verdict-was {
+  color: var(--text-tertiary);
+  text-decoration: line-through;
+  font-variant-numeric: tabular-nums;
+}
+
+.verdict-score {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2xs);
+  text-align: right;
+}
+
+/* La puntuación de valor pesa lo mismo que el precio: son las dos mitades de
+   la misma pregunta. */
+.verdict-score .score {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.verdict-score .score-bar {
+  width: 56px;
+  height: 5px;
+}
+
+
+/* 88 px es lo justo para que las cinco desviaciones quepan en una fila incluso
+   con el panel estrecho: partirlas en 4 + 1 se lee como si la última sobrara. */
+.verdict-deltas {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
+  gap: var(--space-md) var(--space-lg);
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-md);
+}
+
+/* Etiqueta sobre valor: el mismo primitivo en la cabecera de Ofertas y en la
+   franja de veredicto del panel. El tamaño del valor lo decide el contenedor. */
+.figure {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  min-width: 0;
+}
+
+/* Sin recorte: una etiqueta cortada («DÍAS PUBLICA…») se lee peor que una
+   partida en dos líneas. A 880 px, que es el ancho normal del panel, las cinco
+   caben en una sola línea de todos modos. */
+.figure-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  text-wrap: balance;
+}
+
+.figure-value {
+  font-size: var(--figure-size, 14px);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.figure-value.positive {
+  color: var(--positive);
+}
+.figure-value.negative {
+  color: var(--negative);
+}
+.figure-value.none {
+  color: var(--text-tertiary);
+}
+
+.figure-hint {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.verdict-ai {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-md);
+}
+
+.verdict-ai-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+/* Prosa, no dato: se acota a longitud de línea legible aunque el panel sea ancho. */
+.verdict-ai-reason {
+  margin: 0;
+  max-width: 68ch;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+/* ---- 2. Evidencia ---- */
+.offer-evidence {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: var(--space-xl);
+  align-items: start;
+}
+
+.offer-facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  min-width: 0;
+}
+
+/* Un grupo es una etiqueta y sus pares, no una tarjeta: el panel ya es el
+   contenedor. */
+.fact-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.fact-label {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+}
+
+/* ---- 3. Historial y procedencia ---- */
+.price-track {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm) var(--space-xl);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.price-track li {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  min-width: 0;
+}
+
+.price-track-price {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-xs);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.price-track-delta {
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.price-track-delta.positive {
+  color: var(--positive);
+}
+.price-track-delta.negative {
+  color: var(--negative);
+}
+
+.offer-provenance {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-lg);
+}
+
+.offer-provenance > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  cursor: pointer;
+  list-style: none;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  transition: color 150ms ease;
+}
+
+.offer-provenance > summary::-webkit-details-marker {
+  display: none;
+}
+
+.offer-provenance > summary::before {
+  content: "▸";
+  display: inline-block;
+  font-size: 11px;
+  line-height: 1;
+  transition: transform 150ms ease;
+}
+
+.offer-provenance[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.offer-provenance > summary:hover {
+  color: var(--text);
+}
+
+.offer-provenance-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding-top: var(--space-md);
+}
+
+/* Bajo ~620 px el panel ya no da para dos columnas: foto arriba, ficha debajo.
+   La foto se acota a mano: a todo lo ancho, el 4/3 la convierte en un héroe de
+   400 px que entierra la ficha, que es justo lo contrario de lo que se viene a
+   hacer aquí. */
+@container (max-width: 620px) {
+  .offer-evidence {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-lg);
+  }
+
+  .offer-evidence > .offer-preview {
+    max-width: 320px;
+  }
+}
+
+.offer-preview {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  overflow: hidden;
+  transition:
+    border-color 80ms ease,
+    box-shadow 80ms ease;
+}
+
+.offer-preview:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow);
+}
+
+.offer-preview-image {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  background: var(--surface-sunken);
+}
+
+.offer-preview-image.empty {
+  display: grid;
+  place-items: center;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+/* Sin precio: lo dice la franja de veredicto 200 px más arriba. Aquí sobra. */
+.offer-preview-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-md);
+  min-width: 0;
+}
+
+.offer-preview-title {
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.offer-preview-cta {
+  margin-top: var(--space-2xs);
+  color: var(--accent);
+  font-weight: 500;
+}
+
 .drawer-header {
   display: flex;
   align-items: center;
@@ -801,12 +1689,18 @@ table.records tbody tr:hover .row-actions {
 }
 
 .drawer-body {
-  padding: 16px;
+  /* Expuesto como variable para que un hijo pueda sangrar a los bordes con
+     `calc(var(--drawer-pad) * -1)` sin repetir el número. */
+  --drawer-pad: var(--space-lg);
+  padding: var(--drawer-pad);
   overflow-y: auto;
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--space-md);
+  /* El panel cambia de ancho con el viewport pero no es el viewport: sus hijos
+     responden a él. */
+  container-type: inline-size;
 }
 
 /* Selector de modelo dentro del panel de seguimiento */
@@ -845,6 +1739,59 @@ table.records tbody tr:hover .row-actions {
 
 .picker-name {
   font-weight: 500;
+}
+
+/* Pares etiqueta / valor del panel de detalle.
+ *
+ * Los pares fluyen en columnas en vez de apilarse: un `dd` de ocho caracteres
+ * no necesita 700 px a su derecha. Dentro del par el hueco es apretado (8 px),
+ * entre pares es generoso (24 px), y así se leen como pares sin filete alguno.
+ * La etiqueta va a ancho fijo para que las columnas alineen entre filas. */
+.kv {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-sm) var(--space-xl);
+  margin: 0;
+  font-size: 12px;
+}
+
+.kv > div {
+  display: grid;
+  grid-template-columns: minmax(0, var(--kv-label, 88px)) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 0 var(--space-sm);
+  min-width: 0;
+}
+
+/* Una sola columna, para etiquetas largas y valores que ocupan (la URL). */
+.kv-1 {
+  --kv-label: 152px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.kv dt {
+  color: var(--text-tertiary);
+}
+
+.kv dd {
+  margin: 0;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.raw-json {
+  margin: 0;
+  padding: 10px;
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .ranked-item {
@@ -891,6 +1838,71 @@ table.records tbody tr:hover .row-actions {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-tertiary);
+}
+
+/* ---- Notificaciones -------------------------------------------------------
+ *
+ * Un aviso no es una tarjeta más: el filete de color del borde izquierdo dice
+ * la gravedad de un vistazo, sin teñir el fondo del bloque entero como hacía
+ * el banner que esto sustituye. Ese filete y la etiqueta van al mismo tono.
+ * --------------------------------------------------------------------------- */
+.notice-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.notice {
+  --notice-accent: var(--border-strong);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--notice-accent);
+  border-radius: var(--radius-lg);
+  padding: var(--space-md);
+}
+
+.notice.warm {
+  --notice-accent: var(--warm);
+}
+
+.notice.negative {
+  --notice-accent: var(--negative);
+}
+
+.notice-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.notice-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.notice-summary {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+/* El «cómo se arregla» va en gris más claro y más pequeño: es la instrucción,
+   y solo hace falta leerla cuando ya has decidido resolverlo. */
+.notice-detail {
+  margin: var(--space-sm) 0 0;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.notice-action {
+  display: inline-block;
+  margin-top: var(--space-md);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.notice-action:hover {
+  color: var(--accent-hover);
 }
 
 /* ------------------------------------------------------------------------- *
@@ -987,10 +1999,6 @@ table.records tbody tr:hover .row-actions {
   font-size: 11px;
 }
 
-.right {
-  text-align: right;
-}
-
 .section-title {
   font-size: 12px;
   font-weight: 600;
@@ -998,6 +2006,327 @@ table.records tbody tr:hover .row-actions {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   margin: 0 0 8px;
+}
+
+/* ------------------------------------------------------------------------- *
+ * Analítica
+ *
+ * Los gráficos los monta shadcn/ui sobre Recharts, que trae sus clases de
+ * Tailwind. Todo lo de aquí va **sin capa**, así que gana a las utilidades de
+ * Tailwind (que sí están en `@layer utilities`) sin necesidad de `!important`:
+ * el CSS de la casa sigue teniendo la última palabra sobre el del componente.
+ * ------------------------------------------------------------------------- */
+.analytics-picker {
+  padding-bottom: var(--space-lg);
+  margin-bottom: var(--space-lg);
+  border-bottom: 1px solid var(--border);
+}
+
+.analytics-picker-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+
+.select-sm {
+  height: 26px;
+  font-size: 12px;
+}
+
+/* Un binomio es una opción con color: el punto de la izquierda es la misma
+   tinta que su serie en los seis gráficos, así que esta fila es la leyenda
+   común y no hace falta repetirla dentro de cada tarjeta. */
+.binomio-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.binomio {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 12px;
+  transition:
+    border-color 80ms ease,
+    color 80ms ease;
+}
+
+.binomio:hover:not(:disabled) {
+  border-color: var(--text-tertiary);
+  color: var(--text);
+}
+
+.binomio:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.binomio.on {
+  border-color: var(--slot);
+  color: var(--text);
+  font-weight: 500;
+}
+
+.binomio-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--border-strong);
+  flex: 0 0 8px;
+}
+
+.binomio.on .binomio-dot {
+  background: var(--slot);
+}
+
+.binomio-count {
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Al recargar se mantiene lo pintado a media tinta. Un esqueleto en cada cambio
+   de filtro salta la página de sitio, y eso se nota más que el retardo. */
+.analytics[data-stale] {
+  opacity: 0.55;
+  transition: opacity 120ms ease;
+  pointer-events: none;
+}
+
+/* Dos columnas fijas y no `auto-fit`: con tres columnas los nombres de dealer
+   se parten en dos líneas y la leyenda de cada gráfico ocupa el doble. Dos
+   columnas más una fila entera para los dos gráficos anchos llenan la rejilla
+   sin dejar un hueco suelto al final. */
+.chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-md);
+  margin-bottom: var(--space-xl);
+}
+
+.chart-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 14px 16px 10px;
+  min-width: 0;
+}
+
+/* La nube de puntos es la que decide una compra: ocupa la fila entera. */
+.chart-card.wide {
+  grid-column: 1 / -1;
+}
+
+.chart-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-md);
+  margin-bottom: var(--space-md);
+}
+
+.chart-card-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* Secundario y no terciario: esta línea explica cómo se lee el gráfico, así que
+   es texto que hay que poder leer. A 11 px el gris más claro no llega a AA. */
+.chart-card-hint {
+  margin: 2px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  max-width: 62ch;
+}
+
+.chart-card-actions {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+/* `ChartContainer` viene con `aspect-video`; aquí manda el alto, que es lo que
+   fija la densidad de la página. */
+.chart-box,
+.chart-plot,
+.chart-tall,
+.chart-scatter {
+  aspect-ratio: auto;
+  width: 100%;
+  font-size: 11px;
+}
+
+/* Ocho dealers con su nombre completo necesitan alto, no ancho. */
+.chart-tall {
+  height: 268px;
+}
+
+.chart-box {
+  height: 212px;
+}
+
+.chart-plot {
+  height: 232px;
+}
+
+.chart-scatter {
+  height: 320px;
+}
+
+/* ---- Tooltips ------------------------------------------------------------ */
+.chart-tip {
+  min-width: 168px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  font-size: 11px;
+}
+
+.chart-tip-title {
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 6px;
+  max-width: 30ch;
+  line-height: 1.35;
+}
+
+.chart-tip-rows {
+  margin: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.chart-tip-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-lg);
+}
+
+.chart-tip-row dt {
+  color: var(--text-tertiary);
+}
+
+.chart-tip-row dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.chart-tip-row.strong dd {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.chart-tip-inline {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-md);
+  flex: 1;
+}
+
+.chart-tip-inline strong {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Notas al pie de un gráfico ------------------------------------------ */
+.chart-notes {
+  list-style: none;
+  margin: var(--space-sm) 0 0;
+  padding: var(--space-sm) 0 0;
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.chart-notes li {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.chart-note-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: 0 0 8px;
+  transform: translateY(1px);
+}
+
+.chart-note-label {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.chart-notes strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Conmutador de dimensión --------------------------------------------- */
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.segmented button {
+  height: 24px;
+  padding: 0 8px;
+  border: none;
+  border-left: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.segmented button:first-child {
+  border-left: none;
+}
+
+.segmented button:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.segmented button.on {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* ---- Cuadro comparativo --------------------------------------------------- */
+.analytics-table .records td.num,
+.analytics-table .records th.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.th-series {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+@container (max-width: 720px) {
+  .chart-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 860px) {

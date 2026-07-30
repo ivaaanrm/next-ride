@@ -4,6 +4,9 @@ import { BrowserRouter } from "react-router-dom";
 
 import { App } from "./App";
 import { AuthProvider } from "./lib/auth";
+// Antes que `styles.css`: las utilidades de Tailwind solo las usan los gráficos,
+// y así el CSS propio de la app sigue teniendo la última palabra.
+import "./tailwind.css";
 import "./styles.css";
 
 const container = document.getElementById("root");

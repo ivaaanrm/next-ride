@@ -182,11 +182,31 @@ oferta mal formada se reporta en `errors` sin tumbar el lote.
 ### Ofertas
 | Método | Ruta | |
 |---|---|---|
-| `GET` | `/offers` | Paginado. Filtros: `q`, `car_model_id`, `dealer_id`, `condition`, `fuel_type`, `min_price`, `max_price`, `max_mileage_km`, `min_year`, `tracked_only`, `favorites_only`, `status`. `sort`: `value_score`, `ai_score`, `price`, `-price`, `mileage_km`, `-year`, `-first_seen_at` |
+| `GET` | `/offers` | Paginado. Filtros: `q`, `car_model_id`, `dealer_id`, `condition`, `fuel_type`, `min_price`, `max_price`, `max_mileage_km`, `min_year`, `max_year`, `tracked_only`, `favorites_only`, `status`. `sort` (el prefijo `-` es descendente): `price`, `-price`, `year`, `-year`, `mileage_km`, `-mileage_km`, `first_seen_at`, `-first_seen_at`, `-last_seen_at`, y `value_score` / `ai_score`, que solo van de mejor a peor y evalúan hasta 500 filas |
+| `GET` | `/offers/stats` | Agregados **del conjunto filtrado**: recuento, modelos distintos, precio medio, km medios, km/año medios, descuento medio, mejor chollo y los dominios `price_floor`/`price_ceiling` y `year_floor`/`year_ceiling` |
 | `GET` | `/offers/{id}` · `/offers/{id}/price-history` | Detalle e historial |
+| `GET` | `/offers/{id}/raw` | Payload crudo del scraper. **No** va en `OfferRead`: 50 payloads por página es peso que casi nadie mira |
 | `DELETE` | `/offers/{id}` | **Descarte manual** (borrado lógico) |
 | `POST` | `/offers/{id}/restore` | Deshace el descarte |
 | `POST`/`DELETE` | `/offers/{id}/favorite` | Marca / desmarca favorito. Idempotentes; devuelven la oferta |
+
+`/offers/stats` comparte los filtros con `/offers` a través de la misma
+dependencia (`OfferFilters`), no de dos listas de parámetros copiadas: si
+divergieran, las métricas de cabecera describirían un conjunto distinto del que
+enseña la tabla, que es el error que hace inútil una métrica. Las medias salen
+de un `AVG` en SQL sobre el conjunto entero; el `best_deal` no, porque la
+puntuación de valor se calcula en Python, así que se acota igual que el orden
+por puntuación (500 ofertas) y con el mismo criterio, para que coincida con la
+primera fila de la tabla.
+
+`price_floor`/`price_ceiling` y `year_floor`/`year_ceiling` son la excepción a
+esa regla y lo único de `/offers/stats` que **no** describe el conjunto que se
+ve: cada par se calcula con su propio filtro quitado (`min_price`/`max_price` y
+`min_year`/`max_year`). Son el dominio de los deslizadores del frontend, y si se
+recalcularan con el filtro puesto, el carril se encogería a la propia selección
+en cada arrastre y no habría vuelta atrás. Los demás filtros sí cuentan,
+incluido el del otro rango: acotar a un modelo, o al precio, sí debe encoger el
+carril de los años.
 
 El descarte es lógico a propósito: el scraper vuelve a ver la oferta en el
 origen y **no debe resucitarla**. Una oferta `expired` sí se reactiva si reaparece.
@@ -194,6 +214,34 @@ origen y **no debe resucitarla**. Una oferta `expired` sí se reactiva si reapar
 Los favoritos son **por usuario**: `OfferRead.is_favorite` es la marca de quien
 hace la petición, no un atributo de la oferta. Por eso viven en su propia tabla
 y no como columna de `offers`, que es compartida y la escribe el scraper.
+
+### Analítica
+| Método | Ruta | |
+|---|---|---|
+| `GET` | `/analytics/segments` | Agregados por **binomio marca-modelo**. Mismos filtros que `/offers`, más `keys` (los binomios con detalle, máx. 3) |
+
+La unidad de análisis **no** es `car_models`: el catálogo se fragmenta por
+acabado —un «Audi A4 Allroad Quattro» son once filas, una por versión— y comparar
+a ese nivel no responde nada, porque las medianas salen de dos ofertas. Los
+binomios se agrupan por `lower(make)` + `lower(model)`, que además une la misma
+marca escrita de varias formas («A4 Allroad Quattro» y «A4 Allroad quattro»), y
+la etiqueta sale del `mode()` de las grafías, no de la que gane alfabéticamente.
+
+Todos los binomios traen sus agregados —los pide el selector— pero solo los de
+`keys` traen el detalle pesado (nube de puntos, precio por año, stock por dealer,
+composición). Mandar la nube de treinta binomios sería pesar de más por algo que
+nadie mira.
+
+El reparto entre SQL y Python es el mismo de `/offers/stats`: los percentiles,
+las medias y los recuentos describen el **conjunto filtrado entero**; lo que
+depende de `value_score` se calcula en Python, va acotado a 600 ofertas por
+binomio y lo dice en `offers_sampled`, para que no se lea como si describiera
+todo el segmento.
+
+`trend` es la regresión de precio sobre kilómetros del binomio. Se calcula en el
+backend para que la cifra de la tabla y la recta del gráfico sean la misma
+cuenta, y viaja con su `r2` a propósito: con ocho ofertas una pendiente puede ser
+puro ruido, y una pendiente sin su ajuste es un número que aparenta saber algo.
 
 ### Catálogo, seguimiento y ranking
 | Método | Ruta | |
@@ -221,29 +269,123 @@ Estética minimalista inspirada en Twenty CRM: sidebar plegable, tabla densa de
 registros con cabecera *sticky*, chips de color suave, un único azul de acento
 y radios de 4 px.
 
+La única excepción al «sin framework» son los **gráficos**: la vista de Analítica
+usa el componente `chart` de shadcn/ui sobre Recharts, que está escrito con
+clases de Tailwind. Tailwind entra por eso y solo por eso, y entra **sin su
+`preflight`** (`src/tailwind.css` importa `theme` y `utilities`, no el reset):
+el reset pisaría la tabla, los botones y los formularios que ya existen. El
+bloque `@theme` traduce los tokens de `styles.css` a los nombres que espera
+shadcn, así que si cambia la paleta de la app los gráficos la siguen. Y como el
+CSS propio va sin capa, siempre gana a las utilidades de Tailwind sin necesidad
+de un solo `!important`.
+
 La sidebar se pliega a un riel de iconos de 52 px con el botón `«` o con
 **⌘/Ctrl+B**, y la preferencia se guarda en `localStorage`: la tabla de ofertas
-tiene doce columnas y esos 172 px de más se notan. Plegada, los `title` y los
+tiene catorce columnas y esos 172 px de más se notan. Plegada, los `title` y los
 `aria-label` son la única etiqueta de cada icono. Por debajo de 860 px la sidebar
 sigue oculta, como antes.
 
 | Vista | |
 |---|---|
-| **Ofertas** | Tabla principal con métricas, filtros, orden, favoritos (★) y descarte manual |
+| **Ofertas** | Tabla principal (marca / modelo / versión, ubicación, precio, km, km/año, métricas, filtros, orden, favoritos ★, descarte) y panel de detalle con todo lo scrapeado |
+| **Analítica** | Hasta tres binomios marca-modelo comparados en seis gráficos y un cuadro de dieciséis métricas |
 | **Modelos** | Panel único de seguimiento (elegir del catálogo o crear al vuelo + criterios) y panel de ranking IA con pros/cons y traza de tools |
 | **Dealers** | Agregados por concesionario, con edición y aviso de duplicados |
 | **Ajustes** | API keys y contrato de ingesta |
 
 Dos decisiones de interacción que no son obvias:
 
+- **Las métricas de cabecera son las del filtro, no las del catálogo.** Piden
+  `/offers/stats` con los mismos filtros que la tabla, así que «precio medio»
+  significa el de las filas que se están viendo. Enseñar la media global junto a
+  una tabla filtrada es enseñar dos conjuntos distintos como si fueran uno. No
+  son tarjetas: son contexto de la tabla, y el «mejor chollo», que es una oferta
+  concreta y no un agregado, se separa con un filete y abre su panel.
+- **Hay dos «vs mediana» y no son la misma.** La del panel de detalle es
+  `price_vs_median_pct`: mediana de **todas** las ofertas activas del mismo
+  modelo, la que alimenta `value_score` y al agente de IA. La de la **tabla** se
+  calcula en el navegador sobre las filas que hay en pantalla y responde otra
+  pregunta: «de lo que estoy mirando, ¿cuál sale barato?». Por eso se mueve al
+  filtrar y al cambiar de página, y por eso la cabecera de la columna enseña la
+  mediana con la que compara: un porcentaje sin su referencia no dice nada. Con
+  menos de dos filas no hay dato (la mediana sería el propio precio y saldría un
+  0,0 % que parece «justo en mercado» sin serlo). La del panel lleva «del
+  modelo» debajo para que no se confundan.
+- **El dealer no tiene columna, la ubicación sí.** Los nombres reales llegan a 38
+  caracteres («Flexicar Móstoles - Polígono Regordoño») y se comían el ancho para
+  algo que casi nunca decide una compra; el dealer sigue en el filtro, en el panel
+  de detalle y en su propia vista. La columna **Ubicación** usa `location` de la
+  oferta y cae a la ciudad del dealer cuando el scraper no la manda.
 - **Marcar un favorito no recarga la tabla.** Se parchea la fila con la oferta que
   devuelve el endpoint, para no perder la posición ni el orden mientras se marcan
   varias seguidas.
+- **La tabla enseña la identidad, el panel enseña el resto.** Las columnas son
+  marca / modelo / versión: lo que sirve para comparar de un vistazo. El descuento,
+  el estado del vehículo, los días publicada, el historial de precios y el `raw`
+  del scraper viven en el panel de detalle, que **abre la fila entera** (con
+  `stopPropagation` en la estrella y en el botón de descartar) y los pide bajo
+  demanda.
+- **El panel de detalle responde una pregunta, no vuelca un esquema.** La
+  pregunta es «¿merece la pena abrir esto?», así que el orden no es el de la
+  tabla `offers` sino el de la decisión: una franja de **veredicto** arriba del
+  todo (precio, PVP tachado, descuento, las cuatro desviaciones, la puntuación de
+  valor y el veredicto del agente), la **evidencia** debajo a dos columnas (foto y
+  ficha del coche y del dealer), y la **procedencia** plegada al final (fuente,
+  IDs, fechas de scrapeo, `raw`), que es dato de diagnóstico y no de decisión. El
+  `raw` solo se pide al desplegarlo.
+- **El preview del anuncio no es un iframe.** Los portales de coches sirven
+  `X-Frame-Options`/`frame-ancestors` y saldría en blanco. La columna izquierda del
+  panel monta la vista con lo que sí tenemos scrapeado —`image_url`, titular,
+  dealer— y la tarjeta entera enlaza al anuncio original. El precio no se repite
+  ahí: lo dice la franja de veredicto, justo encima. Requiere que el scraper mande
+  `image_url`; si falta o la foto ya no responde, cae a un hueco que lo dice.
 - **Seguir un modelo es un solo paso.** Antes había que crear el modelo, buscarlo
   en la tabla y pulsar «Seguir», y los criterios (`target_price`, km, año, notas)
   no había forma de tocarlos desde la UI. Ahora el panel «Seguir un modelo» /
   «Criterios» hace las dos cosas a la vez. La columna **Objetivo** marca en verde
   el modelo cuya oferta más baja ya está por debajo del precio objetivo.
+
+### Analítica
+
+Seis gráficos y un cuadro, todos sobre la misma selección. La nube de puntos va
+primera porque es la que decide una compra; el resto la acota (dónde está el
+precio, de qué años, de quién):
+
+| | Responde |
+|---|---|
+| **Precio vs kilómetros** | Lo que cae por debajo de su propia recta está barato *para el uso que lleva*, que no es lo mismo que ser el más barato de la lista |
+| **Rango de precio** | Caja y bigotes: mín · P25 · mediana · P75 · máx. Dónde está cada binomio y cuánto se dispersa |
+| **Depreciación por año** | Mediana por año de matrícula. Lo que cuesta cada año de antigüedad |
+| **Distribución de precio** | Ofertas por tramo. Dónde hay masa hay con qué negociar |
+| **Composición** | Reparto por combustible / cambio / estado, en % porque los binomios tienen tamaños distintos |
+| **Dealers con más stock** | A quién hay que mirar |
+| **Cuadro comparativo** | Las dieciséis métricas exactas, y el equivalente accesible de todo lo anterior |
+
+Lo que no es obvio:
+
+- **Tres binomios, y el tope no es estético.** Son las ranuras de color que la
+  paleta puede separar bajo daltonismo con *todos* los pares en juego, que es lo
+  que exige una nube de puntos (en una serie de barras basta con los pares
+  adyacentes). Con un cuarto color no hay orden que supere el umbral, así que el
+  selector corta ahí en vez de pintar algo que no se puede leer. Las tres tintas
+  se eligieron con un validador, no a ojo: separación bajo daltonismo ΔE 9,9 ·
+  visión normal ΔE 27,2 · contraste ≥ 3:1 sobre blanco.
+- **El color sigue al binomio, no a su posición.** Cada uno se queda con su
+  ranura hasta que se le quita, así que deseleccionar otro no repinta los que
+  quedan: quien aprendió que el Audi es azul lo sigue viendo azul. Y si un
+  binomio desaparece del catálogo entre dos cargas —se descarta su última oferta,
+  o lo excluye un filtro— su ranura se libera sola; si no, quedaría ocupada por
+  algo que ya no se ve y que no habría forma de quitar.
+- **La recta solo se dibuja si ajusta (R² ≥ 0,15).** Con pocas ofertas una
+  pendiente es ruido con aspecto de conclusión. Cuando no llega, el pie del
+  gráfico lo dice con esas palabras en vez de callarse.
+- **La composición va en porcentaje y en barras agrupadas.** En recuento no se
+  puede comparar un binomio de veinticuatro ofertas con uno de diez; y en barras
+  el color sigue siendo el del binomio, así que no hay que inventar una paleta
+  para siete combustibles —que además no se distinguirían—.
+- **En una recarga se mantiene lo pintado a media tinta.** Un esqueleto en cada
+  cambio de filtro salta la página entera de sitio, y eso se nota más que el
+  retardo.
 
 Desarrollo con recarga en caliente (proxy a `localhost:8000`):
 
@@ -265,10 +407,10 @@ python3 backend/scripts/smoke_api.py
 docker compose exec backend python -m scripts.test_ranking_agent
 ```
 
-- `smoke_api.py` (68 comprobaciones) recorre la API end-to-end contra el stack en
+- `smoke_api.py` (70 comprobaciones) recorre la API end-to-end contra el stack en
   marcha: autenticación, ingesta con API key, métricas, filtros, orden, descarte,
-  favoritos (incluido que son por usuario), seguimiento con criterios y edición de
-  dealers. Es idempotente.
+  favoritos (incluido que son por usuario), seguimiento con criterios, edición de
+  dealers y que el `raw` se sirve aparte y no cuela en el listado. Es idempotente.
 - `test_ranking_agent.py` (39 comprobaciones) ejercita el agente con la API de
   Anthropic simulada: despacho de tools, salida estructurada, renumerado de
   rangos, descarte de `offer_id` inventados, y las rutas de error (rechazo,

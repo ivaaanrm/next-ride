@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import Select, func, select
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import Float, Select, case, cast, func, select
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import CurrentUser, IngestDep, SessionDep
+from app.core.config import settings
 from app.models import (
     FuelType,
     Offer,
@@ -24,11 +27,13 @@ from app.models import (
 from app.schemas.common import Page
 from app.schemas.offer import (
     IngestResult,
+    OfferAggregateStats,
     OfferBulkIngest,
     OfferDismiss,
     OfferIngest,
     OfferPricePoint,
     OfferRankSummary,
+    OfferRawRead,
     OfferRead,
 )
 from app.services.metrics import enrich_offers
@@ -36,27 +41,40 @@ from app.services.offers import favorite_offer_ids, ingest_offers, upsert_offer
 
 router = APIRouter(prefix="/offers", tags=["offers"])
 
+# El prefijo `-` es descendente. Las columnas de la tabla ordenan en los dos
+# sentidos, así que cada campo viaja en pareja; las dos puntuaciones son la
+# excepción y solo se sirven de mejor a peor, porque «los peores chollos
+# primero» no es una pregunta que nadie haga.
 SortField = Literal[
     "price",
     "-price",
+    "year",
+    "-year",
+    "mileage_km",
+    "-mileage_km",
+    "first_seen_at",
+    "-first_seen_at",
+    "-last_seen_at",
     "value_score",
     "ai_score",
-    "mileage_km",
-    "-year",
-    "-last_seen_at",
-    "-first_seen_at",
 ]
 
 # Ordenar por puntuación exige calcular métricas en Python, así que se acota
 # cuántas filas se traen antes de ordenar y paginar.
 _SCORE_SORT_CAP = 500
+# `nullslast()` en los dos sentidos y no solo en el descendente: un año o unos
+# kilómetros que el scraper no trajo no son «el más antiguo» ni «el que menos
+# ha rodado», así que no deben encabezar el orden ascendente.
 _DB_SORTS = {
     "price": Offer.price.asc(),
     "-price": Offer.price.desc(),
-    "mileage_km": Offer.mileage_km.asc().nullslast(),
+    "year": Offer.year.asc().nullslast(),
     "-year": Offer.year.desc().nullslast(),
-    "-last_seen_at": Offer.last_seen_at.desc(),
+    "mileage_km": Offer.mileage_km.asc().nullslast(),
+    "-mileage_km": Offer.mileage_km.desc().nullslast(),
+    "first_seen_at": Offer.first_seen_at.asc(),
     "-first_seen_at": Offer.first_seen_at.desc(),
+    "-last_seen_at": Offer.last_seen_at.desc(),
 }
 
 
@@ -130,50 +148,64 @@ async def _get_offer_or_404(session: SessionDep, offer_id: int) -> Offer:
     return offer
 
 
-def _apply_filters(
-    stmt: Select,
-    *,
-    user_id: int,
-    status_filter: OfferStatus | None,
-    car_model_id: int | None,
-    dealer_id: int | None,
-    condition: VehicleCondition | None,
-    fuel_type: FuelType | None,
-    min_price: float | None,
-    max_price: float | None,
-    max_mileage_km: int | None,
-    min_year: int | None,
-    q: str | None,
-    tracked_only: bool,
-    favorites_only: bool,
-) -> Select:
-    stmt = stmt.where(Offer.status == (status_filter or OfferStatus.ACTIVE))
-    if car_model_id:
-        stmt = stmt.where(Offer.car_model_id == car_model_id)
-    if dealer_id:
-        stmt = stmt.where(Offer.dealer_id == dealer_id)
-    if condition:
-        stmt = stmt.where(Offer.condition == condition)
-    if fuel_type:
-        stmt = stmt.where(Offer.fuel_type == fuel_type)
-    if min_price is not None:
-        stmt = stmt.where(Offer.price >= min_price)
-    if max_price is not None:
-        stmt = stmt.where(Offer.price <= max_price)
-    if max_mileage_km is not None:
-        stmt = stmt.where(Offer.mileage_km <= max_mileage_km)
-    if min_year is not None:
-        stmt = stmt.where(Offer.year >= min_year)
-    if q:
-        stmt = stmt.where(func.lower(Offer.title).like(f"%{q.lower()}%"))
-    if tracked_only:
+@dataclass
+class OfferFilters:
+    """Filtros del listado, en una dependencia compartida.
+
+    Están aquí y no repetidos en cada endpoint para que `GET /offers` y
+    `GET /offers/stats` no puedan divergir: si divergieran, las métricas de
+    cabecera describirían un conjunto distinto del que enseña la tabla, que es
+    exactamente el error que hace inútil una métrica.
+    """
+
+    status_filter: Annotated[OfferStatus | None, Query(alias="status")] = None
+    car_model_id: Annotated[int | None, Query()] = None
+    dealer_id: Annotated[int | None, Query()] = None
+    condition: Annotated[VehicleCondition | None, Query()] = None
+    fuel_type: Annotated[FuelType | None, Query()] = None
+    min_price: Annotated[float | None, Query(ge=0)] = None
+    max_price: Annotated[float | None, Query(ge=0)] = None
+    max_mileage_km: Annotated[int | None, Query(ge=0)] = None
+    min_year: Annotated[int | None, Query(ge=1950)] = None
+    max_year: Annotated[int | None, Query(ge=1950)] = None
+    q: Annotated[str | None, Query(description="Busca en el título")] = None
+    tracked_only: Annotated[bool, Query(description="Solo modelos seguidos")] = False
+    favorites_only: Annotated[bool, Query(description="Solo mis favoritos")] = False
+
+
+FiltersDep = Annotated[OfferFilters, Depends()]
+
+
+def _apply_filters(stmt: Select, filters: OfferFilters, user_id: int) -> Select:
+    stmt = stmt.where(Offer.status == (filters.status_filter or OfferStatus.ACTIVE))
+    if filters.car_model_id:
+        stmt = stmt.where(Offer.car_model_id == filters.car_model_id)
+    if filters.dealer_id:
+        stmt = stmt.where(Offer.dealer_id == filters.dealer_id)
+    if filters.condition:
+        stmt = stmt.where(Offer.condition == filters.condition)
+    if filters.fuel_type:
+        stmt = stmt.where(Offer.fuel_type == filters.fuel_type)
+    if filters.min_price is not None:
+        stmt = stmt.where(Offer.price >= filters.min_price)
+    if filters.max_price is not None:
+        stmt = stmt.where(Offer.price <= filters.max_price)
+    if filters.max_mileage_km is not None:
+        stmt = stmt.where(Offer.mileage_km <= filters.max_mileage_km)
+    if filters.min_year is not None:
+        stmt = stmt.where(Offer.year >= filters.min_year)
+    if filters.max_year is not None:
+        stmt = stmt.where(Offer.year <= filters.max_year)
+    if filters.q:
+        stmt = stmt.where(func.lower(Offer.title).like(f"%{filters.q.lower()}%"))
+    if filters.tracked_only:
         stmt = stmt.join(
             TrackedModel,
             (TrackedModel.car_model_id == Offer.car_model_id)
             & (TrackedModel.user_id == user_id)
             & (TrackedModel.is_active.is_(True)),
         )
-    if favorites_only:
+    if filters.favorites_only:
         stmt = stmt.join(
             OfferFavorite,
             (OfferFavorite.offer_id == Offer.id) & (OfferFavorite.user_id == user_id),
@@ -185,46 +217,19 @@ def _apply_filters(
 async def list_offers(
     session: SessionDep,
     user: CurrentUser,
-    status_filter: Annotated[OfferStatus | None, Query(alias="status")] = None,
-    car_model_id: Annotated[int | None, Query()] = None,
-    dealer_id: Annotated[int | None, Query()] = None,
-    condition: Annotated[VehicleCondition | None, Query()] = None,
-    fuel_type: Annotated[FuelType | None, Query()] = None,
-    min_price: Annotated[float | None, Query(ge=0)] = None,
-    max_price: Annotated[float | None, Query(ge=0)] = None,
-    max_mileage_km: Annotated[int | None, Query(ge=0)] = None,
-    min_year: Annotated[int | None, Query(ge=1950)] = None,
-    q: Annotated[str | None, Query(description="Busca en el título")] = None,
-    tracked_only: Annotated[bool, Query(description="Solo modelos seguidos")] = False,
-    favorites_only: Annotated[bool, Query(description="Solo mis favoritos")] = False,
+    filters: FiltersDep,
     sort: Annotated[SortField, Query()] = "value_score",
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> Page[OfferRead]:
-    filters = {
-        "user_id": user.id,
-        "status_filter": status_filter,
-        "car_model_id": car_model_id,
-        "dealer_id": dealer_id,
-        "condition": condition,
-        "fuel_type": fuel_type,
-        "min_price": min_price,
-        "max_price": max_price,
-        "max_mileage_km": max_mileage_km,
-        "min_year": min_year,
-        "q": q,
-        "tracked_only": tracked_only,
-        "favorites_only": favorites_only,
-    }
-
     total = await session.scalar(
-        _apply_filters(select(func.count(Offer.id)), **filters)
+        _apply_filters(select(func.count(Offer.id)), filters, user.id)
     )
     total = total or 0
 
     if sort in _DB_SORTS:
         stmt = (
-            _apply_filters(select(Offer), **filters)
+            _apply_filters(select(Offer), filters, user.id)
             .order_by(_DB_SORTS[sort], Offer.id)
             .limit(limit)
             .offset(offset)
@@ -239,7 +244,7 @@ async def list_offers(
 
     # Ordenación por puntuación: se calcula en Python sobre un conjunto acotado.
     stmt = (
-        _apply_filters(select(Offer), **filters)
+        _apply_filters(select(Offer), filters, user.id)
         .order_by(Offer.price.asc(), Offer.id)
         .limit(_SCORE_SORT_CAP)
     )
@@ -265,10 +270,124 @@ async def list_offers(
     )
 
 
+# Antes de `/{offer_id}`: si no, FastAPI intenta leer "stats" como int y da 422.
+@router.get("/stats", response_model=OfferAggregateStats)
+async def offer_stats(
+    session: SessionDep, user: CurrentUser, filters: FiltersDep
+) -> OfferAggregateStats:
+    """Agregados sobre las filas que cumplen el filtro, no sobre todo el catálogo."""
+    discount = case(
+        (
+            (Offer.original_price.isnot(None)) & (Offer.original_price > 0),
+            (cast(Offer.original_price, Float) - cast(Offer.price, Float))
+            / cast(Offer.original_price, Float)
+            * 100,
+        ),
+        else_=None,
+    )
+    # Mismo cálculo que `compute_metrics`: km entre la edad del coche, con la
+    # edad a un mínimo de 1 para no dividir por cero en un año en curso.
+    now_year = datetime.now(UTC).year
+    km_per_year = case(
+        (
+            (Offer.mileage_km.isnot(None)) & (Offer.year.isnot(None)),
+            cast(Offer.mileage_km, Float)
+            / func.greatest(cast(now_year - Offer.year, Float), 1.0),
+        ),
+        else_=None,
+    )
+
+    row = (
+        await session.execute(
+            _apply_filters(
+                select(
+                    func.count(Offer.id),
+                    func.count(func.distinct(Offer.car_model_id)),
+                    func.avg(cast(Offer.price, Float)),
+                    func.avg(cast(Offer.mileage_km, Float)),
+                    func.avg(km_per_year),
+                    func.avg(discount),
+                ),
+                filters,
+                user.id,
+            )
+        )
+    ).one()
+
+    def _round(value: float | None, digits: int = 2) -> float | None:
+        return round(value, digits) if value is not None else None
+
+    # Extremos para los controles de rango del frontend. Cada uno se calcula con
+    # su propio filtro quitado a propósito: son el dominio del deslizador, no un
+    # agregado de lo que se ve. Con el filtro aplicado, el carril se encogería a
+    # la selección en cada arrastre y quedaría sin salida. Los demás filtros sí
+    # cuentan, y por eso son dos consultas y no una: acotar el precio sí debe
+    # recortar el carril de los años, y al revés.
+    price_floor, price_ceiling = (
+        await session.execute(
+            _apply_filters(
+                select(func.min(Offer.price), func.max(Offer.price)),
+                replace(filters, min_price=None, max_price=None),
+                user.id,
+            )
+        )
+    ).one()
+    # `Offer.year` admite nulos y `MIN`/`MAX` los ignoran: una oferta sin año no
+    # estira el carril, solo desaparece al tocarlo, que es lo correcto.
+    year_floor, year_ceiling = (
+        await session.execute(
+            _apply_filters(
+                select(func.min(Offer.year), func.max(Offer.year)),
+                replace(filters, min_year=None, max_year=None),
+                user.id,
+            )
+        )
+    ).one()
+
+    # El mejor chollo sí exige puntuar en Python, así que se acota igual que el
+    # orden por puntuación del listado: así ambos coinciden en la fila de arriba.
+    best_deal = None
+    candidates = list(
+        (
+            await session.scalars(
+                _apply_filters(select(Offer), filters, user.id)
+                .order_by(Offer.price.asc(), Offer.id)
+                .limit(_SCORE_SORT_CAP)
+            )
+        ).unique()
+    )
+    if candidates:
+        offers, metrics = await enrich_offers(session, candidates)
+        top = max(offers, key=lambda offer: metrics[offer.id].value_score or 0)
+        best_deal = (await _serialize(session, [top], user.id))[0]
+
+    return OfferAggregateStats(
+        count=row[0] or 0,
+        car_models=row[1] or 0,
+        avg_price=_round(row[2]),
+        avg_mileage_km=_round(row[3], 0),
+        avg_km_per_year=_round(row[4], 0),
+        avg_discount_pct=_round(row[5]),
+        best_deal=best_deal,
+        ai_enabled=settings.ai_enabled,
+        price_floor=_round(price_floor),
+        price_ceiling=_round(price_ceiling),
+        year_floor=year_floor,
+        year_ceiling=year_ceiling,
+    )
+
+
 @router.get("/{offer_id}", response_model=OfferRead)
 async def get_offer(session: SessionDep, user: CurrentUser, offer_id: int) -> OfferRead:
     offer = await _get_offer_or_404(session, offer_id)
     return (await _serialize(session, [offer], user.id))[0]
+
+
+@router.get("/{offer_id}/raw", response_model=OfferRawRead)
+async def get_offer_raw(session: SessionDep, _: CurrentUser, offer_id: int) -> OfferRawRead:
+    """Payload crudo del scraper. Se pide aparte: no va en el listado."""
+    offer = await _get_offer_or_404(session, offer_id)
+    return OfferRawRead(raw=offer.raw)
 
 
 @router.get("/{offer_id}/price-history", response_model=list[OfferPricePoint])
