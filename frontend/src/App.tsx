@@ -4,6 +4,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { Loading } from "./components/ui";
 import { useAuth } from "./lib/auth";
+import { ApiKeysPage } from "./pages/ApiKeys";
 import { DealersPage } from "./pages/Dealers";
 import { LoginPage } from "./pages/Login";
 import { ModelsPage } from "./pages/Models";
@@ -44,6 +45,7 @@ export function App() {
         />
         <Route path="/models" element={<ModelsPage />} />
         <Route path="/dealers" element={<DealersPage />} />
+        <Route path="/api-keys" element={<ApiKeysPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/offers" replace />} />

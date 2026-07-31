@@ -1,6 +1,6 @@
 ---
 name: daily-car-scan
-description: Rutina diaria para recorrer pares de modelo y dealer, buscar ofertas públicas mediante fetch, Playwright o navegador, normalizarlas, deduplicarlas y enviar las nuevas o las que cambian de precio a la API. Usar para captar stock de Flexicar, coches.net, OcasionPlus, Iruri Motor y otros portales configurados, y terminar escribiendo un informe del run.
+description: Rutina diaria para recorrer pares de modelo y dealer, buscar ofertas públicas mediante fetch, Playwright o navegador, normalizarlas, deduplicarlas y enviar las nuevas o las que cambian de precio a la API. Usar para captar stock de Flexicar, coches.net, OcasionPlus, Iruri Motor, Quadis y otros portales configurados, y terminar escribiendo un informe del run.
 ---
 
 # Rutina diaria de captación de ofertas
@@ -116,6 +116,7 @@ No redescubras una fuente o sus selectores en cada run.
 | coches.net | `playwright` | tarjetas del listado público | captura browser + `scrapers/cochesnet.py` |
 | OcasionPlus | `playwright` | tarjetas con atributos `data-test` | captura browser + `scrapers/ocasionplus.py` |
 | Iruri Motor | `fetch` | endpoint JSON público de Vehica | `scrapers/irurimotor.py` |
+| Quadis | `browser` | tarjetas `.car-card` del listado público | captura browser + `scrapers/quadis.py` |
 
 ### Flexicar
 
@@ -225,6 +226,40 @@ python3 scrapers/irurimotor.py "Mitsubishi Montero" --max 15 \
   --fixture scrapers/fixtures/irurimotor-mitsubishi.json \
   --out state/raw-irurimotor-mitsubishi-montero.json
 ```
+
+### Quadis
+
+1. Lee `robots.txt`: la ruta pública `/coches/...` es navegable, pero `/*?` está
+   desautorizado para fetch. Respeta `source.access=browser`; no descargues por `curl`
+   el target de A4 que usa `makeId` y `modelId`.
+2. Abre el `search_url` exacto del target en el navegador. A3 y Clase A usan rutas
+   semánticas; A4 usa los IDs persistidos por la API. Espera a que exista `.car-card` o
+   que `#vehicle-count` confirme cero resultados.
+3. Captura en una sola lectura masiva, conservando el orden del portal:
+   - URL e imagen: el enlace de `.actions` y `.car-card-img img`;
+   - modelo y versión: `h2 strong` y `h2 span`;
+   - año, kilómetros y cambio: `.detail-list li`;
+   - combustible: `.car-tags .tag`;
+   - precio de contado: `.grid-price .cash-label strong`;
+   - precio anterior: `.grid-price .previous`, solo cuando sea mayor que el contado;
+   - condición: atributo `data-type` de la tarjeta.
+4. Guarda la captura compacta en `state/quadis-browser-candidates.json`. Los bloques
+   publicitarios también tienen `.car-card`; consérvalos y deja que el normalizador los
+   descarte por no tener URL.
+5. Exige coincidencia estricta con el target. Para `Audi A4 Allroad quattro`, una tarjeta
+   `Audi A4 Avant` no pertenece al modelo aunque el filtro general de Quadis la devuelva.
+6. Ejecuta:
+
+```bash
+python3 scrapers/quadis.py \
+  --snapshot state/quadis-browser-candidates.json \
+  --fixture scrapers/fixtures/quadis-browser-candidates.json \
+  --config state/runtime-config.json --out-dir state
+```
+
+Los vehículos nuevos sin año visible no se publican: `year` es obligatorio para el freno
+de validación. No abras fichas individuales solo para completar ese dato; continúa por el
+listado hasta reunir `max_results` ofertas válidas o agotar tres páginas.
 
 ### Secuencia común después de capturar
 

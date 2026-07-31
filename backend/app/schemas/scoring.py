@@ -29,9 +29,9 @@ class ScoreWeights(BaseModel):
     price_vs_expected: float = Field(default=25, ge=0, le=100)
     mileage: float = Field(default=15, ge=0, le=100)
     age: float = Field(default=10, ge=0, le=100)
+    power: float = Field(default=5, ge=0, le=100)
+    transmission: float = Field(default=5, ge=0, le=100)
     price_drop: float = Field(default=5, ge=0, le=100)
-    discount: float = Field(default=5, ge=0, le=100)
-    dealer_quality: float = Field(default=5, ge=0, le=100)
     freshness: float = Field(default=5, ge=0, le=100)
 
     @model_validator(mode="after")
@@ -73,11 +73,20 @@ class ScoreParams(BaseModel):
     expected_full_scale_pct: float = Field(default=40, gt=0, le=100)
     mileage_full_scale_pct: float = Field(default=100, gt=0, le=300)
     price_drop_full_scale_pct: float = Field(default=10, gt=0, le=100)
-    discount_full_scale_pct: float = Field(default=20, gt=0, le=100)
 
     age_zero_score_years: float = Field(default=15, gt=1, le=40)
     freshness_zero_score_days: float = Field(default=60, gt=0, le=365)
     min_market_comparables: int = Field(default=3, ge=2, le=50)
+
+    # Potencia: rampa lineal entre el CV que puntúa 0 y el que puntúa 100.
+    power_zero_score_hp: float = Field(default=50, ge=0, le=500)
+    power_full_score_hp: float = Field(default=250, gt=0, le=1000)
+
+    @model_validator(mode="after")
+    def _power_ramp_ordered(self) -> ScoreParams:
+        if self.power_full_score_hp <= self.power_zero_score_hp:
+            raise ValueError("power_full_score_hp debe ser mayor que power_zero_score_hp")
+        return self
 
     @field_validator("residual_curve")
     @classmethod
@@ -139,9 +148,12 @@ class ScoreBreakdownItem(BaseModel):
     key: str
     label: str
     available: bool
-    # Magnitud en su unidad natural (%, años, días, estrellas…), para mostrarla.
+    # Magnitud en su unidad natural (%, años, días, CV…), para mostrarla.
     metric: float | None = None
     unit: str = ""
+    # Para señales categóricas (cambio automático/manual): lo que se enseña en
+    # lugar del número.
+    text: str | None = None
     subscore: float | None = None
     weight: float
     weight_pct: float

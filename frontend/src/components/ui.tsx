@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -159,6 +160,128 @@ export function Popover({
       </button>
       {open && !disabled ? <div className="popover">{children}</div> : null}
     </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- *
+ * Avisos con vuelta atrás
+ *
+ * Son el reemplazo de `confirm()`, no un adorno encima. Un `confirm()` cobra un
+ * diálogo modal por fila —y el ratón hasta el botón, y la vista entera
+ * bloqueada— para cubrir el caso raro de haber pulsado mal; esto invierte el
+ * trato: la acción ocurre ya y la vuelta atrás queda a mano unos segundos, que
+ * es lo mismo que ofrecía el «Cancelar» pero cobrándoselo solo a quien falla.
+ *
+ * Solo vale porque las acciones que lo usan son reversibles de verdad. Para algo
+ * que no lo sea, esto no sirve y hace falta preguntar antes.
+ * -------------------------------------------------------------------------- */
+
+let nextToastId = 0;
+
+const TOAST_TTL = 7000;
+/** Tres a la vez y se cae el más viejo: apilar diez avisa de lo que ya no importa. */
+const TOAST_MAX = 3;
+
+export interface ToastSpec {
+  message: ReactNode;
+  /** Sin esto el aviso es solo un acuse de recibo, que casi nunca hace falta. */
+  undo?: () => void | Promise<void>;
+  undoLabel?: string;
+  ttl?: number;
+}
+
+export interface ToastItem extends ToastSpec {
+  id: number;
+}
+
+export interface Toasts {
+  items: ToastItem[];
+  push: (spec: ToastSpec) => void;
+  dismiss: (id: number) => void;
+}
+
+export function useToasts(): Toasts {
+  const [items, setItems] = useState<ToastItem[]>([]);
+  const timers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
+
+  const dismiss = useCallback((id: number) => {
+    const timer = timers.current.get(id);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timers.current.delete(id);
+    }
+    setItems((previous) => previous.filter((item) => item.id !== id));
+  }, []);
+
+  const push = useCallback(
+    (spec: ToastSpec) => {
+      const id = ++nextToastId;
+      setItems((previous) => [...previous, { ...spec, id }].slice(-TOAST_MAX));
+      timers.current.set(
+        id,
+        setTimeout(() => dismiss(id), spec.ttl ?? TOAST_TTL),
+      );
+    },
+    [dismiss],
+  );
+
+  // Salir de la página con avisos en vuelo no debe dejar temporizadores sueltos
+  // llamando a `setItems` sobre un componente que ya no está.
+  useEffect(() => {
+    const pending = timers.current;
+    return () => {
+      pending.forEach(clearTimeout);
+      pending.clear();
+    };
+  }, []);
+
+  return { items, push, dismiss };
+}
+
+/**
+ * La pila de avisos, en un portal como el panel lateral y por el mismo motivo:
+ * tiene que dibujarse por encima de él, y desde dentro del panel también se
+ * descarta.
+ *
+ * `aria-live="polite"` y no `assertive`: la acción ya ha ocurrido, así que se
+ * anuncia sin interrumpir. El foco tampoco se mueve —quien está recorriendo la
+ * tabla sigue en su fila—, y por eso «Deshacer» es un botón de verdad: se
+ * alcanza con el tabulador cuando hace falta, en vez de solo con el ratón.
+ */
+export function ToastStack({ items, dismiss }: Toasts) {
+  if (items.length === 0) return null;
+
+  return createPortal(
+    <div className="toasts" role="status" aria-live="polite">
+      {items.map((toast) => (
+        <div className="toast" key={toast.id}>
+          <span className="toast-text">{toast.message}</span>
+          {toast.undo ? (
+            <button
+              type="button"
+              className="toast-undo"
+              onClick={() => {
+                // Se cierra antes de correr: si la vuelta atrás falla, el error
+                // sale por su sitio y no bajo un aviso que dice lo contrario.
+                dismiss(toast.id);
+                void toast.undo?.();
+              }}
+            >
+              {toast.undoLabel ?? "Deshacer"}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="toast-close"
+            aria-label="Cerrar el aviso"
+            onClick={() => dismiss(toast.id)}
+          >
+            ✕
+          </button>
+        </div>
+      ))}
+    </div>,
+    document.body,
   );
 }
 

@@ -158,6 +158,8 @@ export interface ScoreBreakdownItem {
   available: boolean;
   metric: number | null;
   unit: string;
+  /** Señales categóricas (cambio automático/manual): sustituye al número. */
+  text: string | null;
   subscore: number | null;
   weight: number;
   weight_pct: number;

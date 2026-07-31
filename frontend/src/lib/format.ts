@@ -1,4 +1,10 @@
-import type { FuelType, Transmission, VehicleCondition, Verdict } from "../types";
+import type {
+  FuelType,
+  OfferStatus,
+  Transmission,
+  VehicleCondition,
+  Verdict,
+} from "../types";
 
 const eur = new Intl.NumberFormat("es-ES", {
   style: "currency",
@@ -92,6 +98,68 @@ export const TRANSMISSION_LABELS: Record<Transmission, string> = {
   automatic: "Automático",
   other: "Otro",
 };
+
+/**
+ * Los tres estados de una oferta en la plataforma, con todo lo que hay que decir
+ * de cada uno en un solo sitio: la lista, el botón que lleva a él, el aviso de
+ * después y el porqué.
+ *
+ * Están juntos porque describirlos por separado es como se acaba con un botón
+ * que dice «Descartar» y un aviso que dice «Oferta eliminada». La tabla la leen
+ * la fila, el panel de detalle, los avisos y el desplegable de vista.
+ *
+ * Lo que separa a los dos estados de salida es **de quién es la afirmación**:
+ * «descartada» la firma quien mira —no me interesa—, y el scraper la respeta
+ * aunque el anuncio siga vivo; «no disponible» la firma el anuncio —ya no
+ * está—, y por eso el scraper puede revivirla si vuelve a encontrarlo. El
+ * modelo lo llama `expired`; aquí no, porque lo que se ve al pulsar no es que
+ * haya caducado un plazo, es que el coche ya no está.
+ */
+export interface OfferStatusInfo {
+  /** Cómo se llama el estado: la vista, el chip del panel. */
+  label: string;
+  /** Cómo se llama *ir* a ese estado: el botón. */
+  verb: string;
+  /** Cómo se cuenta que ya se fue: el aviso de deshacer. Concuerda con «oferta». */
+  done: string;
+  /** Qué implica, para el `title` del botón. Es lo que separa los dos descartes. */
+  hint: string;
+}
+
+export const OFFER_STATUS: Record<OfferStatus, OfferStatusInfo> = {
+  active: {
+    label: "Activas",
+    verb: "Restaurar",
+    done: "restaurada",
+    hint: "Devolver la oferta a la lista activa",
+  },
+  dismissed: {
+    label: "Descartadas",
+    verb: "Descartar",
+    done: "descartada",
+    hint: "No me interesa. Sale de la lista y el scraper no la vuelve a traer",
+  },
+  expired: {
+    label: "No disponibles",
+    verb: "No disponible",
+    done: "marcada como no disponible",
+    hint: "El anuncio ya no está en el origen. Si el scraper vuelve a verlo, la oferta revive",
+  },
+};
+
+/** El estado en singular, para el chip del panel de detalle. */
+export const OFFER_STATUS_LABELS: Record<OfferStatus, string> = {
+  active: "Activa",
+  dismissed: "Descartada",
+  expired: "No disponible",
+};
+
+/** Descartar es una decisión y se pinta como tal; expirar solo constata un hecho. */
+export function offerStatusTone(status: OfferStatus): string {
+  if (status === "dismissed") return "negative";
+  if (status === "expired") return "warm";
+  return "neutral";
+}
 
 export const VERDICT_LABELS: Record<Verdict, string> = {
   excellent: "Excelente",

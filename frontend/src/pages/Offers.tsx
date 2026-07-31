@@ -14,6 +14,7 @@ import {
   type RadarSeries,
 } from "../components/charts";
 import { PageHeader } from "../components/Layout";
+import { OfferActions } from "../components/OfferActions";
 import {
   Banner,
   Chip,
@@ -23,7 +24,9 @@ import {
   Popover,
   RangeSlider,
   Score,
+  ToastStack,
   Toggle,
+  useToasts,
 } from "../components/ui";
 import { api } from "../lib/api";
 import {
@@ -36,6 +39,9 @@ import {
   formatNumber,
   formatPct,
   formatPrice,
+  OFFER_STATUS,
+  OFFER_STATUS_LABELS,
+  offerStatusTone,
   scoreTone,
   TRANSMISSION_LABELS,
   VERDICT_LABELS,
@@ -52,6 +58,7 @@ import type {
   OfferMetrics,
   OfferPricePoint,
   OfferRaw,
+  OfferStatus,
   Page,
   ScoreBreakdownItem,
   SegmentPoint,
@@ -60,6 +67,38 @@ import type {
 /** Tamaño del tramo que se pide por vez. La tabla ya no pagina: es un único
  *  scroll que trae el siguiente tramo cuando el final se acerca. */
 const CHUNK_SIZE = 50;
+
+/**
+ * Cómo se escribe cada estado. Los tres son la misma operación vista desde la
+ * tabla —mover una oferta de lista— y por eso se indexan por destino: quien
+ * llama dice adónde va, no qué verbo del API le toca.
+ */
+const MOVE: Record<OfferStatus, (id: number) => Promise<Offer>> = {
+  active: (id) => api.post<Offer>(`/offers/${id}/restore`),
+  dismissed: (id) => api.delete<Offer>(`/offers/${id}`),
+  expired: (id) => api.post<Offer>(`/offers/${id}/expire`),
+};
+
+/** Lo que dura el desvanecido de una fila que se va. Igual que en la hoja de
+ *  estilos: si cambia allí, cambia aquí, o la fila se queda a medio ir. */
+const LEAVE_MS = 140;
+
+/** Qué se enseña cuando una vista se queda vacía. Un «no hay nada» a secas en la
+ *  lista de descartadas parece un error y es lo normal el primer día. */
+const EMPTY_VIEW: Record<OfferStatus, { title: string; hint: string }> = {
+  active: {
+    title: "No hay ofertas que cumplan el filtro",
+    hint: "El servicio scraper alimenta esta tabla vía POST /api/v1/offers/bulk.",
+  },
+  dismissed: {
+    title: "No has descartado ninguna oferta",
+    hint: "Al descartar una desde la lista activa aparece aquí, y desde aquí se restaura.",
+  },
+  expired: {
+    title: "Ninguna oferta marcada como no disponible",
+    hint: "Aquí caen las que el scraper ya no encuentra en el origen y las que marcas a mano al abrir el anuncio y ver que el coche ya no está.",
+  },
+};
 
 type SortDir = "asc" | "desc";
 
@@ -249,10 +288,14 @@ export function OffersPage() {
   const [sort, setSort] = useState(DEFAULT_SORT);
   const [trackedOnly, setTrackedOnly] = useState(false);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
-  const [showDismissed, setShowDismissed] = useState(false);
+  // Los tres estados son tres listas excluyentes, no un interruptor: antes esto
+  // era un «Descartadas» de sí/no, y con él las expiradas no se podían mirar
+  // desde ningún sitio aunque el scraper llevara marcándolas desde el principio.
+  const [statusView, setStatusView] = useState<OfferStatus>("active");
   const [actionError, setActionError] = useState<string | null>(null);
   const [favBusyId, setFavBusyId] = useState<number | null>(null);
   const [scraped, setScraped] = useState<Offer | null>(null);
+  const toasts = useToasts();
 
   // Dos escalares y no un par: `useDebounced` compara por identidad, así que un
   // `[min, max]` recreado en cada render reiniciaría el temporizador sin fin.
@@ -278,7 +321,7 @@ export function OffersPage() {
     max_year: debouncedYearMax ?? undefined,
     tracked_only: trackedOnly || undefined,
     favorites_only: favoritesOnly || undefined,
-    status: showDismissed ? "dismissed" : undefined,
+    status: statusView,
   };
   const filterDeps = [
     debouncedSearch,
@@ -291,7 +334,7 @@ export function OffersPage() {
     debouncedYearMax,
     trackedOnly,
     favoritesOnly,
-    showDismissed,
+    statusView,
   ];
 
   const stats = useAsync<OfferAggregateStats>(
@@ -421,7 +464,7 @@ export function OffersPage() {
     yearMax !== null ||
     trackedOnly ||
     favoritesOnly ||
-    showDismissed;
+    statusView !== "active";
 
   /** Devuelve la vista a su estado por defecto. El orden no es un filtro y se queda. */
   function clearFilters() {
@@ -435,7 +478,7 @@ export function OffersPage() {
     setYearMax(null);
     setTrackedOnly(false);
     setFavoritesOnly(false);
-    setShowDismissed(false);
+    setStatusView("active");
   }
 
   /** Marca o desmarca un favorito y parchea la fila en sitio: no recarga la tabla
@@ -469,34 +512,139 @@ export function OffersPage() {
     }
   }
 
-  /** Quita la fila en sitio en vez de recargar: recargar reordenaría todo el
-   *  conjunto y devolvería el scroll arriba; que falte la fila ya lo cuenta. */
-  function dropRow(id: number) {
-    setRows((previous) => previous.filter((item) => item.id !== id));
-    setTotal((value) => Math.max(0, value - 1));
-    stats.reload();
+  /* ---- Mover una oferta de lista ------------------------------------------
+   *
+   * Las tres transiciones —descartar, marcar no disponible, restaurar— sacan la
+   * fila de la vista que se está mirando, así que son la misma operación y se
+   * hacen igual: la fila se va **ya** y la escritura viaja en paralelo.
+   *
+   * No hay confirmación. Antes había un `confirm()` por descarte, que es un
+   * diálogo modal, el ratón hasta el botón y la vista bloqueada para cubrir el
+   * caso de haber pulsado mal; ahora eso lo cubre el aviso de deshacer, que
+   * ofrece lo mismo que ofrecía el «Cancelar» pero solo a quien falla. Se puede
+   * porque ninguna de las tres borra nada: son cambios de estado, y las tres
+   * vistas del desplegable llevan a las ofertas que están en cada uno.
+   *
+   * La fila no se quita en sitio en vez de recargar por capricho: recargar
+   * reordenaría el conjunto entero y devolvería el scroll arriba, que es
+   * exactamente lo que no se puede hacer a media triangulación de una lista.
+   * -------------------------------------------------------------------------- */
+
+  // Las que se están yendo: llevan la clase que las desvanece y ya no responden
+  // a nada, para que un doble clic no mande la misma oferta dos veces.
+  const [leaving, setLeaving] = useState<ReadonlySet<number>>(new Set());
+  const leaveTimers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
+
+  useEffect(() => {
+    const pending = leaveTimers.current;
+    return () => {
+      pending.forEach(clearTimeout);
+      pending.clear();
+    };
+  }, []);
+
+  function unmarkLeaving(id: number) {
+    setLeaving((previous) => {
+      if (!previous.has(id)) return previous;
+      const next = new Set(previous);
+      next.delete(id);
+      return next;
+    });
   }
 
-  async function dismiss(offer: Offer) {
-    if (!confirm(`¿Descartar "${offer.title}" de la lista?`)) return;
+  function removeRow(id: number) {
+    setRows((previous) => previous.filter((item) => item.id !== id));
+    unmarkLeaving(id);
+  }
+
+  /** Devuelve la fila a la posición que tenía. Es lo que deshace una salida —y
+   *  también lo que repara una escritura fallida. */
+  function insertRow(offer: Offer, index: number) {
+    setRows((previous) => {
+      if (previous.some((item) => item.id === offer.id)) return previous;
+      const next = [...previous];
+      next.splice(Math.min(index, next.length), 0, offer);
+      return next;
+    });
+  }
+
+  async function move(offer: Offer, target: OfferStatus) {
+    if (leaving.has(offer.id)) return;
     setActionError(null);
+
+    const from = offer.status;
+    const index = Math.max(
+      0,
+      rowsRef.current.findIndex((item) => item.id === offer.id),
+    );
+    // El mismo `epoch` que invalida los tramos que llegan tarde: si entre pulsar
+    // y contestar el servidor se ha cambiado de filtro, lo cargado es otro
+    // conjunto y esta fila no tiene sitio en él, ni para volver ni para contarse.
+    const epoch = epochRef.current;
+
+    setLeaving((previous) => new Set(previous).add(offer.id));
+    leaveTimers.current.set(
+      offer.id,
+      setTimeout(() => {
+        leaveTimers.current.delete(offer.id);
+        removeRow(offer.id);
+      }, LEAVE_MS),
+    );
+
     try {
-      await api.delete(`/offers/${offer.id}`);
-      dropRow(offer.id);
+      await MOVE[target](offer.id);
+      if (epoch !== epochRef.current) return;
+      setTotal((value) => Math.max(0, value - 1));
+      stats.reload();
+      toasts.push({
+        message: (
+          <>
+            <span className="toast-subject">{offer.title}</span>{" "}
+            {OFFER_STATUS[target].done}
+          </>
+        ),
+        // Deshacer devuelve la oferta a donde estaba, que no siempre es «activa»:
+        // marcar «no disponible» una que ya estaba descartada se deshace volviendo
+        // a descartada. Por eso el destino es `from` y no un estado fijo.
+        undo: () => undoMove(offer, from, index, epoch),
+      });
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "No se pudo descartar");
+      if (epoch !== epochRef.current) return;
+      // Se cancela la salida si aún no ha corrido; si ya corrió, `insertRow`
+      // devuelve la fila a su sitio. En los dos casos acaba donde estaba.
+      const timer = leaveTimers.current.get(offer.id);
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        leaveTimers.current.delete(offer.id);
+      }
+      unmarkLeaving(offer.id);
+      insertRow(offer, index);
+      setActionError(
+        error instanceof Error
+          ? error.message
+          : `No se pudo ${OFFER_STATUS[target].verb.toLowerCase()}`,
+      );
     }
   }
 
-  /** Restaurar solo se ofrece viendo las descartadas: al volver a la lista
-   *  activa, la fila deja de pertenecer a la vista que se está mirando. */
-  async function restore(offer: Offer) {
+  async function undoMove(offer: Offer, back: OfferStatus, index: number, epoch: number) {
     setActionError(null);
     try {
-      await api.post(`/offers/${offer.id}/restore`);
-      dropRow(offer.id);
+      const restored = await MOVE[back](offer.id);
+      // La vista ha cambiado mientras el aviso estaba en pantalla: el estado se
+      // ha deshecho igual, pero devolver la fila la metería en una lista a la
+      // que no pertenece. Las métricas sí se rehacen: cuentan otro conjunto.
+      if (epoch !== epochRef.current) {
+        stats.reload();
+        return;
+      }
+      insertRow(restored, index);
+      setTotal((value) => value + 1);
+      stats.reload();
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "No se pudo restaurar");
+      setActionError(
+        error instanceof Error ? error.message : "No se pudo deshacer el cambio",
+      );
     }
   }
 
@@ -644,6 +792,24 @@ export function OffersPage() {
           />
 
           <div className="filter-scopes">
+            {/* Un desplegable y no tres interruptores: los tres estados son
+                excluyentes —una oferta está en uno—, así que dos interruptores
+                encendidos a la vez no querrían decir nada. Y se marca en acento
+                cuando no está en «Activas», porque desde una lista de descartadas
+                todo lo demás de la barra parece mentir. */}
+            <select
+              className={`select${statusView === "active" ? "" : " on"}`}
+              aria-label="Ver ofertas por su estado en la plataforma"
+              title="Las ofertas activas, las que has descartado o las que ya no están en el origen"
+              value={statusView}
+              onChange={(event) => setStatusView(event.target.value as OfferStatus)}
+            >
+              {(["active", "dismissed", "expired"] as const).map((value) => (
+                <option key={value} value={value}>
+                  {OFFER_STATUS[value].label}
+                </option>
+              ))}
+            </select>
             <Toggle
               on={trackedOnly}
               onChange={setTrackedOnly}
@@ -662,13 +828,6 @@ export function OffersPage() {
                 ★
               </span>
               Favoritos
-            </Toggle>
-            <Toggle
-              on={showDismissed}
-              onChange={setShowDismissed}
-              title="Ver las ofertas descartadas en lugar de las activas"
-            >
-              Descartadas
             </Toggle>
           </div>
 
@@ -694,12 +853,14 @@ export function OffersPage() {
           {listLoading ? (
             <Loading />
           ) : rows.length === 0 ? (
+            // La pista depende de la vista: «no hay nada» en la lista de
+            // descartadas parece una avería, y es lo normal el primer día.
             <Empty
-              title="No hay ofertas que cumplan el filtro"
+              title={EMPTY_VIEW[statusView].title}
               hint={
                 favoritesOnly
                   ? "Marca ofertas con la estrella para que aparezcan aquí."
-                  : "El servicio scraper alimenta esta tabla vía POST /api/v1/offers/bulk."
+                  : EMPTY_VIEW[statusView].hint
               }
             />
           ) : (
@@ -740,14 +901,19 @@ export function OffersPage() {
                     <span className="sr-only">Combustible</span>
                   </th>
                   <SortTh column="value" label="Valor" sort={sort} onSort={setSort} numeric />
-                  <th style={{ width: 44 }} />
+                  {/* Dos botones de 24 px con su hueco. Sin rótulo visible, como
+                      la estrella y el combustible: la columna es más estrecha que
+                      cualquier palabra que la nombre. */}
+                  <th style={{ width: 62 }}>
+                    <span className="sr-only">Acciones</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((offer) => (
                   <tr
                     key={offer.id}
-                    className="row-clickable"
+                    className={`row-clickable${leaving.has(offer.id) ? " row-leaving" : ""}`}
                     tabIndex={0}
                     aria-label={`Ver el detalle de ${offer.title}`}
                     onClick={() => setScraped(offer)}
@@ -854,33 +1020,11 @@ export function OffersPage() {
                     </td>
 
                     <td>
-                      <div className="row-actions">
-                        {offer.status === "dismissed" ? (
-                          <button
-                            className="icon-btn"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              restore(offer);
-                            }}
-                            title="Restaurar en la lista"
-                            aria-label="Restaurar en la lista"
-                          >
-                            ↺
-                          </button>
-                        ) : (
-                          <button
-                            className="icon-btn danger"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              dismiss(offer);
-                            }}
-                            title="Descartar de la lista"
-                            aria-label="Descartar de la lista"
-                          >
-                            ▤
-                          </button>
-                        )}
-                      </div>
+                      <OfferActions
+                        offer={offer}
+                        busy={leaving.has(offer.id)}
+                        onMove={move}
+                      />
                     </td>
                   </tr>
                 ))}
@@ -898,7 +1042,21 @@ export function OffersPage() {
         </div>
       </div>
 
-      {scraped ? <ScrapedDrawer offer={scraped} onClose={() => setScraped(null)} /> : null}
+      {scraped ? (
+        <ScrapedDrawer
+          offer={scraped}
+          onClose={() => setScraped(null)}
+          onMove={(offer, target) => {
+            // El panel se cierra al mover: la oferta que describe acaba de salir
+            // de la lista que hay detrás, y dejarlo abierto sobre una ficha que
+            // ya no está ahí es peor que no haberlo abierto.
+            setScraped(null);
+            void move(offer, target);
+          }}
+        />
+      ) : null}
+
+      <ToastStack {...toasts} />
     </>
   );
 }
@@ -1406,14 +1564,15 @@ function OfferRadar({ offer }: { offer: Offer }) {
 
 /** La magnitud de un componente del score, en su unidad y con su signo. */
 function metricText(item: ScoreBreakdownItem): string {
+  // Las señales categóricas (el cambio) viajan como texto, no como número.
+  if (item.text) return item.text;
   if (item.metric === null) return "—";
   if (item.unit === "%") {
-    // Las desviaciones llevan signo (−12 % es más barato); descuento y bajada
-    // son magnitudes y el signo no aporta.
+    // Las desviaciones llevan signo (−12 % es más barato); la bajada es una
+    // magnitud y el signo no aporta.
     const signed = ["price_vs_market", "price_vs_expected", "mileage"].includes(item.key);
     return formatPct(item.metric, signed);
   }
-  if (item.unit === "/5") return `${formatNumber(item.metric)}/5`;
   return `${formatNumber(item.metric)} ${item.unit}`;
 }
 
@@ -1495,7 +1654,15 @@ function ScoreBreakdown({ metrics }: { metrics: OfferMetrics }) {
  * Antes esto eran seis tarjetas iguales apiladas, con la puntuación de valor
  * enterrada en la fila 8 de la tercera.
  */
-function ScrapedDrawer({ offer, onClose }: { offer: Offer; onClose: () => void }) {
+function ScrapedDrawer({
+  offer,
+  onClose,
+  onMove,
+}: {
+  offer: Offer;
+  onClose: () => void;
+  onMove: (offer: Offer, target: OfferStatus) => void;
+}) {
   const history = useAsync<OfferPricePoint[]>(
     () => api.get(`/offers/${offer.id}/price-history`),
     [offer.id],
@@ -1511,6 +1678,11 @@ function ScrapedDrawer({ offer, onClose }: { offer: Offer; onClose: () => void }
       title={offer.title}
       subtitle={`${offer.car_model.display_name} · ${offer.dealer.name}`}
       onClose={onClose}
+      /* Con su nombre escrito y no como iconos: aquí se llega después de leer la
+         ficha y de abrir el anuncio en otra pestaña, que es justo cuando se
+         descubre que el coche ya no está. Es el sitio donde más se va a pulsar
+         «No disponible», así que no puede depender de reconocer un dibujo. */
+      actions={<OfferActions offer={offer} variant="wide" onMove={onMove} />}
     >
       <div className="offer-detail">
         {/* ---- 1. Veredicto ---- */}
@@ -1526,8 +1698,11 @@ function ScrapedDrawer({ offer, onClose }: { offer: Offer; onClose: () => void }
               ) : null}
               {/* Solo lo excepcional se anuncia: una oferta activa no dice nada. */}
               {offer.status !== "active" ? (
-                <Chip tone={offer.status === "dismissed" ? "negative" : "neutral"}>
-                  {offer.status === "dismissed" ? "Descartada" : "Expirada"}
+                <Chip
+                  tone={offerStatusTone(offer.status)}
+                  title={OFFER_STATUS[offer.status].hint}
+                >
+                  {OFFER_STATUS_LABELS[offer.status]}
                 </Chip>
               ) : null}
             </div>
@@ -1725,11 +1900,8 @@ function ScrapedDrawer({ offer, onClose }: { offer: Offer; onClose: () => void }
               <Row label="Vista por primera vez">{formatDateTime(offer.first_seen_at)}</Row>
               <Row label="Vista por última vez">{formatDateTime(offer.last_seen_at)}</Row>
               <Row label="Estado en la plataforma">
-                {offer.status === "active"
-                  ? "Activa"
-                  : offer.status === "dismissed"
-                    ? "Descartada"
-                    : "Expirada"}
+                {OFFER_STATUS_LABELS[offer.status]}
+                {offer.dismissed_at ? ` · ${formatDateTime(offer.dismissed_at)}` : ""}
                 {offer.dismiss_reason ? ` · ${offer.dismiss_reason}` : ""}
               </Row>
               <Row label="URL">

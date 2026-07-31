@@ -119,8 +119,15 @@ async def upsert_offer(session: AsyncSession, payload: OfferIngest) -> tuple[Off
     if payload.raw is not None:
         existing.raw = payload.raw
     # Una oferta descartada a mano NO se reactiva al volver a verla; una expirada sí.
+    # Con ella se va la marca de quién la retiró y cuándo: si se quedara, una
+    # oferta activa arrastraría un «retirada el 3 de marzo» que ya no es verdad,
+    # y el motivo escrito entonces («la llamé y estaba vendida») describiría un
+    # anuncio que vuelve a estar publicado.
     if existing.status == OfferStatus.EXPIRED:
         existing.status = OfferStatus.ACTIVE
+        existing.dismissed_at = None
+        existing.dismissed_by_id = None
+        existing.dismiss_reason = None
 
     return existing, False
 

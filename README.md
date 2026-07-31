@@ -144,9 +144,9 @@ escala 0-100 se usa entera.
 | Precio vs valor esperado | 25 | Desviación frente al PVP depreciado por edad y km; ±40 % cubre la escala |
 | Kilometraje | 15 | Km frente a los esperados por edad (15.000 km/año); ±100 % cubre la escala |
 | Antigüedad | 10 | Lineal: 0 años = 100, 15 años = 0 |
+| Potencia | 5 | Rampa lineal: 50 CV o menos = 0, 250 CV o más = 100 |
+| Cambio | 5 | Automático = 100, manual = 0, otros = 50 |
 | Bajada de precio | 5 | Desde el primer precio visto; −10 % = 100 |
-| Descuento anunciado | 5 | Sobre el PVP del dealer; 20 % = 100 |
-| Valoración del dealer | 5 | Sus estrellas (0-5) en escala 0-100 |
 | Frescura del anuncio | 5 | Recién publicado = 100; a los 60 días = 0 |
 
 La curva de depreciación por defecto es la media del mercado español (≈ −20 %

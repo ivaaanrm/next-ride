@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import VehicleCondition
+from app.models import Transmission, VehicleCondition
 from app.models.scoring import ScoreConfig
 from app.schemas.scoring import (
     ScoreBreakdownItem,
@@ -192,9 +192,9 @@ COMPONENT_LABELS: tuple[tuple[str, str], ...] = (
     ("price_vs_expected", "Precio vs valor esperado"),
     ("mileage", "Kilometraje"),
     ("age", "Antigüedad"),
+    ("power", "Potencia"),
+    ("transmission", "Cambio"),
     ("price_drop", "Bajada de precio"),
-    ("discount", "Descuento anunciado"),
-    ("dealer_quality", "Valoración del dealer"),
     ("freshness", "Frescura del anuncio"),
 )
 
@@ -223,15 +223,16 @@ def component_descriptions(params: ScoreParams) -> dict[str, str]:
             "Más nuevo puntúa más alto, linealmente: un coche de este año es un 100 y uno de "
             f"{params.age_zero_score_years:.0f} años un 0."
         ),
+        "power": (
+            "Más potencia puntúa más alto, linealmente: "
+            f"{params.power_zero_score_hp:.0f} CV o menos es un 0 y "
+            f"{params.power_full_score_hp:.0f} CV o más un 100."
+        ),
+        "transmission": "Cambio automático puntúa 100 y manual 0; otros tipos, 50.",
         "price_drop": (
             "Descenso del precio desde que la plataforma vio la oferta por primera vez. "
             f"Una bajada del {params.price_drop_full_scale_pct:.0f} % es un 100; sin cambios, 50."
         ),
-        "discount": (
-            "Rebaja sobre el precio original que anuncia el propio dealer. "
-            f"Un {params.discount_full_scale_pct:.0f} % de descuento es un 100."
-        ),
-        "dealer_quality": "Valoración del concesionario, de 0 a 5 estrellas, en escala 0-100.",
         "freshness": (
             "Los anuncios recién publicados puntúan más alto: a los "
             f"{params.freshness_zero_score_days:.0f} días la señal se agota y puntúa 0."
@@ -264,6 +265,7 @@ class _Component:
     metric: float | None  # magnitud en su unidad natural, para enseñarla
     unit: str
     subscore: float | None  # None = sin dato: su peso se reparte
+    text: str | None = None  # señales categóricas: lo que se enseña en vez del número
 
     @property
     def available(self) -> bool:
@@ -342,6 +344,30 @@ def _components(
     else:
         out.append(_Component("age", None, "años", None))
 
+    # Potencia: rampa lineal entre el CV que puntúa 0 y el que puntúa 100.
+    if offer.power_hp:
+        ramp = params.power_full_score_hp - params.power_zero_score_hp
+        out.append(
+            _Component(
+                "power",
+                float(offer.power_hp),
+                "CV",
+                _clamp((offer.power_hp - params.power_zero_score_hp) / ramp * 100, 0, 100),
+            )
+        )
+    else:
+        out.append(_Component("power", None, "CV", None))
+
+    # Cambio: automático mejor que manual; «otro» no dice nada y queda neutro.
+    if offer.transmission is not None:
+        subscore, label = {
+            Transmission.AUTOMATIC: (100.0, "Automático"),
+            Transmission.MANUAL: (0.0, "Manual"),
+        }.get(offer.transmission, (50.0, "Otro"))
+        out.append(_Component("transmission", None, "", subscore, text=label))
+    else:
+        out.append(_Component("transmission", None, "", None))
+
     # Bajada de precio. Con primer precio conocido y sin cambios, es un 50
     # legítimo (sabemos que no ha bajado); sin historial, no hay dato.
     if initial_price and initial_price > 0:
@@ -353,28 +379,6 @@ def _components(
         )
     else:
         out.append(_Component("price_drop", None, "%", None))
-
-    # Descuento anunciado sobre el precio original del dealer.
-    discount = metrics.discount_pct
-    out.append(
-        _Component(
-            "discount",
-            discount,
-            "%",
-            _linear(discount, params.discount_full_scale_pct) if discount is not None else None,
-        )
-    )
-
-    # Valoración del dealer, lineal sobre sus 5 estrellas.
-    rating = offer.dealer.rating if offer.dealer else None
-    out.append(
-        _Component(
-            "dealer_quality",
-            round(rating, 1) if rating is not None else None,
-            "/5",
-            _clamp(rating / 5 * 100, 0, 100) if rating is not None else None,
-        )
-    )
 
     # Frescura: un buen precio recién publicado es el chollo que vuela.
     days = metrics.days_listed
@@ -424,6 +428,7 @@ def score_offer(
             available=c.available,
             metric=c.metric if c.available else None,
             unit=c.unit,
+            text=c.text if c.available else None,
             subscore=round(c.subscore, 1) if c.available else None,
             weight=weights[c.key],
             weight_pct=(

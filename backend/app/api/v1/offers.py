@@ -437,8 +437,35 @@ async def create_offers_bulk(
 
 
 # --------------------------------------------------------------------------- #
-# Descarte manual
+# Estado de la oferta — las tres transiciones que se hacen a mano
+#
+# Comparten cuerpo porque son la misma escritura con otro destino, y las columnas
+# `dismissed_*` registran lo mismo en los dos casos: cuándo salió de la lista
+# activa y a instancias de quién.
+#
+# La diferencia entre los dos estados de salida no es de matiz y la aplica el
+# scraper, no esto (ver `upsert_offer`): al volver a ver la oferta revive una
+# EXPIRED —el anuncio había desaparecido y ha vuelto— y respeta una DISMISSED,
+# porque esa es una decisión de una persona y no un hecho del origen.
 # --------------------------------------------------------------------------- #
+async def _move_to(
+    session: SessionDep,
+    user: CurrentUser,
+    offer_id: int,
+    target: OfferStatus,
+    reason: str | None = None,
+) -> OfferRead:
+    offer = await _get_offer_or_404(session, offer_id)
+    back_to_active = target is OfferStatus.ACTIVE
+    offer.status = target
+    offer.dismissed_at = None if back_to_active else utcnow()
+    offer.dismissed_by_id = None if back_to_active else user.id
+    offer.dismiss_reason = None if back_to_active else reason
+    await session.commit()
+    await session.refresh(offer)
+    return (await _serialize(session, [offer], user.id))[0]
+
+
 @router.delete("/{offer_id}", response_model=OfferRead)
 async def dismiss_offer(
     session: SessionDep,
@@ -447,26 +474,34 @@ async def dismiss_offer(
     payload: OfferDismiss | None = None,
 ) -> OfferRead:
     """Descarta una oferta de la lista. Es un borrado lógico: el scraper no la revive."""
-    offer = await _get_offer_or_404(session, offer_id)
-    offer.status = OfferStatus.DISMISSED
-    offer.dismissed_at = utcnow()
-    offer.dismissed_by_id = user.id
-    offer.dismiss_reason = payload.reason if payload else None
-    await session.commit()
-    await session.refresh(offer)
-    return (await _serialize(session, [offer], user.id))[0]
+    return await _move_to(
+        session, user, offer_id, OfferStatus.DISMISSED, payload.reason if payload else None
+    )
+
+
+@router.post("/{offer_id}/expire", response_model=OfferRead)
+async def expire_offer(
+    session: SessionDep,
+    user: CurrentUser,
+    offer_id: int,
+    payload: OfferDismiss | None = None,
+) -> OfferRead:
+    """Marca la oferta como ya no disponible en el origen.
+
+    Es la misma marca que pone el scraper cuando el anuncio desaparece, puesta a
+    mano por quien ha abierto el enlace y se ha encontrado con que el coche ya no
+    está. No es un descarte: aquí nadie ha dicho que la oferta no interese, solo
+    que ya no existe, y por eso el scraper puede revivirla si vuelve a verla.
+    """
+    return await _move_to(
+        session, user, offer_id, OfferStatus.EXPIRED, payload.reason if payload else None
+    )
 
 
 @router.post("/{offer_id}/restore", response_model=OfferRead)
 async def restore_offer(session: SessionDep, user: CurrentUser, offer_id: int) -> OfferRead:
-    offer = await _get_offer_or_404(session, offer_id)
-    offer.status = OfferStatus.ACTIVE
-    offer.dismissed_at = None
-    offer.dismissed_by_id = None
-    offer.dismiss_reason = None
-    await session.commit()
-    await session.refresh(offer)
-    return (await _serialize(session, [offer], user.id))[0]
+    """Devuelve la oferta a la lista activa, venga de un descarte o de una expiración."""
+    return await _move_to(session, user, offer_id, OfferStatus.ACTIVE)
 
 
 # --------------------------------------------------------------------------- #

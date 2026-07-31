@@ -81,6 +81,24 @@ DEFAULT_SOURCES: tuple[dict[str, Any], ...] = (
         "notes": "El endpoint público de Vehica entrega el inventario en JSON.",
         "config": {"extractor": "scrapers/irurimotor.py", "_defaults_version": 1},
     },
+    {
+        "key": "quadis",
+        "name": "Quadis",
+        "base_url": "https://www.quadis.es",
+        "search_url_template": "https://www.quadis.es/coches/{make_slug}/{model_slug}",
+        "listing_url": "https://www.quadis.es/coches",
+        "access": "browser",
+        "notes": (
+            "El listado público renderiza tarjetas .car-card. robots.txt bloquea "
+            "las URLs con query string; usar navegador para los targets que necesiten IDs."
+        ),
+        "config": {
+            "extractor": "scrapers/quadis.py",
+            "card_selector": ".car-card",
+            "make_slug_aliases": {"mercedes": "mercedes-benz"},
+            "_defaults_version": 1,
+        },
+    },
 )
 
 DEFAULT_TARGETS: tuple[dict[str, Any], ...] = (
@@ -138,6 +156,27 @@ DEFAULT_TARGETS: tuple[dict[str, Any], ...] = (
         "model": "Montero",
         "search_url": "https://irurimotor.com/wp-json/vehica/v1/cars?marca=mitsubishi",
         "search_params": {},
+    },
+    {
+        "source_key": "quadis",
+        "make": "Audi",
+        "model": "A3",
+        "search_url": "https://www.quadis.es/coches/audi/a3",
+        "search_params": {"make_id": 13, "model_id": 37},
+    },
+    {
+        "source_key": "quadis",
+        "make": "Audi",
+        "model": "A4 Allroad quattro",
+        "search_url": "https://www.quadis.es/coches?makeId=13&modelId=38",
+        "search_params": {"make_id": 13, "model_id": 38},
+    },
+    {
+        "source_key": "quadis",
+        "make": "Mercedes",
+        "model": "Clase A",
+        "search_url": "https://www.quadis.es/coches/mercedes-benz/clase-a",
+        "search_params": {"make_id": 4, "model_id": 12},
     },
 )
 

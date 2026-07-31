@@ -496,6 +496,18 @@ textarea {
   .view > .content {
     animation: none;
   }
+
+  /* La fila sigue yéndose y el aviso sigue saliendo: lo que se quita es el
+     movimiento, no el paso. El desvanecido se resuelve en cuanto se pide, y a
+     los 140 ms la fila se retira igual. */
+  .toast {
+    animation: none;
+  }
+
+  table.records tbody tr.row-leaving {
+    transform: none;
+    transition: none;
+  }
 }
 
 /* ------------------------------------------------------------------------- *
@@ -583,6 +595,16 @@ textarea {
 .textarea:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+/* Desplegable que no está en su valor por defecto. Mismo acento que `.toggle`
+   encendido y que `.popover-trigger.on`: lo que acota la tabla se reconoce de un
+   vistazo, sin leer cada control. */
+.select.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 500;
 }
 
 .textarea {
@@ -1220,8 +1242,32 @@ th.sort-th.on .sort-caret {
   transition: opacity 80ms ease;
 }
 
-table.records tbody tr:hover .row-actions {
+/* `focus-within` y no solo `hover`: los botones se alcanzan con el tabulador,
+   y sin esto quien navega con teclado los enfocaba invisibles. */
+table.records tbody tr:hover .row-actions,
+table.records tbody tr:focus-within .row-actions {
   opacity: 1;
+}
+
+/* ---- Salida de una fila ----------------------------------------------------
+ *
+ * Descartar o marcar «no disponible» saca la fila en el acto y la escritura
+ * viaja en paralelo. Los 140 ms de desvanecido no son adorno: son lo que permite
+ * ver *cuál* se ha ido cuando se recorre una lista larga a golpe de ratón, y sin
+ * ellos las filas de debajo suben de golpe bajo el puntero y el siguiente clic
+ * cae sobre una oferta que no se ha llegado a leer. Mientras se va no responde a
+ * nada, así que un segundo clic no puede mandarla dos veces.
+ *
+ * El número está también en `LEAVE_MS`, en Offers.tsx, que es quien la quita de
+ * la lista al terminar: si cambia aquí, cambia allí.
+ * --------------------------------------------------------------------------- */
+table.records tbody tr.row-leaving {
+  opacity: 0;
+  transform: translateX(12px);
+  pointer-events: none;
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease;
 }
 
 /* ---- Marca de combustible ---------------------------------------------------
@@ -1270,7 +1316,7 @@ table.records tbody tr:hover .row-actions {
   color: var(--accent);
 }
 
-/* Botón de icono para acciones de fila (descartar, restaurar) */
+/* Botón de icono para acciones de fila (descartar, no disponible, restaurar) */
 .icon-btn {
   display: grid;
   place-items: center;
@@ -1296,6 +1342,18 @@ table.records tbody tr:hover .row-actions {
 .icon-btn.danger:hover:not(:disabled) {
   background: var(--negative-soft);
   color: var(--negative);
+}
+
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* El `svg` en bloque: como `inline` arrastra la línea base del texto y descentra
+   el icono un píxel dentro de su cuadrícula. */
+.icon-btn svg,
+.btn svg {
+  display: block;
 }
 
 /* Estrella de favorito */
@@ -1485,6 +1543,113 @@ table.records tbody tr:hover .row-actions {
   inset: 0;
   background: rgba(27, 27, 24, 0.24);
   z-index: 20;
+}
+
+/* ---- Avisos con vuelta atrás ----------------------------------------------
+ *
+ * Son el reemplazo del `confirm()` que preguntaba antes de descartar: la acción
+ * ocurre ya y la vuelta atrás queda aquí unos segundos.
+ *
+ * Abajo a la izquierda y no centrados: el panel de detalle ocupa hasta 880 px
+ * por la derecha, y desde dentro del panel también se descarta, así que un aviso
+ * centrado saldría medio tapado justo cuando más se usa. Por encima del panel
+ * (`z-index` 30 contra 21) por el mismo motivo.
+ * --------------------------------------------------------------------------- */
+.toasts {
+  position: fixed;
+  left: var(--space-lg);
+  bottom: var(--space-lg);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  max-width: min(460px, calc(100vw - 2 * var(--space-lg)));
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  height: 36px;
+  padding: 0 var(--space-xs) 0 var(--space-md);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  animation: toast-enter 140ms ease;
+}
+
+.toast-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-secondary);
+  /* Una línea: el aviso dice qué oferta y adónde ha ido, y nada más cabe en el
+     tiempo que está en pantalla. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* El titular del anuncio son sesenta caracteres y el aviso no es donde se leen:
+   se recorta aquí y el nombre entero sigue en la fila y en el panel. */
+.toast-subject {
+  display: inline-block;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.toast-undo {
+  flex: none;
+  height: 26px;
+  padding: 0 9px;
+  border: none;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--accent);
+  font-weight: 500;
+  transition: background 80ms ease;
+}
+
+.toast-undo:hover {
+  background: var(--accent-soft);
+}
+
+.toast-close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1;
+  transition:
+    background 80ms ease,
+    color 80ms ease;
+}
+
+.toast-close:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+@keyframes toast-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .drawer {

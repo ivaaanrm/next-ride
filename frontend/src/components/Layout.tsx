@@ -11,7 +11,10 @@ const NAV = [
   { to: "/dealers", label: "Dealers", icon: "◇" },
 ];
 
-const SETTINGS_NAV = [{ to: "/settings", label: "Ajustes / API keys", icon: "⚙" }];
+const SETTINGS_NAV = [
+  { to: "/settings", label: "Ajustes", icon: "⚙" },
+  { to: "/api-keys", label: "API Keys", icon: "⚿" },
+];
 
 const COLLAPSED_KEY = "nr.sidebar_collapsed";
 
