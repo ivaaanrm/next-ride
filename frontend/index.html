@@ -2,9 +2,37 @@
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- `viewport-fit=cover` es la precondición de toda la capa de áreas seguras:
+         sin él, env(safe-area-inset-*) vale 0 y el CSS que las consume es inerte.
+         `user-scalable=no` y `maximum-scale=1` no se ponen nunca: el pellizco para
+         ampliar es un derecho de accesibilidad (WCAG 1.4.4). -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
+    />
     <title>next-ride</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='24' font-size='24'>🚗</text></svg>" />
+
+    <!-- El color de la barra del sistema sigue al esquema: --bg claro y --bg oscuro. -->
+    <meta name="theme-color" content="#fbfbfb" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#121211" media="(prefers-color-scheme: dark)" />
+
+    <!-- Instalada, la app se dibuja sin cromo de navegador. `black-translucent`
+         mete el contenido *por debajo* de la barra de estado, así que el padding
+         superior con --safe-top deja de ser opcional. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="next-ride" />
+    <!-- Obligatorio aquí: `formatNumber` produce «103.473» y «24.590», que es
+         justo lo que el detector de datos de iOS convierte en enlaces `tel:`. -->
+    <meta name="format-detection" content="telephone=no" />
+
+    <link rel="manifest" href="/manifest.json" />
+    <!-- Opaco, cuadrado y de 180: iOS compone el alfa contra negro y pone él la
+         máscara. El `.v1` es lo que permite cambiarlo pese a los 30 días de
+         `immutable` con que nginx sirve /icons. -->
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon-180.v1.png" />
+    <link rel="icon" href="/icons/icon-192.v1.png" type="image/png" />
   </head>
   <body>
     <div id="root"></div>

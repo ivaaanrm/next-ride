@@ -2,7 +2,8 @@ import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 
 import { useAuth } from "../lib/auth";
-import { NotificationsNav } from "./Notifications";
+import { NoticesProvider, NotificationsNav } from "./Notifications";
+import { TabBar } from "./TabBar";
 
 const NAV = [
   { to: "/offers", label: "Ofertas", icon: "◱" },
@@ -48,81 +49,88 @@ export function Layout() {
   const tip = (label: string) => (collapsed ? label : undefined);
 
   return (
-    <div className="app">
-      <nav id="app-sidebar" className={`sidebar${collapsed ? " collapsed" : ""}`}>
-        <div className="brand">
-          <span className="brand-mark">NR</span>
-          <span className="nav-label">next-ride</span>
-          <div className="spacer" />
-          <button
-            className="sidebar-toggle"
-            onClick={() => setCollapsed((value) => !value)}
-            aria-expanded={!collapsed}
-            aria-controls="app-sidebar"
-            aria-label={collapsed ? "Expandir la navegación" : "Plegar la navegación"}
-            title={`${collapsed ? "Expandir" : "Plegar"} la navegación (⌘B)`}
-          >
-            {collapsed ? "»" : "«"}
-          </button>
-        </div>
-
-        <div className="nav-section">Espacio de trabajo</div>
-        {NAV.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
-            aria-label={item.label}
-            title={tip(item.label)}
-          >
-            <span className="nav-icon">{item.icon}</span>
-            <span className="nav-label">{item.label}</span>
-          </NavLink>
-        ))}
-
-        <div className="nav-section">Sistema</div>
-        {/* Antes que Ajustes: el aviso es lo que manda a Ajustes, no al revés. */}
-        <NotificationsNav collapsed={collapsed} />
-        {SETTINGS_NAV.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
-            aria-label={item.label}
-            title={tip(item.label)}
-          >
-            <span className="nav-icon">{item.icon}</span>
-            <span className="nav-label">{item.label}</span>
-          </NavLink>
-        ))}
-
-        <div className="sidebar-footer">
-          <div className="user-chip" title={tip(user?.email ?? "")}>
-            <span className="avatar">{initials}</span>
-            <span className="user-email">{user?.email}</span>
+    <NoticesProvider>
+      <div className="app">
+        <nav id="app-sidebar" className={`sidebar${collapsed ? " collapsed" : ""}`}>
+          <div className="brand">
+            <span className="brand-mark">NR</span>
+            <span className="nav-label">next-ride</span>
+            <div className="spacer" />
+            <button
+              className="sidebar-toggle"
+              onClick={() => setCollapsed((value) => !value)}
+              aria-expanded={!collapsed}
+              aria-controls="app-sidebar"
+              aria-label={collapsed ? "Expandir la navegación" : "Plegar la navegación"}
+              title={`${collapsed ? "Expandir" : "Plegar"} la navegación (⌘B)`}
+            >
+              {collapsed ? "»" : "«"}
+            </button>
           </div>
-          <button
-            className="btn btn-ghost btn-sm"
-            onClick={logout}
-            aria-label="Cerrar sesión"
-            title={tip("Cerrar sesión")}
-          >
-            {collapsed ? <span aria-hidden="true">⏻</span> : "Cerrar sesión"}
-          </button>
-        </div>
-      </nav>
 
-      <div className="main">
-        {/* La clave por ruta remonta la vista, y ese remontaje es lo que dispara
-            sola la animación de entrada. El envoltorio no pinta caja
-            (`display: contents`): la cabecera y el cuerpo siguen siendo hijos
-            directos de `.main`, así que ni el `sticky` de `.topbar` ni el
-            `flex: 1` de `.content` cambian de sitio. */}
-        <div className="view" key={pathname}>
-          <Outlet />
+          <div className="nav-section">Espacio de trabajo</div>
+          {NAV.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
+              aria-label={item.label}
+              title={tip(item.label)}
+            >
+              <span className="nav-icon">{item.icon}</span>
+              <span className="nav-label">{item.label}</span>
+            </NavLink>
+          ))}
+
+          <div className="nav-section">Sistema</div>
+          {/* Antes que Ajustes: el aviso es lo que manda a Ajustes, no al revés. */}
+          <NotificationsNav collapsed={collapsed} />
+          {SETTINGS_NAV.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
+              aria-label={item.label}
+              title={tip(item.label)}
+            >
+              <span className="nav-icon">{item.icon}</span>
+              <span className="nav-label">{item.label}</span>
+            </NavLink>
+          ))}
+
+          <div className="sidebar-footer">
+            <div className="user-chip" title={tip(user?.email ?? "")}>
+              <span className="avatar">{initials}</span>
+              <span className="user-email">{user?.email}</span>
+            </div>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={logout}
+              aria-label="Cerrar sesión"
+              title={tip("Cerrar sesión")}
+            >
+              {collapsed ? <span aria-hidden="true">⏻</span> : "Cerrar sesión"}
+            </button>
+          </div>
+        </nav>
+
+        <div className="main">
+          {/* La clave por ruta remonta la vista, y ese remontaje es lo que dispara
+              sola la animación de entrada. El envoltorio no pinta caja
+              (`display: contents`): la cabecera y el cuerpo siguen siendo hijos
+              directos de `.main`, así que ni el `sticky` de `.topbar` ni el
+              `flex: 1` de `.content` cambian de sitio. */}
+          <div className="view" key={pathname}>
+            <Outlet />
+          </div>
         </div>
+
+        {/* Fuera de `.main` y fija a la ventana: la barra no entra en el reparto
+            de alto de la vista, así que una página con la tabla a pantalla
+            completa no tiene que descontarla dos veces. */}
+        <TabBar />
       </div>
-    </div>
+    </NoticesProvider>
   );
 }
 

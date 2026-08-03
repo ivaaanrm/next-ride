@@ -1,30 +1,49 @@
 /* ------------------------------------------------------------------------- *
  * Tokens. Paleta minimalista inspirada en Twenty CRM: fondo casi blanco,
  * bordes muy suaves, un único azul de acento y tipografía compacta.
+ *
+ * Cuatro colores se retocaron un escalón al adaptar la app al móvil porque no
+ * llegaban a AA (el terciario se quedaba en 2,88:1). No es un repintado: el
+ * registro visual no se mueve y el escritorio gana con ellos. Los ratios
+ * anotados están medidos con la fórmula de luminancia relativa de WCAG 2.1.
  * ------------------------------------------------------------------------- */
 :root {
   --bg: #fbfbfb;
   --surface: #ffffff;
   --surface-hover: #f7f7f7;
   --surface-sunken: #f4f4f4;
+  /* --border y --border-strong son filetes **decorativos** de separación
+     (1,2–1,5:1) y eso es deliberado: separan bloques, no delimitan controles.
+     Quien delimita un control es --border-control. */
   --border: #ebebeb;
   --border-strong: #dcdcdc;
+  /* El límite de un componente: campo, botón, pomo del deslizador. WCAG 1.4.11
+     pide 3:1 para eso, y ningún filete decorativo llega. */
+  --border-control: #8f8e89; /* 3,28:1 sobre --surface */
 
   --text: #1b1b18;
-  --text-secondary: #666663;
-  --text-tertiary: #999895;
+  /* Se profundiza aunque ya pasaba: con el terciario corregido a 5,11:1 la
+     rampa de tres grises se quedaba en dos. Ahora es 17,3 / 6,8 / 5,1. */
+  --text-secondary: #5c5b58; /* 6,79:1 surface · 6,56:1 bg · 6,17:1 sunken */
+  --text-tertiary: #6f6e69; /* 5,11:1 surface · 4,94:1 bg · 4,65:1 sunken */
 
   --accent: #1961ed;
   --accent-hover: #1450c8;
   --accent-soft: #eaf1fe;
 
-  --positive: #17803d;
+  --positive: #116b34; /* 5,92:1 sobre su soft (antes 4,48:1) · 6,61:1 surface */
   --positive-soft: #e7f6ec;
-  --warm: #a86612;
+  --warm: #8f5410; /* 5,55:1 sobre su soft (antes 4,17:1) · 6,10:1 surface */
   --warm-soft: #fdf3e2;
   --negative: #b42318;
   --negative-soft: #fdecea;
   --neutral-soft: #f1f1f0;
+
+  /* Texto sobre un relleno de color sólido. Sustituye a los #fff sueltos que
+     quedaban en la hoja, que en modo oscuro serían invisibles. */
+  --on-solid: #ffffff; /* 5,28:1 sobre --accent, 6,10 warm, 6,57 negative, 6,61 positive */
+  /* Velo detrás de hojas y paneles: tokenizado para poder invertirlo en oscuro. */
+  --backdrop: rgba(27, 27, 24, 0.24);
 
   --radius: 4px;
   --radius-lg: 8px;
@@ -40,6 +59,51 @@
   --space-xl: 24px;
   --space-2xl: 32px;
 
+  /* ---- Áreas seguras -------------------------------------------------------
+     Se nombran una vez y las usa todo lo que toca un borde de pantalla: barra
+     superior, barra de pestañas, avisos, pies de hoja y sangrado lateral del
+     contenido. No queda ningún env() suelto en el resto de la hoja.
+
+     Valen 0 salvo que `index.html` declare `viewport-fit=cover`: sin eso, esta
+     capa entera es inerte. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+
+  /* ---- Geometría táctil ----------------------------------------------------
+     Suelo de Apple HIG. Es **área de impacto, no tinta**: la estrella sigue
+     dibujando 20px dentro de una caja de 44. */
+  --tap-target: 44px;
+  --control-height-touch: 44px; /* .btn/.input/.select por debajo de 860px */
+  --row-height-touch: 76px; /* la fila de oferta de tres líneas */
+  --topbar-height-touch: 44px;
+  --tabbar-height: 56px;
+  --rail-height: 56px; /* riel de chips de filtro */
+  /* dvh y no vh: en iOS la unidad `vh` mide contra el viewport grande, así que
+     una hoja medida en vh se sale por debajo de la barra de herramientas. */
+  --sheet-max-height: 92dvh;
+
+  /* ---- Tipografía ----------------------------------------------------------
+     No se tokeniza la hoja entera: se nombran los cinco tamaños que deciden la
+     densidad en la mano. El cuerpo sube a 15px por debajo de 860px —el 13 está
+     afinado para un puntero— y el campo nunca baja de 16, que es el umbral por
+     debajo del cual Safari hace zoom al enfocar. */
+  --font-body: 13px;
+  --font-field: 16px;
+  --font-amount: 18px; /* el precio en la fila de oferta */
+  --font-meta: 12px;
+  --font-micro: 11px; /* rótulos de la barra de pestañas y .figure-label */
+
+  /* ---- Movimiento ---------------------------------------------------------- */
+  --motion-fast: 80ms; /* el que ya usan los :hover */
+  /* Salida de fila, entrada de aviso y plegado de la barra lateral. Es el mismo
+     número que LEAVE_MS en Offers.tsx: si cambia aquí, cambia allí. */
+  --motion: 140ms;
+  --motion-sheet: 240ms;
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --ease-sheet: cubic-bezier(0.32, 0.72, 0, 1);
+
   /* 192px es lo que pide la etiqueta más larga de la navegación —«Ajustes / API
      keys», con su icono y sus sangrados— y ni un píxel más: lo que sobraba se
      lo queda la tabla, que es donde se mira. */
@@ -47,9 +111,72 @@
   --sidebar-width-collapsed: 52px;
   --row-height: 36px;
 
+  /* Apilado. Los números existentes son 2 (thead), 5 (topbar), 10 (popover),
+     20 (backdrop), 21 (panel), 30 (avisos). La barra de pestañas entra entre la
+     barra superior y el velo: por encima de la página, por debajo de cualquier
+     hoja. */
+  --z-tabbar: 15;
+
   --font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
     Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+
+/* ------------------------------------------------------------------------- *
+ * Modo oscuro
+ *
+ * Sin conmutador: se sigue a `prefers-color-scheme`, que es lo que el sistema
+ * ya sabe. Un iPhone se mira de noche y este producto se consulta en la cama;
+ * dejarlo para después es una app que quema.
+ *
+ * El lenguaje no cambia —superficies planas con filetes—, se invierte. Todos
+ * los pares están medidos: ninguno baja de 4,5:1 para texto ni de 3:1 para el
+ * límite de un componente.
+ * ------------------------------------------------------------------------- */
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Casi negro y no negro puro: sobre negro puro los filetes desaparecen. */
+    --bg: #121211;
+    --surface: #1a1a19;
+    --surface-hover: #232322;
+    --surface-sunken: #0e0e0d;
+    --border: #2b2b29;
+    --border-strong: #3a3a37;
+    --border-control: #6e6e69; /* 3,40:1 sobre --surface */
+
+    --text: #f2f1ee; /* 15,42:1 surface · 16,60:1 bg */
+    --text-secondary: #a5a49e; /* 6,97:1 surface · 6,30:1 hover */
+    --text-tertiary: #8e8d87; /* 5,23 surface · 5,63 bg · 4,73 hover · 5,80 sunken */
+
+    --accent: #7fa9ff; /* 7,48:1 surface · 6,39:1 sobre su propio soft */
+    --accent-hover: #9cbcff;
+    --accent-soft: #1b2740;
+
+    --positive: #55c98a; /* 8,38 surface · 7,35 sobre su soft */
+    --positive-soft: #122a1d;
+    --warm: #e0a355; /* 7,91 surface · 7,22 sobre su soft */
+    --warm-soft: #2c2011;
+    --negative: #ff7a6e; /* 6,85 surface · 6,53 sobre su soft */
+    --negative-soft: #331613;
+    --neutral-soft: #262625;
+
+    /* En oscuro, blanco sobre un relleno claro fallaría. */
+    --on-solid: #121211; /* 8,05 sobre el acento, 8,51 warm, 7,37 negative, 9,02 positive */
+    --backdrop: rgba(0, 0, 0, 0.55);
+    /* La sombra clara no se lee sobre fondo oscuro: hay que profundizarla. */
+    --shadow: 0 2px 4px rgba(0, 0, 0, 0.5), 0 12px 24px rgba(0, 0, 0, 0.4);
+
+    /* Puente para las clases de shadcn/ui que usan los gráficos. Va aquí y no en
+       `tailwind.css` porque esta hoja se importa después y sin capa: gana. */
+    --color-border: #2b2b29;
+    --color-background: #1a1a19;
+    --color-foreground: #f2f1ee;
+    --color-muted: #0e0e0d;
+    --color-muted-foreground: #a5a49e;
+    /* chart-1 sigue al acento; los otros dos se quedan porque ya separan y
+       contrastan sobre el fondo oscuro: 5,86:1 el naranja y 5,95:1 el verde. */
+    --color-chart-1: #7fa9ff;
+  }
 }
 
 * {
@@ -62,12 +189,19 @@ body,
   height: 100%;
 }
 
+html {
+  /* El destello gris de iOS al tocar se quita **porque cada cosa tocable tiene
+     su propio :active** más abajo. Quitarlo sin sustituirlo deja una app que no
+     contesta al dedo, que es peor que el destello. */
+  -webkit-tap-highlight-color: transparent;
+}
+
 body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
   font-family: var(--font);
-  font-size: 13px;
+  font-size: var(--font-body);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
@@ -91,12 +225,26 @@ textarea {
   color: inherit;
 }
 
+/* Sin esto, iOS espera ~300 ms por si el toque era el primero de un doble toque
+   para ampliar. No afecta al pellizco, que es el gesto que importa conservar. */
+a,
+button,
+summary,
+[role="button"] {
+  touch-action: manipulation;
+}
+
 /* ------------------------------------------------------------------------- *
  * Layout
  * ------------------------------------------------------------------------- */
+/* `dvh` en toda la hoja y en ningún sitio `vh`: en iOS la unidad estática mide
+   contra el viewport grande —el de la barra de herramientas retraída—, así que
+   un alto de una pantalla entera queda más alto que lo que se ve y esconde el
+   final del layout debajo de la barra. Son cinco alturas: esta, la barra
+   lateral, el marco de las vistas con tabla, el panel y el login. */
 .app {
   display: flex;
-  min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .sidebar {
@@ -110,13 +258,13 @@ textarea {
   gap: 4px;
   position: sticky;
   top: 0;
-  height: 100vh;
+  height: 100dvh;
   /* Recorta las etiquetas mientras se anima el ancho, en vez de reflowarlas. */
   overflow: hidden;
   transition:
-    width 140ms ease,
-    flex-basis 140ms ease,
-    padding 140ms ease;
+    width var(--motion) var(--ease-out),
+    flex-basis var(--motion) var(--ease-out),
+    padding var(--motion) var(--ease-out);
 }
 
 .brand {
@@ -194,7 +342,7 @@ textarea {
   height: 20px;
   border-radius: var(--radius);
   background: var(--text);
-  color: #fff;
+  color: var(--on-solid);
   display: grid;
   place-items: center;
   font-size: 11px;
@@ -222,7 +370,8 @@ textarea {
   transition: background 80ms ease;
 }
 
-.nav-item:hover {
+.nav-item:hover,
+.nav-item:active {
   background: var(--surface-hover);
   color: var(--text);
 }
@@ -275,12 +424,12 @@ textarea {
 
 .nav-badge.warm {
   background: var(--warm);
-  color: #fff;
+  color: var(--on-solid);
 }
 
 .nav-badge.negative {
   background: var(--negative);
-  color: #fff;
+  color: var(--on-solid);
 }
 
 /* Plegada quedan 52 px y no hay sitio para el contador en su columna: se monta
@@ -397,7 +546,7 @@ textarea {
    `flex-basis: 0` que lleve la vista, y `height` aquí pararía el crecimiento
    de todas las páginas, también de las que sí quieren scroll de documento. */
 .main:has(> .view > .content-fill) {
-  height: 100vh;
+  height: 100dvh;
 }
 
 /* La cabecera no entra al reparto: sus 48px son suyos también en ventanas bajas. */
@@ -504,10 +653,9 @@ textarea {
     animation: none;
   }
 
-  table.records tbody tr.row-leaving {
-    transform: none;
-    transition: none;
-  }
+  /* La fila de la tabla de escritorio se apaga en el bloque del final de la
+     hoja, no aquí: su regla se define 800 líneas más abajo y una media query no
+     añade especificidad, así que escrita aquí perdía por orden de aparición. */
 }
 
 /* ------------------------------------------------------------------------- *
@@ -520,7 +668,7 @@ textarea {
   gap: 6px;
   height: 28px;
   padding: 0 10px;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border-control);
   border-radius: var(--radius);
   background: var(--surface);
   color: var(--text);
@@ -535,6 +683,13 @@ textarea {
   background: var(--surface-hover);
 }
 
+/* Con el puntero fuera de juego, `:hover` no existe: el estado pulsado hay que
+   escribirlo a mano o el botón se queda mudo hasta que conteste la red. Va en
+   todo lo tocable: botones, iconos, estrella, filas y pestañas. */
+.btn:active:not(:disabled) {
+  background: var(--surface-sunken);
+}
+
 .btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -543,10 +698,11 @@ textarea {
 .btn-primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-solid);
 }
 
-.btn-primary:hover:not(:disabled) {
+.btn-primary:hover:not(:disabled),
+.btn-primary:active:not(:disabled) {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
 }
@@ -557,7 +713,8 @@ textarea {
   color: var(--text-secondary);
 }
 
-.btn-ghost:hover:not(:disabled) {
+.btn-ghost:hover:not(:disabled),
+.btn-ghost:active:not(:disabled) {
   background: var(--surface-hover);
   color: var(--text);
 }
@@ -583,7 +740,7 @@ textarea {
 .select {
   height: 28px;
   padding: 0 8px;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border-control);
   border-radius: var(--radius);
   background: var(--surface);
   outline: none;
@@ -609,7 +766,7 @@ textarea {
 
 .textarea {
   padding: 6px 8px;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border-control);
   border-radius: var(--radius);
   background: var(--surface);
   outline: none;
@@ -800,7 +957,7 @@ textarea {
   width: 14px;
   height: 14px;
   margin: -7px 0 0 -7px;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border-control);
   border-radius: 50%;
   background: var(--surface);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
@@ -1072,6 +1229,17 @@ th.num {
   transform: rotate(90deg);
 }
 
+/* El binomio es el nivel padre y sus versiones cuelgan de él. No lleva fondo ni
+   peso propios **a propósito**: lo que distingue los dos niveles es la sangría y
+   el registro más ligero de `.variant-row`, y teñir la fila entera pesaría más
+   que el dato —las versiones traen los mismos números que su binomio, así que lo
+   que hay que distinguir es de quién es cada cifra, no separar dos tablas—. La
+   regla nombra ese nivel base y fija la tinta contra la que se lee la diferencia
+   cuando el grupo está plegado. */
+table.records tbody tr.group-row {
+  color: var(--text);
+}
+
 table.records tbody tr.variant-row td {
   color: var(--text-secondary);
   font-weight: 400;
@@ -1266,8 +1434,8 @@ table.records tbody tr.row-leaving {
   transform: translateX(12px);
   pointer-events: none;
   transition:
-    opacity 140ms ease,
-    transform 140ms ease;
+    opacity var(--motion) var(--ease-out),
+    transform var(--motion) var(--ease-out);
 }
 
 /* ---- Marca de combustible ---------------------------------------------------
@@ -1334,7 +1502,8 @@ table.records tbody tr.row-leaving {
     color 80ms ease;
 }
 
-.icon-btn:hover:not(:disabled) {
+.icon-btn:hover:not(:disabled),
+.icon-btn:active:not(:disabled) {
   background: var(--surface-hover);
   color: var(--text);
 }
@@ -1366,13 +1535,14 @@ table.records tbody tr.row-leaving {
   border: none;
   border-radius: var(--radius);
   background: none;
-  color: var(--border-strong);
+  color: var(--border-control);
   font-size: 14px;
   line-height: 1;
   transition: color 80ms ease;
 }
 
 .star:hover:not(:disabled),
+.star:active:not(:disabled),
 .star.on {
   color: var(--warm);
 }
@@ -1541,7 +1711,7 @@ table.records tbody tr.row-leaving {
 .drawer-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(27, 27, 24, 0.24);
+  background: var(--backdrop);
   z-index: 20;
 }
 
@@ -1564,6 +1734,13 @@ table.records tbody tr.row-leaving {
   flex-direction: column;
   gap: var(--space-sm);
   max-width: min(460px, calc(100vw - 2 * var(--space-lg)));
+  /* La caja vive montada aunque no haya avisos, para que la región viva exista
+     antes que su texto. Vacía no debe robar ni un toque. */
+  pointer-events: none;
+}
+
+.toasts > * {
+  pointer-events: auto;
 }
 
 .toast {
@@ -1576,7 +1753,7 @@ table.records tbody tr.row-leaving {
   border-radius: var(--radius-lg);
   background: var(--surface);
   box-shadow: var(--shadow);
-  animation: toast-enter 140ms ease;
+  animation: toast-enter var(--motion) var(--ease-out);
 }
 
 .toast-text {
@@ -1656,7 +1833,7 @@ table.records tbody tr.row-leaving {
   position: fixed;
   top: 0;
   right: 0;
-  height: 100vh;
+  height: 100dvh;
   width: min(560px, 92vw);
   background: var(--surface);
   border-left: 1px solid var(--border);
@@ -2100,6 +2277,14 @@ table.records tbody tr.row-leaving {
   box-shadow: var(--shadow);
 }
 
+/* La variante sin enlace es un `<figure>`, y el margen que le pone el navegador
+   son 40 px por cada lado: en 390 pt se come una quinta parte del ancho. Esta
+   regla venía inyectada desde `Offers.tsx`; al traerla aquí es lo único que no
+   estaba ya cubierto por la base. */
+.offer-preview.static {
+  margin: 0;
+}
+
 .offer-preview-image {
   display: block;
   width: 100%;
@@ -2143,6 +2328,18 @@ table.records tbody tr.row-leaving {
   border-bottom: 1px solid var(--border);
 }
 
+.drawer-heading {
+  min-width: 0;
+}
+
+/* El botón de cerrar va primero en el árbol —es la salida, y en un móvil
+   además es lo primero de la cabecera—, pero en escritorio se dibuja donde
+   siempre estuvo, al final de la fila. `order` mueve el dibujo sin tocar ni el
+   orden de tabulación ni el resto de la cabecera. */
+.drawer-close {
+  order: 1;
+}
+
 .drawer-header h2 {
   margin: 0;
   font-size: 14px;
@@ -2155,6 +2352,8 @@ table.records tbody tr.row-leaving {
   --drawer-pad: var(--space-lg);
   padding: var(--drawer-pad);
   overflow-y: auto;
+  /* El rebote al llegar al final no encadena con el documento de detrás. */
+  overscroll-behavior: contain;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -2329,10 +2528,10 @@ table.records tbody tr.row-leaving {
   width: 28px;
   height: 28px;
   place-items: center;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border-control);
   border-radius: 999px;
   background: var(--surface);
-  color: white;
+  color: var(--on-solid);
   cursor: pointer;
   transition:
     border-color 120ms ease,
@@ -2554,10 +2753,14 @@ table.records tbody tr.row-leaving {
  * Login
  * ------------------------------------------------------------------------- */
 .auth-shell {
-  min-height: 100vh;
+  min-height: 100dvh;
   display: grid;
   place-items: center;
-  padding: 24px;
+  /* Los cuatro lados con su área segura: es la única pantalla que se dibuja sin
+     barra superior ni barra de pestañas, así que aquí no hay nadie más que las
+     consuma y la tarjeta acabaría bajo la isla dinámica. */
+  padding: max(var(--space-xl), var(--safe-top)) max(var(--space-xl), var(--safe-right))
+    max(var(--space-xl), var(--safe-bottom)) max(var(--space-xl), var(--safe-left));
   background: var(--bg);
 }
 
@@ -2695,7 +2898,7 @@ table.records tbody tr.row-leaving {
   gap: 6px;
   height: 26px;
   padding: 0 10px;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border-control);
   border-radius: 999px;
   background: var(--surface);
   color: var(--text-secondary);
@@ -2731,6 +2934,18 @@ table.records tbody tr.row-leaving {
 
 .binomio.on .binomio-dot {
   background: var(--slot);
+}
+
+/* El nombre cede antes que el punto y que el recuento: son 8 y 24 px que dicen
+   «qué serie» y «cuántas ofertas», y sin ellos el chip no significa nada.
+   Recorta en vez de partirse en dos líneas —un riel de chips de dos alturas
+   deja de leerse como un riel— y solo llega a recortar cuando el chip topa con
+   el ancho de la pantalla, que es lo que pasa en 390 pt. */
+.binomio-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .binomio-count {
@@ -2893,6 +3108,28 @@ table.records tbody tr.row-leaving {
   }
 }
 
+/* El radar dibujado a mano necesita dos cosas del CSS y ninguna más: un marco
+   desde el que posicionar su tooltip en coordenadas absolutas, y el SVG en
+   bloque para que no le sobre el renglón de una línea base. */
+.chart-radar-frame {
+  position: relative;
+}
+
+.chart-radar-frame > svg {
+  display: block;
+}
+
+/* Sigue al punto, no al puntero: se coloca con `left`/`top` en línea y el
+   desplazamiento de 8 px lo pone el `transform`, que no vuelve a maquetar.
+   `pointer-events: none` para que el propio tooltip no se coma el `mouseleave`
+   del vértice que lo ha abierto. */
+.chart-radar-tip {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+  transform: translate(8px, -8px);
+}
+
 /* ---- Tooltips ------------------------------------------------------------ */
 .chart-tip {
   min-width: 168px;
@@ -2998,10 +3235,127 @@ table.records tbody tr.row-leaving {
   font-variant-numeric: tabular-nums;
 }
 
+/* ---- «Ver los datos» -------------------------------------------------------
+ *
+ * El desplegable con la lectura exacta de cada tarjeta. Existe porque en un
+ * móvil **no hay `:hover`**: todo lo que solo vivía en un tooltip —las cinco
+ * cifras de una caja, el precio de un punto de la nube, el valor crudo de un eje
+ * del radar— es información que un dedo no puede invocar. De paso es el
+ * equivalente accesible del dibujo para quien navega con VoiceOver.
+ * --------------------------------------------------------------------------- */
+.chart-data {
+  margin-top: var(--space-sm);
+  border-top: 1px solid var(--border);
+}
+
+.chart-data > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 6px 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  /* El triángulo del sistema se sustituye por el galón de abajo, que gira. */
+  list-style: none;
+}
+
+.chart-data > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* Galón dibujado con dos filetes y girado: un glifo de texto dependería de la
+   fuente que acabe resolviéndose, y aquí el que gira es un `transform`, que no
+   vuelve a maquetar nada al abrir. */
+.chart-data > summary::after {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  transform: rotate(45deg);
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+
+.chart-data[open] > summary::after {
+  transform: rotate(-135deg);
+}
+
+.chart-data > summary:hover,
+.chart-data > summary:active {
+  color: var(--text);
+}
+
+.chart-data > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.chart-data-count {
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Tope de alto y scroll propio: la nube de puntos es una fila por oferta, y una
+   tarjeta que crece mil filas al abrirse empuja el resto de la página fuera. */
+.chart-data-wrap {
+  max-height: 320px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border-top: 1px solid var(--border);
+}
+
+.chart-data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-meta);
+}
+
+.chart-data-table th,
+.chart-data-table td {
+  padding: 6px 10px 6px 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-secondary);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.chart-data-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+/* La primera columna es el nombre de la fila, no un dato: va en la tinta
+   principal para que la tabla se lea por su margen izquierdo. */
+.chart-data-table tbody th {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.chart-data-table .num {
+  padding-right: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-data-table tbody tr:last-child th,
+.chart-data-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.chart-data-more {
+  margin: var(--space-sm) 0 var(--space-xs);
+}
+
 /* ---- Conmutador de dimensión --------------------------------------------- */
 .segmented {
   display: inline-flex;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border-control);
   border-radius: var(--radius);
   overflow: hidden;
 }
@@ -3010,7 +3364,7 @@ table.records tbody tr.row-leaving {
   height: 24px;
   padding: 0 8px;
   border: none;
-  border-left: 1px solid var(--border-strong);
+  border-left: 1px solid var(--border-control);
   background: var(--surface);
   color: var(--text-secondary);
   font-size: 11px;
@@ -3049,8 +3403,1628 @@ table.records tbody tr.row-leaving {
   }
 }
 
+/* ------------------------------------------------------------------------- *
+ * Barra de pestañas
+ *
+ * La navegación del móvil entera. Por encima de 860 px no existe —la barra
+ * lateral hace su trabajo y el plegado con ⌘B es un idioma de puntero que no se
+ * porta—; por debajo, es lo único que hay, y sin ella cinco de las siete rutas
+ * y «Cerrar sesión» son inalcanzables.
+ *
+ * z-index 15: por encima de la barra superior (5) y de la cabecera fija de la
+ * tabla (2), por debajo del velo (20), del panel (21) y de los avisos (30). Una
+ * hoja abierta tapa la barra, que es lo correcto: mientras hay una hoja, la
+ * navegación no es lo que se está haciendo.
+ * ------------------------------------------------------------------------- */
+.tabbar {
+  display: none;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: var(--z-tabbar);
+  height: calc(var(--tabbar-height) + var(--safe-bottom));
+  padding-bottom: var(--safe-bottom);
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.tabbar-item {
+  flex: 1 1 0;
+  /* 64 px de ancho mínimo y toda la altura de la barra: el objetivo es la
+     columna entera, no el glifo. */
+  min-width: 64px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: var(--text-secondary);
+  transition: color var(--motion-fast) var(--ease-out);
+}
+
+/* Acento **y** peso: la pestaña activa no puede distinguirse solo por color. */
+.tabbar-item.active {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.tabbar-item:active {
+  background: var(--surface-hover);
+}
+
+.tabbar-icon {
+  position: relative;
+  font-size: 17px;
+  line-height: 1;
+}
+
+/* El rótulo va siempre visible: cuatro glifos geométricos sin palabra no se
+   distinguen, y en la barra lateral la palabra también está. */
+.tabbar-label {
+  font-size: var(--font-micro);
+  line-height: 1.2;
+}
+
+/* Insignia con el número, no un punto de 8 px: «hay algo» sin decir cuánto
+   obliga a entrar a mirar. El contador va además en el nombre accesible de la
+   pestaña, porque esto es `aria-hidden`. */
+.tabbar-badge {
+  position: absolute;
+  bottom: 60%;
+  left: 60%;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: var(--warm);
+  color: var(--on-solid);
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+/* ------------------------------------------------------------------------- *
+ * Hoja inferior
+ *
+ * El control del que se vuelve en segundos: filtros, orden, un menú. El pie va
+ * **en el flujo**, nunca fijo: con el teclado abierto, en iOS el viewport de
+ * maquetación no encoge y un pie fijo se despega de la hoja.
+ * ------------------------------------------------------------------------- */
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: var(--backdrop);
+  animation: sheet-veil var(--motion) var(--ease-out);
+}
+
+.sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 21;
+  display: flex;
+  flex-direction: column;
+  max-height: var(--sheet-max-height);
+  /* En escritorio la hoja no se estira a 1.400 px: se queda centrada y con el
+     ancho de una columna de lectura. */
+  max-width: 560px;
+  margin: 0 auto;
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  animation: sheet-enter var(--motion-sheet) var(--ease-sheet);
+}
+
+/* Asa decorativa: dice «esto sube y baja» sin ser la única forma de cerrar. */
+.sheet-grip {
+  width: 36px;
+  height: 4px;
+  margin: var(--space-sm) auto 0;
+  border-radius: 999px;
+  background: var(--border-strong);
+}
+
+.sheet-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-height: 48px;
+  padding: 0 var(--space-sm);
+  border-bottom: 1px solid var(--border);
+}
+
+/* La salida visible de la hoja, a la izquierda y a 44 pt. No es la única
+   —también cierran el velo y Escape—, pero sí la que se ve. */
+.sheet-close {
+  flex: none;
+  min-width: var(--tap-target);
+  min-height: var(--tap-target);
+  padding: 0 var(--space-sm);
+  border: none;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--accent);
+  font-weight: 500;
+  text-align: left;
+}
+
+.sheet-close:active {
+  background: var(--accent-soft);
+}
+
+.sheet-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Reserva el mismo ancho que el botón de cerrar aunque esté vacía: sin ella el
+   título quedaría centrado respecto a un hueco asimétrico. */
+.sheet-action {
+  flex: none;
+  min-width: var(--tap-target);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.sheet-body {
+  padding: var(--space-lg);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.sheet-footer {
+  padding: var(--space-md) var(--space-lg) calc(var(--space-md) + var(--safe-bottom));
+  border-top: 1px solid var(--border);
+}
+
+@keyframes sheet-enter {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes sheet-veil {
+  from {
+    opacity: 0;
+  }
+}
+
+/* ---- Contenido de una hoja -------------------------------------------------
+ *
+ * La gramática de dentro: bloques apilados, cada uno con su rótulo en versalita
+ * y su control a ancho completo. Es lo que usan la hoja de filtros y la de
+ * orden, y lo que usará cualquier hoja que venga después: nada de aquí sabe de
+ * ofertas.
+ *
+ * El aire entre bloques es generoso (24) y el de dentro de un bloque apretado
+ * (8): esa es toda la separación que hace falta para que un rótulo se lea como
+ * el de su control y no como el del anterior.
+ * --------------------------------------------------------------------------- */
+.sheet-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+}
+
+.sheet-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+/* El rótulo lleva a la derecha el valor actual del control cuando lo tiene —la
+   banda del deslizador—, así que es una fila y no solo texto. */
+.sheet-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--font-micro);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* El valor es dato y no etiqueta: sale de la versalita y vuelve al registro
+   normal, con cifras de ancho constante para que no baile al arrastrar. */
+.sheet-label-value {
+  color: var(--text-secondary);
+  font-size: var(--font-meta);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Acción secundaria de la cabecera («Limpiar»). Se ve como texto y se toca como
+   un botón de 44: la tinta no engorda, la caja sí. */
+.sheet-link {
+  min-width: var(--tap-target);
+  min-height: var(--tap-target);
+  padding: 0 var(--space-sm);
+  border: none;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 500;
+}
+
+.sheet-link:active {
+  background: var(--accent-soft);
+}
+
+.sheet-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* La acción principal, en el pie y en flujo: ancho completo y 48 px, que es la
+   única cosa de la hoja que se toca sin mirar. El selector lleva `.btn` para
+   ganarle al alto táctil de los botones sin recurrir a `!important`. */
+.btn.sheet-apply {
+  width: 100%;
+  height: 48px;
+}
+
+/* ---- Piezas de la hoja de filtros ---- */
+/* Las cinco cifras agregadas. Aquí describen exactamente el conjunto que se está
+   acotando, que es lo que se está haciendo en esta pantalla; encima de la lista,
+   en un móvil, la reemplazaban. */
+.sheet-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: var(--space-md);
+}
+
+/* «Mejor chollo» sí es una oferta concreta y se puede abrir: es el único de los
+   seis datos del resumen que lleva a algún sitio, y por eso es el único con
+   caja, con suelo de 44 y con estado pulsado. */
+.sheet-deal {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  min-height: var(--tap-target);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.sheet-deal:active {
+  background: var(--surface-hover);
+}
+
+.sheet-deal:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.sheet-deal-price {
+  font-size: var(--font-amount);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.sheet-deal-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: var(--font-meta);
+}
+
+/* Lista de opciones de una hoja: el modelo en la de filtros, el criterio en la
+   de orden. Con tope de alto y su propio scroll, porque el catálogo son sesenta
+   filas y la hoja tiene un pie que no puede quedar fuera de alcance. */
+.sheet-options {
+  display: flex;
+  flex-direction: column;
+  max-height: 320px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.sheet-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-height: var(--tap-target);
+  padding: var(--space-sm) var(--space-md);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.sheet-option:last-child {
+  border-bottom: none;
+}
+
+.sheet-option:active {
+  background: var(--surface-hover);
+}
+
+/* Elegida: el mismo acento que marca un filtro puesto en todo el resto de la
+   app. La marca de verificación va además del color, que nunca decide solo. */
+.sheet-option.on {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.sheet-option:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.sheet-option-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sheet-option-count {
+  flex: none;
+  color: var(--text-tertiary);
+  font-size: var(--font-meta);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Reserva su hueco esté marcada o no: si apareciera al elegir, el rótulo de la
+   fila se correría bajo el dedo que acaba de tocarla. */
+.sheet-tick {
+  flex: none;
+  width: 14px;
+  color: var(--accent);
+  text-align: center;
+}
+
+.sheet-empty {
+  margin: 0;
+  padding: var(--space-md);
+  color: var(--text-tertiary);
+  font-size: var(--font-meta);
+}
+
+/* Las dos casillas para teclear la cifra exacta, debajo del deslizador: apuntar
+   es cómodo para explorar y lento para poner un número que ya se sabe. */
+.sheet-bounds {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.sheet-bounds .input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Dos interruptores en fila: son cortos y juntos se leen como un par. */
+.sheet-scopes {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+/* La nota al pie de una hoja: el aviso del tope de la de orden, escrito y a la
+   vista. Vivía en un `title`, que en táctil no existe. */
+.sheet-note {
+  margin: var(--space-md) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--font-meta);
+  line-height: 1.5;
+}
+
+/* ------------------------------------------------------------------------- *
+ * Sin conexión
+ *
+ * Distinto del error por una razón que era un fallo bloqueante: una red caída y
+ * una sesión caducada renderizaban la misma pantalla de login, y quien lo sufre
+ * no sabe cuál de las dos le ha pasado.
+ * ------------------------------------------------------------------------- */
+.offline-notice {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-md);
+  padding: 48px var(--space-lg);
+  text-align: center;
+}
+
+.offline-title {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.offline-body {
+  margin: 0;
+  max-width: 44ch;
+  color: var(--text-secondary);
+}
+
+.offline-notice .btn {
+  min-height: var(--tap-target);
+  min-width: 132px;
+}
+
+/* ------------------------------------------------------------------------- *
+ * «Más»
+ *
+ * Filas de 44 pt agrupadas por para qué se entra. Es una lista de destinos, no
+ * una página de contenido: cada fila dice a dónde va y, cuando hace falta, en
+ * qué estado está lo que hay al otro lado.
+ * ------------------------------------------------------------------------- */
+.more {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+  max-width: 640px;
+}
+
+/* Un grupo es su rótulo y su bloque de filas, nada más: el aire entre grupos lo
+   reparte `.more` con su `gap`, así que aquí no hay margen que lo duplique. El
+   `min-width: 0` es para que un correo largo en la fila de la sesión recorte
+   dentro de su celda en vez de ensanchar la columna. */
+.more-section {
+  min-width: 0;
+}
+
+.more-section-title {
+  margin: 0 0 var(--space-sm);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.more-rows {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.more-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  width: 100%;
+  min-height: var(--tap-target);
+  padding: var(--space-sm) var(--space-md);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.more-row:last-child {
+  border-bottom: none;
+}
+
+.more-row:active {
+  background: var(--surface-hover);
+}
+
+/* Una fila que solo enseña un dato no se puede pulsar y no lo finge. */
+.more-row.static {
+  cursor: default;
+}
+
+.more-row.static:active {
+  background: var(--surface);
+}
+
+.more-label {
+  font-weight: 500;
+}
+
+.more-row.danger .more-label {
+  color: var(--negative);
+}
+
+.more-row.accent .more-label {
+  color: var(--accent);
+}
+
+.more-value {
+  margin-left: auto;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-meta);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.more-chevron {
+  flex: none;
+  color: var(--text-tertiary);
+  font-size: 15px;
+  line-height: 1;
+}
+
+/* La fila con valor ya empuja el galón con su `margin-left: auto`; la que no lo
+   tiene lo necesita aquí. */
+.more-row > .more-label + .more-chevron {
+  margin-left: auto;
+}
+
+.install-steps {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: var(--space-sm);
+  line-height: 1.5;
+}
+
+.install-warning {
+  margin: var(--space-lg) 0 0;
+  padding: var(--space-md);
+  border: 1px solid var(--warm);
+  border-radius: var(--radius);
+  background: var(--warm-soft);
+  color: var(--warm);
+}
+
+.install-note {
+  margin: var(--space-md) 0 0;
+  color: var(--text-tertiary);
+  font-size: var(--font-meta);
+}
+
+/* ------------------------------------------------------------------------- *
+ * La pantalla de ofertas en el móvil
+ *
+ * La ruta por defecto y el 90 % de la app. Por encima de 860 px nada de esto se
+ * dibuja —los componentes que llevan estas clases no se montan ahí, y el
+ * escritorio sigue con su tabla de catorce columnas—, así que las reglas no
+ * necesitan candado de media: lo pone el marcado.
+ *
+ * El orden de lectura de la pantalla es el de este bloque: riel de filtros,
+ * línea de contexto, lista, fila, y las hojas que salen de ella.
+ * ------------------------------------------------------------------------- */
+
+/* ---- Riel de chips de filtro -----------------------------------------------
+ *
+ * Lo que sustituye a la fila de seis controles del escritorio. La diferencia no
+ * es el tamaño: en 390 pt no caben seis controles que enseñen su estado, así que
+ * se separa **poner** un filtro de **ver** el que hay puesto. Ver está siempre,
+ * aquí; poner está a un toque, en una hoja.
+ *
+ * «Limpiar» va al final y no al principio: es lo destructivo, y lo destructivo
+ * no puede ser lo primero que encuentra el pulgar que arrastra el riel.
+ * --------------------------------------------------------------------------- */
+.offer-rail {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-height: var(--rail-height);
+  overflow-x: auto;
+  /* El rebote del riel no encadena con el documento ni con la lista. */
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.offer-rail::-webkit-scrollbar {
+  display: none;
+}
+
+.rail-chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  height: var(--tap-target);
+  padding: 0 var(--space-md);
+  border: 1px solid var(--border-control);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  white-space: nowrap;
+  transition: background var(--motion-fast) var(--ease-out);
+}
+
+.rail-chip:active {
+  background: var(--surface-hover);
+}
+
+/* El mismo acento que ya marca `.select.on`, el interruptor encendido y
+   `.popover-trigger.on`: un filtro puesto se reconoce igual en toda la app. */
+.rail-chip.on,
+.rail-chip.applied {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.rail-chip.applied:active {
+  background: var(--surface-hover);
+}
+
+/* «Limpiar» no es un filtro: se queda en el registro secundario para no
+   competir con los chips que sí dicen algo del conjunto. */
+/* Solo baja el peso del texto: el filete se queda en `--border-control`, que es
+   el que delimita un control. Con `--border-strong` —que la cabecera de tokens
+   marca como decorativo— el borde medía 1,33:1, y el único botón destructivo del
+   riel era justo el que no se veía dónde empezaba. */
+.rail-chip.ghost {
+  color: var(--text-secondary);
+}
+
+.rail-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.rail-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-solid);
+  font-size: var(--font-micro);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+/* La ✕ dice qué hace el chip; el objetivo es el chip entero, porque un botón
+   dentro de otro botón no existe en HTML y dos objetivos de 44 anidados no se
+   pueden tocar por separado. */
+.rail-x {
+  font-size: var(--font-micro);
+}
+
+/* ---- Línea de contexto ----------------------------------------------------
+ *
+ * Cuántas ofertas hay y contra qué mediana se mide la desviación de cada fila.
+ * En el escritorio esa mediana vive en el `<th>` de su columna; aquí, donde no
+ * hay cabecera, un porcentaje colgando de una referencia invisible no se puede
+ * interpretar.
+ * --------------------------------------------------------------------------- */
+.offer-context {
+  margin: 0 0 var(--space-sm);
+  color: var(--text-secondary);
+  font-size: var(--font-meta);
+}
+
+/* La alternativa escrita a la demostración del gesto, para quien ha pedido
+   menos movimiento. Se descarta con el primer deslizamiento. */
+.offer-hint {
+  margin: 0 0 var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--font-meta);
+}
+
+/* ---- La lista --------------------------------------------------------------
+ *
+ * El carril interior sigue siendo el dueño del scroll: el troceado por tramos
+ * —contador de época, cerrojo de petición en vuelo, offset derivado de
+ * `rows.length`— está atado a él, y cambiarle el dueño significaría reescribir
+ * la única capa que el propio auditor declara que no hay que tocar.
+ * --------------------------------------------------------------------------- */
+.offer-scroll {
+  border-radius: var(--radius-lg);
+}
+
+.offer-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.offer-item {
+  border-bottom: 1px solid var(--border);
+}
+
+.offer-item:last-child {
+  border-bottom: none;
+}
+
+/* Los 140 ms de salida son los mismos que `LEAVE_MS` en `Offers.tsx`: si cambian
+   aquí, cambian allí, o la fila se queda a medio ir. Solo `opacity` y
+   `transform`, que son las dos cosas que el compositor puede animar sin pedirle
+   nada al hilo principal mientras la lista se desplaza. */
+.offer-leaving {
+  opacity: 0;
+  transform: translateX(12px);
+  pointer-events: none;
+  transition:
+    opacity var(--motion) var(--ease-out),
+    transform var(--motion) var(--ease-out);
+}
+
+/* ---- Deslizar para ver las acciones ---------------------------------------
+ *
+ * Scroll nativo con dos anclajes, no un arrastre en JavaScript: el bloqueo de
+ * eje, la inercia y la velocidad de escape los pone iOS, medidos contra el resto
+ * del sistema. Y los botones están siempre dibujados —sin `opacity: 0` y sin
+ * `:hover` de por medio—, solo que fuera del carril visible: VoiceOver y el
+ * tabulador llegan a ellos sin hacer ningún gesto.
+ * --------------------------------------------------------------------------- */
+.swipe {
+  display: flex;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.swipe::-webkit-scrollbar {
+  display: none;
+}
+
+/* Durante la demostración del gesto el anclaje estorba: 56 px no es ninguno de
+   los dos puntos y el navegador lo corregiría antes de que se llegara a ver. */
+.swipe[data-peek] {
+  scroll-snap-type: none;
+}
+
+.swipe-pane {
+  flex: 0 0 100%;
+  min-width: 0;
+  scroll-snap-align: start;
+}
+
+.swipe-actions {
+  flex: none;
+  display: flex;
+  scroll-snap-align: end;
+}
+
+/* 88 px y el nombre escrito: el icono funcionaba en la tabla porque el `title`
+   lo explicaba al pasar por encima, y detrás de un gesto que hay que descubrir
+   dos dibujos sin rótulo serían dos formas de tirar una fila. */
+.swipe-action {
+  flex: none;
+  min-width: 88px;
+  min-height: var(--tap-target);
+  padding: 0 var(--space-sm);
+  border: none;
+  background: var(--negative);
+  color: var(--on-solid);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  /* Nada de la lista depende de `:hover` para verse: esto lo comprueba la
+     aceptación de la pantalla y es la razón de escribirlo. */
+  opacity: 1;
+}
+
+.swipe-action.expired {
+  background: var(--warm);
+}
+
+.swipe-action.active {
+  background: var(--positive);
+}
+
+/* El pulsado invierte relleno y tinta: con el dedo encima del botón un cambio de
+   luminosidad no se ve, pero un cambio de figura sí. */
+.swipe-action:active {
+  background: var(--surface);
+  color: var(--negative);
+}
+
+.swipe-action.expired:active {
+  background: var(--surface);
+  color: var(--warm);
+}
+
+.swipe-action.active:active {
+  background: var(--surface);
+  color: var(--positive);
+}
+
+/* Mientras la fila se va no responde a nada, pero no se apaga: media tinta sobre
+   un relleno de color se lee como un botón roto. */
+.swipe-action:disabled {
+  opacity: 1;
+}
+
+.swipe-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+}
+
+/* ---- La fila de tres líneas ------------------------------------------------
+ *
+ * Gramática de ranuras fija, que es lo único que hace legible un barrido
+ * vertical rápido: identidad, juicio y evidencia, siempre en el mismo sitio.
+ * Al lado, en su propia columna de 44, la estrella: es el único control que
+ * compite con el toque que abre la ficha, y por eso se separa físicamente.
+ * --------------------------------------------------------------------------- */
+.offer-row {
+  display: flex;
+  align-items: stretch;
+  min-height: var(--row-height-touch);
+  background: var(--surface);
+}
+
+.offer-open {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-2xs);
+  padding: var(--space-xs) var(--space-xs) var(--space-xs) var(--space-md);
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+/* Con el `:hover` fuera de juego, el estado pulsado se escribe a mano: una fila
+   que dispara una petición y no acusa el golpe se lee como ignorada. */
+.offer-open:active {
+  background: var(--surface-hover);
+}
+
+.offer-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* Alto de línea escrito y no heredado: las tres líneas tienen que sumar 76 px
+   con su aire, y el alto automático sobre tres cuerpos distintos suma lo que le
+   parece a cada fuente. */
+.offer-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+  width: 100%;
+  line-height: 1.25;
+}
+
+.offer-identity {
+  gap: var(--space-xs);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.offer-name {
+  flex: none;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+/* La versión recortada y en gris: distingue una oferta de otra, pero no es lo
+   que se busca al barrer la lista. Sin `title`: en táctil no hay dónde posarse. */
+.offer-trim {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+/* La segunda línea es el juicio: la cifra y lo que la califica, en ese orden y
+   sin envolver. Lo más ancho que puede llegar a medir —precio, desviación,
+   puntuación con su barra y puesto de la IA— son ~252 px de los ~330 que deja la
+   columna de contenido en 390 pt, así que no hay caso en que se salga. */
+.offer-judgement {
+  gap: var(--space-sm);
+  flex-wrap: nowrap;
+}
+
+/* Anclado a una x fija y con cifras de ancho constante: el barrido vertical lee
+   los precios como una columna aunque no haya columna. Es la razón de ser de la
+   pantalla, y por eso es lo único que se lee al entornar los ojos. */
+.offer-price {
+  flex: none;
+  min-width: 92px;
+  color: var(--text);
+  font-size: var(--font-amount);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* Año · km · km/año · combustible · sitio. Una línea, recortada, en el gris de
+   tercer nivel: es la evidencia, no el titular. El combustible va con su palabra
+   entera, que es lo que hacía legible la inicial en la tabla. */
+.offer-evidence-line {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+  font-size: var(--font-meta);
+  line-height: 1.3;
+}
+
+/* Su propia columna a todo el alto de la fila. La tinta sigue midiendo lo que
+   medía —20 px—; lo que mide 44 es la caja que recibe el toque. */
+.star.offer-star {
+  flex: none;
+  align-self: stretch;
+  width: var(--tap-target);
+  min-width: var(--tap-target);
+  height: auto;
+  min-height: var(--tap-target);
+  border-radius: 0;
+}
+
+.star.offer-star:active:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+/* ---- Perfil frente a sus comparables --------------------------------------
+ *
+ * Lo que antes era un polígono cuyas cifras solo existían en un tooltip que un
+ * dedo no puede invocar: una frase, una barra por eje con la mediana marcada en
+ * el centro, y el valor crudo escrito al lado.
+ *
+ * La barra dibuja el **segmento entre la mediana y el valor**, no un relleno
+ * desde cero: el radio es una posición en una escala, no una nota.
+ * --------------------------------------------------------------------------- */
+.profile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.profile-reading {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.profile-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.profile-row {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.profile-axis {
+  color: var(--text-secondary);
+  font-size: var(--font-meta);
+}
+
+/* Carril hundido con filete, y no el gris claro suelto: la barra se dibuja sobre
+   tres superficies distintas —panel, franja de veredicto y hoja— y sin límite
+   visible no se puede juzgar de qué lado del centro cae el segmento. */
+.profile-track {
+  position: relative;
+  height: 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-sunken);
+}
+
+/* La mediana de los comparables. Sobresale del carril por arriba y por abajo
+   para que se lea como una marca de escala y no como un trozo de relleno. */
+.profile-mid {
+  position: absolute;
+  left: 50%;
+  top: -2px;
+  bottom: -2px;
+  width: 1px;
+  background: var(--border-strong);
+}
+
+.profile-fill {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  border-radius: 999px;
+  background: var(--text-tertiary);
+}
+
+/* A favor de quien compra en verde, en contra en ámbar. Dentro de ±5 puntos el
+   segmento se queda neutro: esa banda es ruido del propio eje y teñirla diría
+   una ventaja que los datos no sostienen. */
+.profile-fill.over {
+  background: var(--positive);
+}
+
+.profile-fill.under {
+  background: var(--warm);
+}
+
+.profile-value {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  min-width: 96px;
+  font-size: var(--font-meta);
+  font-variant-numeric: tabular-nums;
+}
+
+.profile-ref {
+  color: var(--text-tertiary);
+  font-size: var(--font-micro);
+}
+
+.profile-note {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--font-meta);
+  line-height: 1.5;
+}
+
+/* ---- Historial de precios --------------------------------------------------
+ *
+ * Una polilínea de seis puntos no necesita una librería de gráficos, y meterla
+ * aquí costaría el presupuesto entero del arranque. El dibujo es `aria-hidden` y
+ * debajo va la lista exacta: la forma dice «bajó pronto y se quedó quieta», las
+ * cifras dicen cuánto y cuándo.
+ * --------------------------------------------------------------------------- */
+.price-chart {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.price-chart-svg {
+  width: 100%;
+  height: 56px;
+}
+
+.price-chart-ends {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-tertiary);
+  font-size: var(--font-micro);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- La salida al anuncio --------------------------------------------------
+ *
+ * Salir de la app es una acción explícita y única, no un toque mal puesto sobre
+ * la foto: la tarjeta de vista previa dejó de ser un enlace y aquí está el único
+ * botón que se va, con el host a la vista.
+ * --------------------------------------------------------------------------- */
+.offer-evidence-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* La foto sigue teniendo su tope propio cuando la ficha se estrecha: a todo lo
+   ancho, el 4/3 la convierte en un héroe de 400 px que entierra la evidencia,
+   que es justo lo contrario de lo que se viene a hacer aquí. El botón de salida,
+   en cambio, se queda a ancho completo. */
+@container (max-width: 620px) {
+  .offer-evidence-main > .offer-preview {
+    max-width: 320px;
+  }
+}
+
+.offer-exit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+}
+
+.offer-exit-open {
+  flex: 1 1 auto;
+  justify-content: center;
+  min-height: var(--tap-target);
+  text-decoration: none;
+}
+
+.offer-exit-copy {
+  flex: none;
+  min-height: var(--tap-target);
+}
+
+.offer-exit-note {
+  flex: 1 1 100%;
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* ------------------------------------------------------------------------- *
+ * Lista de registros
+ *
+ * El primitivo táctil que sustituye a una tabla de escritorio cuando esa tabla
+ * no cabe en 390 pt: un registro por fila, con la misma cadencia y los mismos
+ * filetes que la fila de oferta, pero sin saber nada de ofertas. Lo usan la
+ * matriz de captación, Modelos, Dealers y API keys.
+ *
+ * La gramática es la misma de siempre: la cifra que decide arriba a la derecha y
+ * con peso, la identidad a su izquierda, el apoyo en una segunda línea más
+ * callada, y las acciones al final con su suelo de 44.
+ * ------------------------------------------------------------------------- */
+.record-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  /* El radio recorta el primer y el último filete del ítem: sin esto, la
+     esquina enseña la línea recta por debajo de la curva. */
+  overflow: hidden;
+}
+
+/* Pila vertical y no dos líneas fijas: un ítem puede traer cabecera, apoyo y una
+   fila de acciones, y las tres se apilan con la misma separación. */
+.record-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  border-bottom: 1px solid var(--border);
+}
+
+.record-item:last-child {
+  border-bottom: none;
+}
+
+/* El sangrado lo ponen las piezas y no el ítem: cuando toda la fila es pulsable,
+   quien lo pone es `.record-link`, para que el objetivo llegue a los cuatro
+   bordes en vez de dejar un marco muerto de 12 px alrededor. */
+.record-item > .record-head,
+.record-item > .record-meta,
+.record-item > .record-actions {
+  padding-left: var(--space-md);
+  padding-right: var(--space-md);
+}
+
+.record-item > .record-head:first-child,
+.record-item > .record-meta:first-child {
+  padding-top: var(--space-sm);
+}
+
+.record-item > .record-head:last-child,
+.record-item > .record-meta:last-child,
+.record-item > .record-actions:last-child {
+  padding-bottom: var(--space-sm);
+}
+
+/* Toda la fila abre el registro. Es un `<a>` o un `<button>` de verdad, así que
+   lo único que hace falta es quitarle el cromo y devolverle el suelo táctil. */
+.record-link {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-2xs);
+  width: 100%;
+  min-height: var(--tap-target);
+  padding: var(--space-sm) var(--space-md);
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.record-link:active {
+  background: var(--surface-hover);
+}
+
+.record-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* Primera línea: identidad a la izquierda, cifra a la derecha, alineadas por su
+   línea base para que dos cuerpos distintos se lean como una sola línea. */
+.record-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.record-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+/* La cifra que decide. Mismo cuerpo y mismo peso que el precio de la fila de
+   oferta: es lo que tiene que quedar cuando se entornan los ojos. */
+.record-value {
+  flex: none;
+  margin-left: auto;
+  font-size: var(--font-amount);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Segunda línea: lo que apoya a la cifra. Una línea y elipsis; lo que no quepa
+   aquí es que pertenece a la ficha. */
+.record-meta {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: var(--font-meta);
+}
+
+/* Las acciones del registro. Envuelve en vez de desbordar o encoger: con varios
+   dealers configurados la fila de interruptores no cabe de una vez en 390 pt, y
+   un objetivo por debajo de 44 no es una opción. El hueco de 8 pt vale para los
+   dos ejes: al envolver, la fila de abajo es tan adyacente como el de al lado. */
+.record-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  /* 8 pt, no 4: lo que hay encima es el propio `.record-link`, que también es un
+     objetivo táctil. Con `--space-xs` la separación real entre los dos era de 6 pt
+     —los 2 pt de hueco del item más estos 4—, por debajo del suelo. */
+  padding-top: var(--space-sm);
+}
+
+/* ------------------------------------------------------------------------- *
+ * La capa móvil
+ *
+ * Un solo punto de corte en toda la app, el mismo con el que ya desaparecía la
+ * barra lateral. Lo que cambia aquí es la densidad y el tamaño de los
+ * objetivos, no el lenguaje: el escritorio no se entera de nada de esto.
+ * ------------------------------------------------------------------------- */
 @media (max-width: 860px) {
+  :root {
+    /* El 13 está afinado para un puntero y es demasiado pequeño en la mano. */
+    --font-body: 15px;
+  }
+
   .sidebar {
     display: none;
+  }
+
+  .tabbar {
+    display: flex;
+  }
+
+  /* El hueco de la barra de pestañas se descuenta del documento, no se tapa: si
+     no, el final de cualquier página queda debajo de ella. */
+  .app {
+    padding-bottom: calc(var(--tabbar-height) + var(--safe-bottom));
+  }
+
+  /* Las vistas que fijan su alto al viewport descuentan la barra del suyo. El
+     mecanismo del :has() se conserva entero: lo único que cambia es la altura
+     de la que parte. */
+  .main:has(> .view > .content-fill) {
+    height: calc(100dvh - var(--tabbar-height) - var(--safe-bottom));
+  }
+
+  /* ---- Barra superior ----
+     De 48 px fijos a alto automático con envoltura: en /modelos hay tres
+     acciones que en una sola línea desbordaban el documento 116 px. Con el
+     estilo `black-translucent`, el contenido pasa por debajo de la barra de
+     estado, así que el padding superior con --safe-top no es opcional. */
+  .topbar {
+    height: auto;
+    min-height: calc(var(--topbar-height-touch) + var(--safe-top));
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    padding: calc(var(--safe-top) + var(--space-xs)) max(var(--space-md), var(--safe-right))
+      var(--space-xs) max(var(--space-md), var(--safe-left));
+  }
+
+  .topbar h1 {
+    font-size: 15px;
+  }
+
+  /* El grupo de acciones también envuelve, no solo la barra: en /modelos son
+     tres botones que suman 397 px y, como bloque indivisible, desbordaban el
+     documento aunque la barra tuviera permiso para partirse. */
+  .topbar-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    row-gap: var(--space-xs);
+  }
+
+  .content {
+    padding: var(--space-lg) max(var(--space-md), var(--safe-right)) var(--space-lg)
+      max(var(--space-md), var(--safe-left));
+  }
+
+  /* ---- Campos ----
+     Regla de elemento y no de clase, y a 16 px clavados: por debajo de 16,
+     Safari amplía la página al enfocar el campo y deja el layout descolocado.
+     El literal está para que la auditoría estática lo pueda leer; el token dice
+     lo mismo y es quien manda. */
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+    font-size: var(--font-field);
+  }
+
+  /* ---- Geometría táctil ----
+     44 pt de caja. La tinta no crece: lo que crece es lo que recibe el dedo. */
+  .btn,
+  .btn-sm,
+  .btn-lg,
+  .input,
+  .select {
+    height: var(--control-height-touch);
+  }
+
+  .btn-sm {
+    /* El rótulo baja de tamaño en vez de subir la caja: 12 px en un botón de 44
+       se lee como un botón a medio hacer. */
+    font-size: 13px;
+    padding: 0 var(--space-md);
+  }
+
+  .select-sm,
+  .segmented button,
+  .binomio {
+    height: var(--control-height-touch);
+    font-size: var(--font-meta);
+  }
+
+  /* El formulario de login sube su propio alto de campo (34px) por encima del
+     de `.input`, así que hay que devolverlo al suelo táctil desde un selector
+     que le gane. Es la primera pantalla de la app en un móvil nuevo. */
+  .auth-form .input {
+    height: var(--control-height-touch);
+  }
+
+  .icon-btn,
+  .star {
+    width: var(--tap-target);
+    height: var(--tap-target);
+  }
+
+  /* El carril del deslizador agarra en 44 pt de alto en vez de 19: es el gesto
+     más fino de la app y el que peor perdona. `touch-action: none` sigue donde
+     estaba, con su motivo escrito. */
+  .range-rail::before {
+    inset: -20px 0;
+  }
+
+  /* ---- Scroll ----
+     Un solo dueño del scroll por pantalla, y los carriles interiores no
+     encadenan su rebote con el documento. */
+  .table-wrap,
+  .picker,
+  .scrape-matrix-wrap {
+    overscroll-behavior: contain;
+  }
+
+  /* ---- Panel lateral, que en el móvil es una hoja completa ----
+     El portal se mantiene: su comentario en `ui.tsx` sigue siendo cierto. Lo
+     que cambia es la forma. */
+  .drawer,
+  .drawer.wide {
+    inset: 0;
+    width: 100%;
+    height: 100dvh;
+    border-left: none;
+    border-radius: 0;
+  }
+
+  .drawer-header {
+    /* El cierre vuelve a su sitio natural: primero, a la izquierda. */
+    padding: calc(var(--safe-top) + var(--space-sm)) var(--space-md) var(--space-sm);
+  }
+
+  .drawer-close {
+    order: 0;
+    min-width: var(--tap-target);
+    min-height: var(--tap-target);
+  }
+
+  /* Una línea y recortado: el título completo se lee en el cuerpo, que es donde
+     hay sitio. Antes esta cabecera medía 229 px con un título de cinco líneas:
+     el 27 % de la pantalla para repetir lo que dice la primera fila. */
+  .drawer-header h2 {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .drawer-body {
+    padding-bottom: calc(var(--drawer-pad) + var(--safe-bottom));
+  }
+
+  /* ---- Avisos con vuelta atrás ----
+     Por encima de la barra de pestañas y del área segura, a lo ancho, y con
+     permiso para ocupar dos líneas: «Deshacer» a 44 pt no cabe en 36 px de alto
+     junto a un titular. */
+  .toasts {
+    left: max(var(--space-md), var(--safe-left));
+    right: max(var(--space-md), var(--safe-right));
+    bottom: calc(var(--tabbar-height) + var(--safe-bottom) + var(--space-sm));
+    max-width: none;
+  }
+
+  .toast {
+    height: auto;
+    min-height: var(--tap-target);
+    padding: var(--space-2xs) var(--space-xs) var(--space-2xs) var(--space-md);
+  }
+
+  .toast-text {
+    white-space: normal;
+  }
+
+  .toast-undo,
+  .toast-close {
+    min-width: var(--tap-target);
+    min-height: var(--tap-target);
+  }
+
+  /* La hoja ocupa el ancho de la pantalla: el tope de 560 px es de escritorio. */
+  .sheet {
+    max-width: none;
+    border-left: none;
+    border-right: none;
+  }
+
+  /* ---- La pantalla de ofertas ----
+     El aire de arriba lo pone el riel, que ya mide 56: dieciséis píxeles más
+     antes del primer chip son media fila de oferta menos en el pliegue. */
+  .content.offer-view {
+    padding-top: var(--space-xs);
+  }
+
+  /* De borde a borde: en 390 pt, el marco de la lista son dos filetes y dos
+     radios que se comen 24 px de la única cifra que importa. */
+  .offer-scroll {
+    margin-left: calc(-1 * max(var(--space-md), var(--safe-left)));
+    margin-right: calc(-1 * max(var(--space-md), var(--safe-right)));
+    border-left: none;
+    border-right: none;
+    border-radius: 0;
+    /* El `max-width: 100%` de `.table-wrap` se mide contra la caja de contenido
+       del padre y anularía los márgenes negativos: la lista se quedaría en 366
+       px con la sangría dibujada solo a la izquierda. */
+    max-width: none;
+  }
+
+  /* Salir del anuncio es una acción de un solo dedo: los dos botones a ancho
+     completo y apilados, en vez de dos mitades de 170 px. */
+  .offer-exit-open,
+  .offer-exit-copy {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+
+  /* ---- Analítica ----
+     El desplegable de datos es el único acceso a las cifras de un gráfico en un
+     móvil: su fila entera es el objetivo, no el rótulo de 11 px. */
+  .chart-data > summary {
+    min-height: var(--tap-target);
+    font-size: var(--font-meta);
+  }
+
+  /* Un binomio como «Mercedes-Benz Clase A» mide más que la pantalla: el chip se
+     acota al carril y el nombre recorta dentro. Sin esto, el riel de la leyenda
+     desborda el documento a lo ancho. */
+  .binomio {
+    max-width: 100%;
+  }
+
+  /* ---- Lista de registros ----
+     El suelo táctil de las acciones se pide aquí y no en la regla base: por
+     encima de 860 px manda `.btn` con sus 28 px, que es lo correcto con un
+     puntero. */
+  .record-actions > * {
+    min-height: var(--tap-target);
+  }
+
+  /* ---- Login ----
+     El conmutador de modo mide 58 × 15 y es la única ruta de «entrar» a
+     «registrarse», en la primera pantalla de un teléfono nuevo. La excepción de
+     44 pt del blueprint es para el enlace incidental dentro de una frase, no
+     para el control que cambia lo que hace la pantalla.
+
+     Crece la caja que recibe el dedo, no la tinta: como caja de línea, el rótulo
+     se queda en su cuerpo y en la línea base de la frase —no se parte el
+     renglón—, y el alto extra lo pone la propia línea, así que la separación con
+     el botón de enviar sigue siendo la que había. */
+  .auth-switch button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: var(--tap-target);
+    min-height: var(--tap-target);
+    padding: 0 var(--space-xs);
+    border-radius: var(--radius);
+  }
+
+  .auth-switch button:active {
+    background: var(--accent-soft);
+  }
+}
+
+/* Quien pide menos movimiento tampoco quiere que una hoja suba desde abajo:
+   aparece donde va a quedarse. El velo sigue fundiendo, que es opacidad y no
+   desplazamiento.
+ *
+ * Este bloque va al final de la hoja **a propósito**: una media query no añade
+ * especificidad, así que un candado escrito antes de la regla que corrige lo
+ * pierde contra ella por orden de aparición. Lo que se apaga aquí está definido
+ * más arriba, y por eso funciona.
+ * ------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .sheet {
+    animation: none;
+  }
+
+  /* La fila sigue yéndose y el aviso sigue saliendo: lo que se quita es el
+     movimiento, no el paso. A los 140 ms la fila se retira igual, porque quien
+     la quita de la lista es `LEAVE_MS` y no esta transición. */
+  .offer-leaving {
+    transform: none;
+    transition: none;
+  }
+
+  /* Lo mismo para la tabla del escritorio. Estuvo escrito arriba, junto al resto
+     del bloque temprano, y no llegaba a aplicarse nunca. */
+  table.records tbody tr.row-leaving {
+    transform: none;
+    transition: none;
+  }
+
+  /* El galón de «Ver los datos» cambia de sentido en el acto: es una señal de
+     estado, no una animación de entrada. */
+  .chart-data > summary::after {
+    transition: none;
   }
 }

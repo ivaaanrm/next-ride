@@ -1,4 +1,10 @@
-import { useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { Link } from "react-router-dom";
 
 import { api } from "../lib/api";
@@ -59,49 +65,52 @@ function noticesFrom(stats: OverviewStats | null): Notice[] {
   return notices;
 }
 
-/**
- * Campana de la barra lateral.
+/* -------------------------------------------------------------------------- *
+ * El estado de los avisos, compartido
  *
- * Vive en el `Layout` y no en una página porque los avisos son del sistema, no
- * de lo que se esté mirando: antes esto era un `Banner` colgado de la tabla de
- * ofertas, que empujaba la tabla hacia abajo en cada carga y no se veía desde
- * ningún otro sitio.
- */
-export function NotificationsNav({ collapsed }: { collapsed: boolean }) {
+ * Lo consumen tres sitios a la vez: la campana de la barra lateral, la insignia
+ * de la pestaña «Más» y la fila «Avisos» de esa misma página. Con cada uno
+ * pidiendo `/stats/overview` por su cuenta serían tres peticiones por carga y
+ * tres contadores que podrían discrepar; con el panel montado aquí, cualquiera
+ * de los tres lo abre y hay uno solo.
+ * -------------------------------------------------------------------------- */
+
+interface NoticesValue {
+  notices: Notice[];
+  count: number;
+  loading: boolean;
+  error: string | null;
+  /** Abre el panel de avisos, se pida desde donde se pida. */
+  open: () => void;
+  /** El panel está abierto: lo necesitan los botones que lo abren, para su `aria-expanded`. */
+  isOpen: boolean;
+  reload: () => void;
+}
+
+const NoticesContext = createContext<NoticesValue | null>(null);
+
+export function NoticesProvider({ children }: { children: ReactNode }) {
   const stats = useAsync<OverviewStats>(() => api.get("/stats/overview"), []);
   const [open, setOpen] = useState(false);
 
-  const notices = noticesFrom(stats.data);
-  const count = notices.length;
+  const notices = useMemo(() => noticesFrom(stats.data), [stats.data]);
 
-  // El contador va en el nombre accesible: el `span` es decorativo y con la
-  // barra plegada no queda etiqueta visible que lo acompañe.
-  const label = count
-    ? `Notificaciones: ${count} ${count === 1 ? "aviso" : "avisos"}`
-    : "Notificaciones";
+  const value = useMemo<NoticesValue>(
+    () => ({
+      notices,
+      count: notices.length,
+      loading: stats.loading,
+      error: stats.error,
+      open: () => setOpen(true),
+      isOpen: open,
+      reload: stats.reload,
+    }),
+    [notices, stats.loading, stats.error, stats.reload, open],
+  );
 
   return (
-    <>
-      <button
-        type="button"
-        className={`nav-item nav-button${open ? " active" : ""}`}
-        aria-label={label}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        title={collapsed ? label : undefined}
-        onClick={() => setOpen(true)}
-      >
-        <span className="nav-icon">
-          <BellIcon />
-        </span>
-        <span className="nav-label">Notificaciones</span>
-        {count ? (
-          <span className={`nav-badge ${worstTone(notices)}`} aria-hidden="true">
-            {count}
-          </span>
-        ) : null}
-      </button>
-
+    <NoticesContext.Provider value={value}>
+      {children}
       {open ? (
         <NotificationsDrawer
           notices={notices}
@@ -111,7 +120,56 @@ export function NotificationsNav({ collapsed }: { collapsed: boolean }) {
           onClose={() => setOpen(false)}
         />
       ) : null}
-    </>
+    </NoticesContext.Provider>
+  );
+}
+
+export function useNotices(): NoticesValue {
+  const context = useContext(NoticesContext);
+  if (!context) throw new Error("useNotices debe usarse dentro de <NoticesProvider>");
+  return context;
+}
+
+/** «1 aviso» / «3 avisos»: el número va en texto, también en el nombre accesible. */
+export function noticeCountLabel(count: number): string {
+  return `${count} ${count === 1 ? "aviso" : "avisos"}`;
+}
+
+/**
+ * Campana de la barra lateral.
+ *
+ * Vive en el `Layout` y no en una página porque los avisos son del sistema, no
+ * de lo que se esté mirando: antes esto era un `Banner` colgado de la tabla de
+ * ofertas, que empujaba la tabla hacia abajo en cada carga y no se veía desde
+ * ningún otro sitio.
+ */
+export function NotificationsNav({ collapsed }: { collapsed: boolean }) {
+  const { notices, count, open, isOpen } = useNotices();
+
+  // El contador va en el nombre accesible: el `span` es decorativo y con la
+  // barra plegada no queda etiqueta visible que lo acompañe.
+  const label = count ? `Notificaciones: ${noticeCountLabel(count)}` : "Notificaciones";
+
+  return (
+    <button
+      type="button"
+      className={`nav-item nav-button${isOpen ? " active" : ""}`}
+      aria-label={label}
+      aria-haspopup="dialog"
+      aria-expanded={isOpen}
+      title={collapsed ? label : undefined}
+      onClick={open}
+    >
+      <span className="nav-icon">
+        <BellIcon />
+      </span>
+      <span className="nav-label">Notificaciones</span>
+      {count ? (
+        <span className={`nav-badge ${worstTone(notices)}`} aria-hidden="true">
+          {count}
+        </span>
+      ) : null}
+    </button>
   );
 }
 

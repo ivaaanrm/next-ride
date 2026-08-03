@@ -6,7 +6,11 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check:pwa": "node scripts/check-pwa.mjs",
+    "check:pwa:strict": "node scripts/check-pwa.mjs --strict",
+    "check:budgets": "node scripts/check-budgets.mjs",
+    "validate:mobile": "npm run build && npm run check:pwa && npm run check:budgets"
   },
   "dependencies": {
     "clsx": "^2.1.1",

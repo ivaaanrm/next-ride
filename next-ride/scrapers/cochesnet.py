@@ -58,6 +58,10 @@ AUTOMATIC_RE = re.compile(
     re.IGNORECASE,
 )
 EXTERNAL_ID_RE = re.compile(r"-(\d+)-covo\.aspx(?:\?.*)?$", re.IGNORECASE)
+# Los anuncios de stock nuevo/km0 usan otra ruta (`/km-0/...-{id}-nuvn.aspx`).
+# Sirven para leer el id, pero no admiten la forma corta `-covo.aspx`, asi que su
+# URL se deja tal cual la publica el portal.
+STOCK_ID_RE = re.compile(r"-(\d+)-nuvn\.aspx(?:\?.*)?$", re.IGNORECASE)
 
 
 class NormalizerError(RuntimeError):
@@ -100,7 +104,7 @@ def _trim(title: str, model: str) -> str:
 
 
 def _external_id(url: str) -> str:
-    match = EXTERNAL_ID_RE.search(url)
+    match = EXTERNAL_ID_RE.search(url) or STOCK_ID_RE.search(url)
     if not match:
         raise NormalizerError(f"URL sin id de anuncio: {url}")
     return match.group(1)

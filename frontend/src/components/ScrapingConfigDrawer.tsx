@@ -7,7 +7,8 @@ import type {
   ScrapeTarget,
   ScrapeTargetSelection,
 } from "../types";
-import { Banner, Drawer, Empty, Loading } from "./ui";
+import { useTouchLayout } from "./SwipeRow";
+import { Banner, Drawer, Empty, Loading, Toggle } from "./ui";
 
 const pairKey = (sourceId: number, modelKey: string) => `${sourceId}:${modelKey}`;
 
@@ -26,6 +27,7 @@ export function ScrapingConfigDrawer({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const touch = useTouchLayout();
 
   useEffect(() => {
     let active = true;
@@ -169,6 +171,58 @@ export function ScrapingConfigDrawer({
             />
           ) : visibleGroups.length === 0 ? (
             <Empty title="No hay modelos que coincidan" />
+          ) : touch ? (
+            /* La matriz es lo único de la app que es 2D de verdad: modelos por
+               fuentes. En 390 pt no cabe, y arrastrarla de lado para marcar una
+               casilla es el peor gesto posible. Así que se pivota: un modelo por
+               tarjeta y sus fuentes como interruptores dentro. Se pierde la
+               lectura en columna —comparar una fuente entre modelos— y se gana la
+               única operación que se hace aquí de verdad, que es marcar. */
+            <ul className="record-list">
+              {visibleGroups.map((group) => {
+                const rowKeys = sources.map((source) => pairKey(source.id, group.key));
+                const active = rowKeys.filter((key) => selected.has(key)).length;
+                const allSelected = active === sources.length;
+                return (
+                  <li className="record-item" key={group.key}>
+                    <div className="record-head">
+                      <span className="record-title">{group.label}</span>
+                      <span className="record-value">
+                        {active}/{sources.length}
+                      </span>
+                    </div>
+                    <p className="record-meta">
+                      {active === 0
+                        ? "Sin dealers: no se buscará"
+                        : `Se buscará en ${active} ${active === 1 ? "dealer" : "dealers"}`}
+                    </p>
+                    <div className="record-actions" role="group" aria-label={group.label}>
+                      <Toggle
+                        on={allSelected}
+                        onChange={() => toggleRow(group)}
+                        title={
+                          allSelected
+                            ? "Quitar este modelo de todos los dealers"
+                            : "Seleccionar este modelo en todos los dealers"
+                        }
+                      >
+                        Todos
+                      </Toggle>
+                      {sources.map((source) => (
+                        <Toggle
+                          key={source.id}
+                          on={selected.has(pairKey(source.id, group.key))}
+                          onChange={() => toggle(source.id, group.key)}
+                          title={`${group.label} en ${source.name}`}
+                        >
+                          {source.name}
+                        </Toggle>
+                      ))}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
           ) : (
             <div className="scrape-matrix-wrap">
               <table className="scrape-matrix">

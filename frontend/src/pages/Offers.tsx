@@ -6,15 +6,22 @@ import {
   type ReactNode,
   type UIEvent,
 } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
-import {
-  RadarMark,
-  RadarProfile,
-  RadarReading,
-  type RadarSeries,
-} from "../components/charts";
 import { PageHeader } from "../components/Layout";
 import { OfferActions } from "../components/OfferActions";
+import {
+  Figure,
+  FilterRail,
+  FilterSheet,
+  priceDomainOf,
+  SortSheet,
+  yearDomainOf,
+  type RangeDomain,
+} from "../components/OfferFilters";
+import { OfferProfile, PriceHistory } from "../components/OfferProfile";
+import { locationOf, OfferRow, VsMedian } from "../components/OfferRow";
+import { useSwipeHint, useTouchLayout } from "../components/SwipeRow";
 import {
   Banner,
   Chip,
@@ -33,7 +40,6 @@ import {
   CONDITION_LABELS,
   FUEL_LABELS,
   FUEL_MARKS,
-  formatDate,
   formatDateTime,
   formatKm,
   formatNumber,
@@ -48,9 +54,28 @@ import {
   verdictTone,
 } from "../lib/format";
 import { useAsync, useDebounced } from "../lib/hooks";
-import { buildRadar, RADAR_MIN_AXES, type RadarAxis } from "../lib/radar";
+import {
+  activeDir,
+  CAP_HINT,
+  clearedView,
+  DEFAULT_VIEW,
+  filterKey,
+  formatYear,
+  isFiltered,
+  MAX_RESTORE_CHUNKS,
+  nextDir,
+  readPlace,
+  readView,
+  SORT_COLUMNS,
+  viewFilters,
+  writePlace,
+  writeView,
+  type OffersView,
+  type SortColumn,
+  type SortColumnId,
+  type SortDir,
+} from "../lib/offerParams";
 import type {
-  AnalyticsSegments,
   CarModelWithStats,
   DealerWithStats,
   Offer,
@@ -61,16 +86,15 @@ import type {
   OfferStatus,
   Page,
   ScoreBreakdownItem,
-  SegmentPoint,
 } from "../types";
 
-/** Tamaño del tramo que se pide por vez. La tabla ya no pagina: es un único
- *  scroll que trae el siguiente tramo cuando el final se acerca. */
+/** Tamaño del tramo que se pide por vez. La lista no pagina: es un único scroll
+ *  que trae el siguiente tramo cuando el final se acerca. */
 const CHUNK_SIZE = 50;
 
 /**
  * Cómo se escribe cada estado. Los tres son la misma operación vista desde la
- * tabla —mover una oferta de lista— y por eso se indexan por destino: quien
+ * lista —mover una oferta de lista— y por eso se indexan por destino: quien
  * llama dice adónde va, no qué verbo del API le toca.
  */
 const MOVE: Record<OfferStatus, (id: number) => Promise<Offer>> = {
@@ -100,84 +124,9 @@ const EMPTY_VIEW: Record<OfferStatus, { title: string; hint: string }> = {
   },
 };
 
-type SortDir = "asc" | "desc";
-
-interface SortColumn {
-  /** Token de la API para cada sentido. `null` es un sentido que no se sirve. */
-  asc: string | null;
-  desc: string | null;
-  /** Sentido del primer clic: de los dos, el que se pide de verdad. */
-  first: SortDir;
-  /** La dimensión, en palabras, para el tooltip. No sale del rótulo porque el
-   *  rótulo va apretado a la columna y en prosa no funciona: «ordenar por ia». */
-  what: string;
-  /** Se ordena en Python sobre un tope de filas, y hay que decirlo. */
-  capped?: boolean;
-}
-
 /**
- * Qué ordena cada columna de la tabla.
- *
- * Los sentidos se nombran por lo que se ve en la columna y no por el token que
- * viaja: «IA» enseña el puesto, así que su orden ascendente —1, 2, 3…— es el
- * token `ai_score`, que en el backend es puntuación descendente. Un `aria-sort`
- * que anunciara «descendente» sobre una lista que empieza en 1 estaría mintiendo
- * al único usuario que no puede comprobarlo de un vistazo.
- *
- * Las dos puntuaciones no tienen sentido inverso porque nadie lo pide, no porque
- * falte implementarlo: son las que se calculan en Python sobre un conjunto
- * acotado, y su cabecera lleva el aviso del tope.
- */
-const SORT_COLUMNS = {
-  ai: {
-    asc: "ai_score",
-    desc: null,
-    first: "asc",
-    what: "puesto que le da la IA",
-    capped: true,
-  },
-  price: { asc: "price", desc: "-price", first: "asc", what: "precio" },
-  year: { asc: "year", desc: "-year", first: "desc", what: "año" },
-  km: { asc: "mileage_km", desc: "-mileage_km", first: "asc", what: "kilómetros" },
-  value: {
-    asc: null,
-    desc: "value_score",
-    first: "desc",
-    what: "puntuación de valor",
-    capped: true,
-  },
-} satisfies Record<string, SortColumn>;
-
-type SortColumnId = keyof typeof SORT_COLUMNS;
-
-/** El orden por defecto de la vista: los mejores chollos primero. */
-const DEFAULT_SORT = SORT_COLUMNS.value.desc;
-
-const CAP_HINT =
-  "Ordenar por puntuación evalúa hasta 500 ofertas coincidentes; para catálogos más grandes, filtra por modelo o dealer.";
-
-/** En qué sentido está ordenada esta columna, o `null` si no es la ordenada. */
-function activeDir(column: SortColumn, sort: string): SortDir | null {
-  if (column.asc !== null && column.asc === sort) return "asc";
-  if (column.desc !== null && column.desc === sort) return "desc";
-  return null;
-}
-
-/**
- * Sentido que aplicaría el siguiente clic.
- *
- * Sin orden puesto arranca por el útil; con orden puesto se da la vuelta. Si el
- * inverso no se sirve, se queda en el que ya hay: un clic inerte es mejor que
- * uno que devuelve la tabla al orden por defecto sin haberlo pedido.
- */
-function nextDir(column: SortColumn, current: SortDir | null): SortDir {
-  const wanted: SortDir =
-    current === null ? column.first : current === "asc" ? "desc" : "asc";
-  return column[wanted] === null ? (current ?? column.first) : wanted;
-}
-
-/**
- * Cabecera que ordena.
+ * Cabecera que ordena. **Solo escritorio**: por debajo de 860 px el orden vive
+ * en su propia hoja, porque no hay cabecera de tabla que pulsar.
  *
  * El `<button>` de dentro no es ceremonia: un `onClick` sobre el `<th>` no se
  * alcanza con el tabulador ni se anuncia como accionable. El `aria-sort` sí va
@@ -199,14 +148,15 @@ function SortTh({
   width?: number;
 }) {
   const spec: SortColumn = SORT_COLUMNS[column];
-  const current = activeDir(spec, sort);
+  const current: SortDir | null = activeDir(spec, sort);
   const next = nextDir(spec, current);
   const token = spec[next];
   // Único sentido disponible y ya puesto: no hay nada que aplicar.
   const inert = token === null || token === sort;
 
-  // El tope se dice aquí porque es el único sitio donde se dice, y llega antes
-  // de pulsar: es lo que hay que saber para decidir si merece la pena ordenar.
+  // El tope se dice aquí porque es el único sitio donde se dice en escritorio, y
+  // llega antes de pulsar: es lo que hay que saber para decidir si merece la
+  // pena ordenar. En el móvil, el mismo texto va escrito en la hoja de orden.
   const title = inert
     ? `Ordenado por ${spec.what}${spec.capped ? `. ${CAP_HINT}` : ""}`
     : `Ordenar por ${spec.what}${spec.capped ? `. ${CAP_HINT}` : ""}`;
@@ -245,9 +195,9 @@ function SortTh({
  * contra la mediana de **todas** las ofertas activas del mismo modelo y es la
  * que alimenta `value_score` y al agente de IA. Esta es local a la vista:
  * responde «de lo que estoy mirando, ¿cuál sale barato?», y por eso se mueve al
- * filtrar y a medida que el scroll trae más tramos. La cabecera de la columna
- * enseña el valor para que el porcentaje no quede colgando de una referencia
- * invisible.
+ * filtrar y a medida que el scroll trae más tramos. La referencia se escribe
+ * —en la cabecera de la columna en escritorio, en la línea de contexto en el
+ * móvil— para que el porcentaje no quede colgando de algo invisible.
  *
  * Con una sola fila la mediana es su propio precio y saldría un 0,0 % que
  * parece «justo en mercado» sin serlo: por debajo de dos filas, no hay dato.
@@ -259,92 +209,88 @@ function medianPrice(offers: Offer[]): number | null {
   return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
 }
 
-/** Desviación de un precio respecto a la mediana de las filas mostradas. */
-function VsMedian({ price, median }: { price: number; median: number | null }) {
-  if (median === null) return <span className="muted">—</span>;
-  const pct = ((price - median) / median) * 100;
-  return (
-    <Chip tone={pct <= -5 ? "positive" : pct >= 5 ? "negative" : "neutral"}>
-      {formatPct(pct, true)}
-    </Chip>
-  );
+/** Lo que se teclea y se arrastra en vivo, antes de llegar a la URL. */
+interface Draft {
+  q: string;
+  priceMin: number | null;
+  priceMax: number | null;
+  yearMin: number | null;
+  yearMax: number | null;
 }
 
+const draftOf = (view: OffersView): Draft => ({
+  q: view.q,
+  priceMin: view.priceMin,
+  priceMax: view.priceMax,
+  yearMin: view.yearMin,
+  yearMax: view.yearMax,
+});
+
+/** Clave escalar del borrador: `useDebounced` compara por identidad, y un objeto
+ *  recreado en cada render reiniciaría el temporizador sin fin. */
+const draftKey = (draft: Draft): string =>
+  [draft.q, draft.priceMin, draft.priceMax, draft.yearMin, draft.yearMax].join("|");
+
 export function OffersPage() {
-  const [search, setSearch] = useState("");
-  const [modelId, setModelId] = useState("");
-  const [dealerId, setDealerId] = useState("");
-  const [condition, setCondition] = useState("");
-  // `null` es «sin límite», no cero: un mínimo de 0 € filtraría igual que no
-  // filtrar pero dejaría el control marcado como activo.
-  const [priceMin, setPriceMin] = useState<number | null>(null);
-  const [priceMax, setPriceMax] = useState<number | null>(null);
-  const [yearMin, setYearMin] = useState<number | null>(null);
-  const [yearMax, setYearMax] = useState<number | null>(null);
+  /* ---- El estado de la vista vive en la URL --------------------------------
+   *
+   * Once filtros, el orden y la oferta abierta. No es purismo: el recorrido
+   * normal de esta pantalla acaba en el anuncio del dealer, y volver de ahí en
+   * un iPhone es a menudo un arranque en frío. Con la URL, volver es recargar la
+   * misma lista; con `useState`, volver era empezar de cero.
+   * ------------------------------------------------------------------------ */
+  const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
+  const view = useMemo(() => readView(params), [params]);
+  const touch = useTouchLayout();
+
+  /** Escribe la vista. `replace` por defecto: teclear en la búsqueda no puede
+   *  apilar cincuenta entradas de historial. Abrir una oferta sí empuja, porque
+   *  entonces «atrás» tiene que cerrar la ficha. */
+  function commit(next: OffersView, options: { push?: boolean } = {}) {
+    setParams(writeView(next), { replace: options.push !== true });
+  }
+
+  // Lo que se teclea y se arrastra se retiene aquí y llega a la URL con retardo:
+  // un carácter por entrada de historial y una petición por tecla no.
+  const [draft, setDraft] = useState<Draft>(() => draftOf(view));
+  const urlKey = draftKey(draftOf(view));
+  const debouncedKey = useDebounced(draftKey(draft));
+
+  // La URL ha cambiado por fuera (atrás, un chip del riel, aplicar la hoja): el
+  // borrador la sigue.
+  useEffect(() => {
+    setDraft(draftOf(view));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlKey]);
+
+  useEffect(() => {
+    if (debouncedKey === urlKey) return;
+    commit({ ...view, ...draft });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedKey]);
+
   const [domains, setDomains] = useState<{
     price: RangeDomain | null;
     year: RangeDomain | null;
   }>({ price: null, year: null });
-  const [sort, setSort] = useState(DEFAULT_SORT);
-  const [trackedOnly, setTrackedOnly] = useState(false);
-  const [favoritesOnly, setFavoritesOnly] = useState(false);
-  // Los tres estados son tres listas excluyentes, no un interruptor: antes esto
-  // era un «Descartadas» de sí/no, y con él las expiradas no se podían mirar
-  // desde ningún sitio aunque el scraper llevara marcándolas desde el principio.
-  const [statusView, setStatusView] = useState<OfferStatus>("active");
   const [actionError, setActionError] = useState<string | null>(null);
   const [favBusyId, setFavBusyId] = useState<number | null>(null);
-  const [scraped, setScraped] = useState<Offer | null>(null);
+  const [sheet, setSheet] = useState<"filters" | "sort" | null>(null);
   const toasts = useToasts();
-
-  // Dos escalares y no un par: `useDebounced` compara por identidad, así que un
-  // `[min, max]` recreado en cada render reiniciaría el temporizador sin fin.
-  const debouncedSearch = useDebounced(search);
-  const debouncedPriceMin = useDebounced(priceMin);
-  const debouncedPriceMax = useDebounced(priceMax);
-  const debouncedYearMin = useDebounced(yearMin);
-  const debouncedYearMax = useDebounced(yearMax);
 
   const models = useAsync<CarModelWithStats[]>(() => api.get("/car-models"), []);
   const dealers = useAsync<DealerWithStats[]>(() => api.get("/dealers"), []);
 
-  // Un único objeto de filtros para la tabla y para sus métricas: si cada
-  // llamada armara los suyos, las medias acabarían describiendo otro conjunto.
-  const filters = {
-    q: debouncedSearch || undefined,
-    car_model_id: modelId || undefined,
-    dealer_id: dealerId || undefined,
-    condition: condition || undefined,
-    min_price: debouncedPriceMin ?? undefined,
-    max_price: debouncedPriceMax ?? undefined,
-    min_year: debouncedYearMin ?? undefined,
-    max_year: debouncedYearMax ?? undefined,
-    tracked_only: trackedOnly || undefined,
-    favorites_only: favoritesOnly || undefined,
-    status: statusView,
-  };
-  const filterDeps = [
-    debouncedSearch,
-    modelId,
-    dealerId,
-    condition,
-    debouncedPriceMin,
-    debouncedPriceMax,
-    debouncedYearMin,
-    debouncedYearMax,
-    trackedOnly,
-    favoritesOnly,
-    statusView,
-  ];
-
+  const listKey = filterKey(view);
   const stats = useAsync<OfferAggregateStats>(
-    () => api.get("/offers/stats", filters),
-    filterDeps,
+    () => api.get("/offers/stats", viewFiltersOf(view)),
+    [listKey],
   );
 
   /* ---- La lista, por tramos ----------------------------------------------
    *
-   * Sin paginación: la tabla es un único scroll que pide el siguiente tramo de
+   * Sin paginación: la lista es un único scroll que pide el siguiente tramo de
    * 50 cuando el final se acerca. `useAsync` no vale aquí porque reemplaza sus
    * datos en cada petición y esto los acumula, así que la lista lleva su propio
    * estado.
@@ -354,6 +300,9 @@ export function OffersPage() {
    * mezclarse con él. El offset del siguiente tramo es `rows.length` y no un
    * número de página: descartar o desmarcar encogen la lista cargada, y lo ya
    * cargado es exactamente lo que el siguiente tramo tiene que continuar.
+   *
+   * Esta capa no se ha tocado al portar la pantalla al móvil, y es deliberado:
+   * es lo que hace que la lista se lea como una sola.
    * ------------------------------------------------------------------------ */
   const [rows, setRows] = useState<Offer[]>([]);
   const [total, setTotal] = useState(0);
@@ -365,6 +314,11 @@ export function OffersPage() {
   // Candado contra la ráfaga de eventos de scroll: un tramo en vuelo por vez.
   const busyRef = useRef(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  // A dónde hay que volver cuando la lista se rehidrata después de un viaje al
+  // anuncio del dealer.
+  const restoreTopRef = useRef<number | null>(null);
+  const placeKeyRef = useRef(`${listKey}|${view.sort}`);
+  placeKeyRef.current = `${listKey}|${view.sort}`;
 
   useEffect(() => {
     rowsRef.current = rows;
@@ -380,16 +334,24 @@ export function OffersPage() {
     } else {
       setLoadingMore(true);
     }
+
+    // Al volver a un conjunto que ya se estaba mirando se pide de una vez lo que
+    // había: rehidratar tramo a tramo dejaría el scroll saltando hacia atrás
+    // mientras llegan.
+    const place = reset ? readPlace(placeKeyRef.current) : null;
+    const limit = place ? Math.min(place.chunks, MAX_RESTORE_CHUNKS) * CHUNK_SIZE : CHUNK_SIZE;
+
     try {
       const chunk = await api.get<Page<Offer>>("/offers", {
-        ...filters,
-        sort,
-        limit: CHUNK_SIZE,
+        ...viewFiltersOf(view),
+        sort: view.sort,
+        limit,
         offset: reset ? 0 : rowsRef.current.length,
       });
       if (epoch !== epochRef.current) return;
       setRows((previous) => (reset ? chunk.items : [...previous, ...chunk.items]));
       setTotal(chunk.total);
+      if (place) restoreTopRef.current = place.top;
     } catch (error) {
       if (epoch !== epochRef.current) return;
       setListError(
@@ -411,7 +373,16 @@ export function OffersPage() {
     wrapRef.current?.scrollTo({ top: 0 });
     void loadChunk(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...filterDeps, sort]);
+  }, [listKey, view.sort]);
+
+  // La vuelta a la posición donde se estaba, una sola vez y después de que las
+  // filas existan: sin filas no hay alto al que desplazarse.
+  useEffect(() => {
+    const top = restoreTopRef.current;
+    if (top === null || rows.length === 0 || !wrapRef.current) return;
+    restoreTopRef.current = null;
+    wrapRef.current.scrollTop = top;
+  }, [rows.length]);
 
   // En una pantalla muy alta el primer tramo puede no llenar el scroll: si no
   // hay dónde hacer scroll y quedan más ofertas, se trae el siguiente ya.
@@ -422,18 +393,51 @@ export function OffersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, total, listLoading]);
 
-  /** A ~600px del final —unas quince filas— se pide el siguiente tramo: llega
-   *  antes de que el scroll toque fondo y la lista se lee como una sola. */
-  function onTableScroll(event: UIEvent<HTMLDivElement>) {
+  /** A ~600px del final —unas ocho filas de móvil— se pide el siguiente tramo:
+   *  llega antes de que el scroll toque fondo y la lista se lee como una sola. */
+  function onListScroll(event: UIEvent<HTMLDivElement>) {
     const wrap = event.currentTarget;
+    savePlace(wrap.scrollTop);
     if (listLoading || rows.length >= total) return;
     if (wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 600) {
       void loadChunk(false);
     }
   }
 
+  // Una escritura por evento de scroll serían cientos por gesto: se guarda como
+  // mucho dos veces por segundo, y además al irse de la página, que es el
+  // momento que de verdad importa.
+  const lastSaveRef = useRef(0);
+  function savePlace(top: number, force = false) {
+    const now = Date.now();
+    if (!force && now - lastSaveRef.current < 500) return;
+    lastSaveRef.current = now;
+    writePlace(placeKeyRef.current, {
+      top,
+      chunks: Math.max(1, Math.ceil(rowsRef.current.length / CHUNK_SIZE)),
+    });
+  }
+
+  // `pagehide` y no `unload`: es el único que iOS dispara de forma fiable cuando
+  // la app se va al navegador in-app o al segundo plano, que es exactamente el
+  // viaje que esto tiene que sobrevivir.
+  useEffect(() => {
+    const onLeave = () => {
+      const wrap = wrapRef.current;
+      if (wrap) savePlace(wrap.scrollTop, true);
+    };
+    window.addEventListener("pagehide", onLeave);
+    return () => {
+      window.removeEventListener("pagehide", onLeave);
+      onLeave();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function refresh() {
     wrapRef.current?.scrollTo({ top: 0 });
+    restoreTopRef.current = null;
+    writePlace(placeKeyRef.current, { top: 0, chunks: 1 });
     void loadChunk(true);
   }
 
@@ -456,32 +460,7 @@ export function OffersPage() {
     stats.data?.year_ceiling,
   ]);
 
-  const filtered =
-    Boolean(search || modelId || dealerId || condition) ||
-    priceMin !== null ||
-    priceMax !== null ||
-    yearMin !== null ||
-    yearMax !== null ||
-    trackedOnly ||
-    favoritesOnly ||
-    statusView !== "active";
-
-  /** Devuelve la vista a su estado por defecto. El orden no es un filtro y se queda. */
-  function clearFilters() {
-    setSearch("");
-    setModelId("");
-    setDealerId("");
-    setCondition("");
-    setPriceMin(null);
-    setPriceMax(null);
-    setYearMin(null);
-    setYearMax(null);
-    setTrackedOnly(false);
-    setFavoritesOnly(false);
-    setStatusView("active");
-  }
-
-  /** Marca o desmarca un favorito y parchea la fila en sitio: no recarga la tabla
+  /** Marca o desmarca un favorito y parchea la fila en sitio: no recarga la lista
    *  para no perder la posición ni el orden mientras se marcan varias. */
   async function toggleFavorite(offer: Offer) {
     setActionError(null);
@@ -492,7 +471,7 @@ export function OffersPage() {
         : await api.post<Offer>(`/offers/${offer.id}/favorite`);
 
       // Si estamos viendo solo favoritos, al desmarcar la fila desaparece.
-      const drop = favoritesOnly && !updated.is_favorite;
+      const drop = view.favorites && !updated.is_favorite;
       setRows((previous) =>
         drop
           ? previous.filter((item) => item.id !== updated.id)
@@ -501,8 +480,8 @@ export function OffersPage() {
       if (drop) setTotal((value) => Math.max(0, value - 1));
 
       // Viendo solo favoritos, desmarcar cambia el conjunto: las medias de
-      // arriba dejan de ser las de la tabla hasta que se recalculan.
-      if (favoritesOnly) stats.reload();
+      // arriba dejan de ser las de la lista hasta que se recalculan.
+      if (view.favorites) stats.reload();
     } catch (error) {
       setActionError(
         error instanceof Error ? error.message : "No se pudo actualizar el favorito",
@@ -518,20 +497,18 @@ export function OffersPage() {
    * fila de la vista que se está mirando, así que son la misma operación y se
    * hacen igual: la fila se va **ya** y la escritura viaja en paralelo.
    *
-   * No hay confirmación. Antes había un `confirm()` por descarte, que es un
-   * diálogo modal, el ratón hasta el botón y la vista bloqueada para cubrir el
-   * caso de haber pulsado mal; ahora eso lo cubre el aviso de deshacer, que
-   * ofrece lo mismo que ofrecía el «Cancelar» pero solo a quien falla. Se puede
-   * porque ninguna de las tres borra nada: son cambios de estado, y las tres
-   * vistas del desplegable llevan a las ofertas que están en cada uno.
+   * No hay confirmación. Lo cubre el aviso de deshacer, que ofrece lo mismo que
+   * ofrecería un «Cancelar» pero solo a quien falla. Se puede porque ninguna de
+   * las tres borra nada: son cambios de estado, y las tres vistas del filtro de
+   * estado llevan a las ofertas que están en cada uno.
    *
-   * La fila no se quita en sitio en vez de recargar por capricho: recargar
-   * reordenaría el conjunto entero y devolvería el scroll arriba, que es
-   * exactamente lo que no se puede hacer a media triangulación de una lista.
+   * En el móvil, además, el gesto no confirma solo: se desliza para ver los dos
+   * botones y se toca el que toca. Un rebase de inercia no puede archivar una
+   * oferta en el estado equivocado.
    * -------------------------------------------------------------------------- */
 
   // Las que se están yendo: llevan la clase que las desvanece y ya no responden
-  // a nada, para que un doble clic no mande la misma oferta dos veces.
+  // a nada, para que un doble toque no mande la misma oferta dos veces.
   const [leaving, setLeaving] = useState<ReadonlySet<number>>(new Set());
   const leaveTimers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
 
@@ -648,15 +625,56 @@ export function OffersPage() {
     }
   }
 
-  const overview = stats.data;
+  /* ---- La ficha, que es una entrada de historial ---------------------------
+   *
+   * Abrir una oferta empuja `?offer=<id>`; cerrarla es un `navigate(-1)`. Con
+   * eso, el gesto de borde del sistema —cuando iOS lo entrega— cierra la ficha
+   * en vez de cambiar de ruta. Ninguna salida depende de que ese gesto exista:
+   * la cabecera de la hoja lleva su cierre visible de 44 pt.
+   * ------------------------------------------------------------------------ */
+  const pushedRef = useRef(false);
+  useEffect(() => {
+    if (view.offer === null) pushedRef.current = false;
+  }, [view.offer]);
 
+  function openOffer(offer: Offer) {
+    setSheet(null);
+    pushedRef.current = true;
+    commit({ ...view, offer: offer.id }, { push: true });
+  }
+
+  function closeOffer() {
+    // Si la ficha venía en la URL de arranque no hay entrada a la que volver:
+    // un `navigate(-1)` ahí saca de la app.
+    if (pushedRef.current) {
+      pushedRef.current = false;
+      navigate(-1);
+      return;
+    }
+    commit({ ...view, offer: null });
+  }
+
+  const overview = stats.data;
   const shownMedian = useMemo(() => medianPrice(rows), [rows]);
+  const openRow = view.offer === null ? null : rows.find((row) => row.id === view.offer) ?? null;
+
+  const hint = useSwipeHint(touch && !listLoading && rows.length > 0);
+  const filterCount = countFilters(view);
+
+  const names = {
+    model: models.data?.find((model) => String(model.id) === view.model)?.display_name,
+    dealer: dealers.data?.find((dealer) => String(dealer.id) === view.dealer)?.name,
+    condition: view.condition
+      ? CONDITION_LABELS[view.condition as keyof typeof CONDITION_LABELS]
+      : undefined,
+    status: OFFER_STATUS[view.status].label,
+  };
 
   return (
     <>
       <PageHeader
         title="Ofertas"
-        meta={total ? `${formatNumber(total)} resultados` : undefined}
+        meta={!touch && total ? `${formatNumber(total)} resultados` : undefined}
         actions={
           <button className="btn btn-sm" onClick={refresh}>
             Actualizar
@@ -664,205 +682,248 @@ export function OffersPage() {
         }
       />
 
-      {/* `content-fill`: el alto sobrante es de la tabla, que hace scroll por
-          dentro; las métricas y los filtros quedan siempre a la vista. */}
-      <div className="content content-fill">
-        {/* El aviso de «ranking con IA desactivado» ya no vive aquí: es estado del
-            sistema, no de esta tabla, y como banner empujaba las métricas y la
-            tabla hacia abajo en cada carga. Ahora está en la campana de la barra
-            lateral, que se ve desde cualquier página. */}
-
-        {/* Métricas del conjunto filtrado. Sin tarjetas: son contexto de la
-            tabla, no cinco objetos distintos que comparar entre sí. */}
-        <section className="stat-bar" aria-label="Métricas de las ofertas filtradas">
-          <div className="stat-figures">
-            <Figure label="Precio medio" value={formatPrice(overview?.avg_price)} />
-            <Figure
-              label="Descuento medio"
-              value={formatPct(overview?.avg_discount_pct)}
-              hint="sobre PVP"
+      {/* `content-fill`: el alto sobrante es de la lista, que hace scroll por
+          dentro; el riel y la línea de contexto quedan siempre a la vista. */}
+      <div className="content content-fill offer-view">
+        {touch ? (
+          <>
+            <FilterRail
+              view={view}
+              names={names}
+              filterCount={filterCount}
+              onOpenFilters={() => setSheet("filters")}
+              onOpenSort={() => setSheet("sort")}
+              onChange={(next) => commit(next)}
             />
-            <Figure label="Km medios" value={formatKm(overview?.avg_mileage_km)} />
-            <Figure label="Km / año" value={formatNumber(overview?.avg_km_per_year)} />
-            <Figure label="Modelos" value={formatNumber(overview?.car_models)} />
-          </div>
 
-          {overview?.best_deal ? (
-            <button
-              type="button"
-              className="stat-deal"
-              onClick={() => setScraped(overview.best_deal)}
-              title={`Ver el detalle de ${overview.best_deal.title}`}
-            >
-              {/* Sin puntuación al lado del precio: dos números del mismo
-                  tamaño compiten en vez de jerarquizar. La puntuación está a
-                  un clic, arriba del todo del panel de detalle. */}
-              <span className="figure-label">Mejor chollo</span>
-              <span className="stat-deal-price">
-                {formatPrice(overview.best_deal.price)}
-              </span>
-              <span className="stat-deal-name">
-                {overview.best_deal.car_model.display_name}
-              </span>
-            </button>
-          ) : null}
-        </section>
+            {/* La mediana contra la que se mide «vs mediana» en cada fila. En
+                escritorio vive en el `<th>` de su columna; aquí, donde no hay
+                cabecera, va en la línea que describe el conjunto. */}
+            <p className="offer-context" role="status">
+              {listLoading
+                ? "Cargando ofertas…"
+                : `${formatNumber(total)} ${total === 1 ? "oferta" : "ofertas"}${
+                    shownMedian !== null
+                      ? ` · mediana en pantalla ${formatPrice(shownMedian)}`
+                      : ""
+                  }`}
+            </p>
 
-        {/* Una sola fila de 28 px. Antes eran seis pares etiqueta/control en dos
-            filas para decir lo que los propios controles ya dicen: sobre un
-            desplegable cuya primera opción es «Todos los modelos» no hace falta
-            escribir «Modelo». Las etiquetas siguen ahí en `aria-label`, solo que
-            ya no ocupan alto, y ese alto se lo queda la tabla. */}
-        <div className="filters">
-          <div className="filter-search">
-            <input
-              className="input"
-              aria-label="Buscar por título"
-              placeholder="Buscar por título…"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-          </div>
+            {hint.line ? (
+              <p className="offer-hint">
+                Desliza una fila a la izquierda para descartarla o marcarla no disponible.
+              </p>
+            ) : null}
+          </>
+        ) : (
+          <>
+            {/* Métricas del conjunto filtrado. Sin tarjetas: son contexto de la
+                tabla, no cinco objetos distintos que comparar entre sí. En el
+                móvil viven dentro de la hoja de filtros, que es donde describen
+                exactamente el conjunto que se está acotando. */}
+            <section className="stat-bar" aria-label="Métricas de las ofertas filtradas">
+              <div className="stat-figures">
+                <Figure label="Precio medio" value={formatPrice(overview?.avg_price)} />
+                <Figure
+                  label="Descuento medio"
+                  value={formatPct(overview?.avg_discount_pct)}
+                  hint="sobre PVP"
+                />
+                <Figure label="Km medios" value={formatKm(overview?.avg_mileage_km)} />
+                <Figure label="Km / año" value={formatNumber(overview?.avg_km_per_year)} />
+                <Figure label="Modelos" value={formatNumber(overview?.car_models)} />
+              </div>
 
-          <select
-            className="select"
-            aria-label="Filtrar por modelo"
-            value={modelId}
-            onChange={(event) => setModelId(event.target.value)}
-          >
-            <option value="">Todos los modelos</option>
-            {(models.data ?? []).map((model) => (
-              <option key={model.id} value={model.id}>
-                {model.display_name} ({model.active_offers})
-              </option>
-            ))}
-          </select>
+              {overview?.best_deal ? (
+                <button
+                  type="button"
+                  className="stat-deal"
+                  onClick={() => openOffer(overview.best_deal as Offer)}
+                  title={`Ver el detalle de ${overview.best_deal.title}`}
+                >
+                  {/* Sin puntuación al lado del precio: dos números del mismo
+                      tamaño compiten en vez de jerarquizar. */}
+                  <span className="figure-label">Mejor chollo</span>
+                  <span className="stat-deal-price">
+                    {formatPrice(overview.best_deal.price)}
+                  </span>
+                  <span className="stat-deal-name">
+                    {overview.best_deal.car_model.display_name}
+                  </span>
+                </button>
+              ) : null}
+            </section>
 
-          <select
-            className="select"
-            aria-label="Filtrar por dealer"
-            value={dealerId}
-            onChange={(event) => setDealerId(event.target.value)}
-          >
-            <option value="">Todos los dealers</option>
-            {(dealers.data ?? []).map((dealer) => (
-              <option key={dealer.id} value={dealer.id}>
-                {dealer.name}
-              </option>
-            ))}
-          </select>
+            {/* Una sola fila de 28 px. Las etiquetas viven en `aria-label`: sobre
+                un desplegable cuya primera opción es «Todos los modelos» no hace
+                falta escribir «Modelo», y ese alto se lo queda la tabla. */}
+            <div className="filters">
+              <div className="filter-search">
+                <input
+                  className="input"
+                  aria-label="Buscar por título"
+                  placeholder="Buscar por título…"
+                  value={draft.q}
+                  onChange={(event) => setDraft({ ...draft, q: event.target.value })}
+                />
+              </div>
 
-          <select
-            className="select"
-            aria-label="Filtrar por estado del vehículo"
-            value={condition}
-            onChange={(event) => setCondition(event.target.value)}
-          >
-            <option value="">Cualquier estado</option>
-            {Object.entries(CONDITION_LABELS).map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
+              <select
+                className="select"
+                aria-label="Filtrar por modelo"
+                value={view.model}
+                onChange={(event) => commit({ ...view, model: event.target.value })}
+              >
+                <option value="">Todos los modelos</option>
+                {(models.data ?? []).map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.display_name} ({model.active_offers})
+                  </option>
+                ))}
+              </select>
 
-          <RangeFilter
-            name="Precio"
-            domain={domains.price}
-            value={[priceMin, priceMax]}
-            format={formatPrice}
-            formatShort={formatNumber}
-            emptyTitle="Todavía no hay precios que acotar"
-            onChange={([min, max]) => {
-              setPriceMin(min);
-              setPriceMax(max);
-            }}
-          />
+              <select
+                className="select"
+                aria-label="Filtrar por dealer"
+                value={view.dealer}
+                onChange={(event) => commit({ ...view, dealer: event.target.value })}
+              >
+                <option value="">Todos los dealers</option>
+                {(dealers.data ?? []).map((dealer) => (
+                  <option key={dealer.id} value={dealer.id}>
+                    {dealer.name}
+                  </option>
+                ))}
+              </select>
 
-          <RangeFilter
-            name="Año"
-            domain={domains.year}
-            value={[yearMin, yearMax]}
-            format={formatYear}
-            emptyTitle="Ninguna oferta trae año"
-            onChange={([min, max]) => {
-              setYearMin(min);
-              setYearMax(max);
-            }}
-          />
+              <select
+                className="select"
+                aria-label="Filtrar por estado del vehículo"
+                value={view.condition}
+                onChange={(event) => commit({ ...view, condition: event.target.value })}
+              >
+                <option value="">Cualquier estado</option>
+                {Object.entries(CONDITION_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
 
-          <div className="filter-scopes">
-            {/* Un desplegable y no tres interruptores: los tres estados son
-                excluyentes —una oferta está en uno—, así que dos interruptores
-                encendidos a la vez no querrían decir nada. Y se marca en acento
-                cuando no está en «Activas», porque desde una lista de descartadas
-                todo lo demás de la barra parece mentir. */}
-            <select
-              className={`select${statusView === "active" ? "" : " on"}`}
-              aria-label="Ver ofertas por su estado en la plataforma"
-              title="Las ofertas activas, las que has descartado o las que ya no están en el origen"
-              value={statusView}
-              onChange={(event) => setStatusView(event.target.value as OfferStatus)}
-            >
-              {(["active", "dismissed", "expired"] as const).map((value) => (
-                <option key={value} value={value}>
-                  {OFFER_STATUS[value].label}
-                </option>
-              ))}
-            </select>
-            <Toggle
-              on={trackedOnly}
-              onChange={setTrackedOnly}
-              title="Solo modelos que sigues"
-            >
-              Seguidos
-            </Toggle>
-            <Toggle
-              on={favoritesOnly}
-              onChange={setFavoritesOnly}
-              title="Solo tus favoritos"
-            >
-              {/* La misma estrella que marca la fila: el filtro y la acción que
-                  lo alimenta se reconocen como lo mismo. */}
-              <span className="toggle-mark" aria-hidden="true">
-                ★
-              </span>
-              Favoritos
-            </Toggle>
-          </div>
+              <RangeFilter
+                name="Precio"
+                domain={domains.price}
+                value={[draft.priceMin, draft.priceMax]}
+                format={formatPrice}
+                formatShort={formatNumber}
+                emptyTitle="Todavía no hay precios que acotar"
+                onChange={([min, max]) =>
+                  setDraft({ ...draft, priceMin: min, priceMax: max })
+                }
+              />
 
-          {/* Sin etiquetas visibles, un control con un valor puesto es lo único
-              que delata que la tabla está acotada: hace falta la salida. */}
-          {filtered ? (
-            <button className="btn btn-ghost" onClick={clearFilters}>
-              Limpiar
-            </button>
-          ) : null}
+              <RangeFilter
+                name="Año"
+                domain={domains.year}
+                value={[draft.yearMin, draft.yearMax]}
+                format={formatYear}
+                emptyTitle="Ninguna oferta trae año"
+                onChange={([min, max]) => setDraft({ ...draft, yearMin: min, yearMax: max })}
+              />
 
-          {/* El orden ya no está aquí. Era el único control de la fila que no
-              filtraba, y con él la barra pedía ~1.413 px: en un portátil de
-              1.512 px, descontada la barra lateral, se partía en dos filas
-              siempre. Ahora vive en las cabeceras de la tabla, que es donde se
-              busca en una tabla de datos, y son ~190 px que la fila devuelve. */}
-        </div>
+              <div className="filter-scopes">
+                {/* Un desplegable y no tres interruptores: los tres estados son
+                    excluyentes —una oferta está en uno—, así que dos
+                    interruptores encendidos a la vez no querrían decir nada. */}
+                <select
+                  className={`select${view.status === "active" ? "" : " on"}`}
+                  aria-label="Ver ofertas por su estado en la plataforma"
+                  title="Las ofertas activas, las que has descartado o las que ya no están en el origen"
+                  value={view.status}
+                  onChange={(event) =>
+                    commit({ ...view, status: event.target.value as OfferStatus })
+                  }
+                >
+                  {(["active", "dismissed", "expired"] as const).map((value) => (
+                    <option key={value} value={value}>
+                      {OFFER_STATUS[value].label}
+                    </option>
+                  ))}
+                </select>
+                <Toggle
+                  on={view.tracked}
+                  onChange={(on) => commit({ ...view, tracked: on })}
+                  title="Solo modelos que sigues"
+                >
+                  Seguidos
+                </Toggle>
+                <Toggle
+                  on={view.favorites}
+                  onChange={(on) => commit({ ...view, favorites: on })}
+                  title="Solo tus favoritos"
+                >
+                  {/* La misma estrella que marca la fila: el filtro y la acción
+                      que lo alimenta se reconocen como lo mismo. */}
+                  <span className="toggle-mark" aria-hidden="true">
+                    ★
+                  </span>
+                  Favoritos
+                </Toggle>
+              </div>
+
+              {/* Sin etiquetas visibles, un control con un valor puesto es lo
+                  único que delata que la tabla está acotada: hace falta la salida. */}
+              {isFiltered(view) ? (
+                <button className="btn btn-ghost" onClick={() => commit(clearedView(view))}>
+                  Limpiar
+                </button>
+              ) : null}
+            </div>
+          </>
+        )}
 
         {actionError ? <Banner kind="error">{actionError}</Banner> : null}
         {listError ? <Banner kind="error">{listError}</Banner> : null}
 
-        <div className="table-wrap" ref={wrapRef} onScroll={onTableScroll}>
+        <div
+          className={`table-wrap${touch ? " offer-scroll" : ""}`}
+          ref={wrapRef}
+          onScroll={onListScroll}
+        >
           {listLoading ? (
             <Loading />
           ) : rows.length === 0 ? (
             // La pista depende de la vista: «no hay nada» en la lista de
             // descartadas parece una avería, y es lo normal el primer día.
             <Empty
-              title={EMPTY_VIEW[statusView].title}
+              title={EMPTY_VIEW[view.status].title}
               hint={
-                favoritesOnly
+                view.favorites
                   ? "Marca ofertas con la estrella para que aparezcan aquí."
-                  : EMPTY_VIEW[statusView].hint
+                  : EMPTY_VIEW[view.status].hint
               }
             />
+          ) : touch ? (
+            /* Una `<ul>` de `<li>` y no la tabla con `display: block`: una tabla
+               desmontada con CSS pierde su semántica sin avisar, y lo que hay
+               aquí ya no son catorce columnas sino un registro por fila. */
+            <ul className="offer-list">
+              {rows.map((offer, index) => (
+                <OfferRow
+                  key={offer.id}
+                  offer={offer}
+                  median={shownMedian}
+                  leaving={leaving.has(offer.id)}
+                  favBusy={favBusyId === offer.id}
+                  peek={hint.peek && index === 0}
+                  onPeekEnd={hint.seen}
+                  onSwipeOpen={hint.seen}
+                  onOpen={openOffer}
+                  onFavorite={toggleFavorite}
+                  onMove={move}
+                />
+              ))}
+            </ul>
           ) : (
             <table className="records">
               <thead>
@@ -870,12 +931,12 @@ export function OffersPage() {
                   <th style={{ width: 32 }}>
                     <span className="sr-only">Favorito</span>
                   </th>
-                  <SortTh column="ai" label="IA" sort={sort} onSort={setSort} width={56} />
+                  <SortTh column="ai" label="IA" sort={view.sort} onSort={onSort} width={56} />
                   <th>Marca</th>
                   <th>Modelo</th>
                   <th>Versión</th>
                   <th>Ubicación</th>
-                  <SortTh column="price" label="Precio" sort={sort} onSort={setSort} numeric />
+                  <SortTh column="price" label="Precio" sort={view.sort} onSort={onSort} numeric />
                   {/* No ordena: la desviación se calcula contra la mediana de las
                       filas en pantalla, así que ordenar por ella reordenaría su
                       propia referencia. La referencia va en la cabecera porque
@@ -887,20 +948,18 @@ export function OffersPage() {
                       <span className="th-note">{formatPrice(shownMedian)}</span>
                     ) : null}
                   </th>
-                  <SortTh column="year" label="Año" sort={sort} onSort={setSort} numeric />
-                  <SortTh column="km" label="Km" sort={sort} onSort={setSort} numeric />
+                  <SortTh column="year" label="Año" sort={view.sort} onSort={onSort} numeric />
+                  <SortTh column="km" label="Km" sort={view.sort} onSort={onSort} numeric />
                   {/* Tampoco ordena: es una métrica derivada que el backend no
                       tiene en columna, y ordenar solo lo ya cargado daría un
                       orden que se deshace con cada tramo que llega. */}
                   <th className="num">Km / año</th>
                   {/* Sin rótulo visible: la columna es una marca de una letra y
-                      el rótulo pedía el triple de ancho que su propio contenido.
-                      El nombre sigue estando para quien navega con lector de
-                      pantalla, igual que en la columna de la estrella. */}
+                      el rótulo pedía el triple de ancho que su propio contenido. */}
                   <th style={{ width: 44 }}>
                     <span className="sr-only">Combustible</span>
                   </th>
-                  <SortTh column="value" label="Valor" sort={sort} onSort={setSort} numeric />
+                  <SortTh column="value" label="Valor" sort={view.sort} onSort={onSort} numeric />
                   {/* Dos botones de 24 px con su hueco. Sin rótulo visible, como
                       la estrella y el combustible: la columna es más estrecha que
                       cualquier palabra que la nombre. */}
@@ -916,11 +975,11 @@ export function OffersPage() {
                     className={`row-clickable${leaving.has(offer.id) ? " row-leaving" : ""}`}
                     tabIndex={0}
                     aria-label={`Ver el detalle de ${offer.title}`}
-                    onClick={() => setScraped(offer)}
+                    onClick={() => openOffer(offer)}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" || event.key === " ") {
                         event.preventDefault();
-                        setScraped(offer);
+                        openOffer(offer);
                       }
                     }}
                   >
@@ -966,8 +1025,7 @@ export function OffersPage() {
 
                     {/* La versión trae la motorización al principio, que es lo que
                         distingue; el resto se recorta y vive en el `title` y en el
-                        panel de detalle. Sin el recorte, un «Sportback Advanced 30
-                        TFSI…» obliga a la tabla entera a hacer scroll horizontal. */}
+                        panel de detalle. */}
                     <td
                       className="cell-muted cell-clip-md"
                       title={offer.car_model.trim || undefined}
@@ -986,7 +1044,11 @@ export function OffersPage() {
                     </td>
 
                     <td className="num">
-                      <VsMedian price={offer.price} median={shownMedian} />
+                      <VsMedian
+                        price={offer.price}
+                        median={shownMedian}
+                        fallback={<span className="muted">—</span>}
+                      />
                     </td>
 
                     <td className="num cell-muted">{offer.year ?? "—"}</td>
@@ -1000,7 +1062,8 @@ export function OffersPage() {
 
                     {/* La marca es lo único que se ve; el rótulo entero viaja en
                         el `title` para el ratón y en el `aria-label` para quien
-                        no lo tiene, porque una «D» suelta no se lee sola. */}
+                        no lo tiene, porque una «D» suelta no se lee sola. En el
+                        móvil no hay marca: va la palabra entera en la fila. */}
                     <td className="fuel-cell">
                       {offer.fuel_type ? (
                         <span
@@ -1042,16 +1105,44 @@ export function OffersPage() {
         </div>
       </div>
 
-      {scraped ? (
-        <ScrapedDrawer
-          offer={scraped}
-          onClose={() => setScraped(null)}
+      {view.offer !== null ? (
+        <OfferDetail
+          id={view.offer}
+          known={openRow}
+          onClose={closeOffer}
           onMove={(offer, target) => {
-            // El panel se cierra al mover: la oferta que describe acaba de salir
-            // de la lista que hay detrás, y dejarlo abierto sobre una ficha que
-            // ya no está ahí es peor que no haberlo abierto.
-            setScraped(null);
+            // La ficha se cierra al mover: la oferta que describe acaba de salir
+            // de la lista que hay detrás, y dejarla abierta sobre algo que ya no
+            // está ahí es peor que no haberla abierto.
+            closeOffer();
             void move(offer, target);
+          }}
+        />
+      ) : null}
+
+      {sheet === "filters" ? (
+        <FilterSheet
+          view={view}
+          models={models.data ?? []}
+          dealers={dealers.data ?? []}
+          domains={domains}
+          fallbackStats={stats.data}
+          onClose={() => setSheet(null)}
+          onApply={(next) => {
+            setSheet(null);
+            commit(next);
+          }}
+          onOpenOffer={openOffer}
+        />
+      ) : null}
+
+      {sheet === "sort" ? (
+        <SortSheet
+          sort={view.sort}
+          onClose={() => setSheet(null)}
+          onPick={(token) => {
+            setSheet(null);
+            commit({ ...view, sort: token });
           }}
         />
       ) : null}
@@ -1059,65 +1150,45 @@ export function OffersPage() {
       <ToastStack {...toasts} />
     </>
   );
+
+  function onSort(token: string) {
+    commit({ ...view, sort: token });
+  }
+}
+
+/** Los filtros tal como los quiere la API, sin el orden ni la ficha abierta:
+ *  `viewFilters` vive en `lib/offerParams` porque lo comparten la lista, sus
+ *  métricas y el contador en vivo de la hoja de filtros. */
+const viewFiltersOf = viewFilters;
+
+/** Cuántos filtros hay puestos: el número del chip «Filtros». */
+function countFilters(view: OffersView): number {
+  let count = 0;
+  if (view.q.trim()) count += 1;
+  if (view.model) count += 1;
+  if (view.dealer) count += 1;
+  if (view.condition) count += 1;
+  if (view.priceMin !== null || view.priceMax !== null) count += 1;
+  if (view.yearMin !== null || view.yearMax !== null) count += 1;
+  if (view.tracked) count += 1;
+  if (view.favorites) count += 1;
+  if (view.status !== DEFAULT_VIEW.status) count += 1;
+  return count;
 }
 
 /* ------------------------------------------------------------------------- */
 
-interface RangeDomain {
-  floor: number;
-  ceiling: number;
-  step: number;
-}
-
 /**
- * Extremos del deslizador de precio, redondeados a un paso legible.
- *
- * El paso sale del propio recorrido: sobre 60.000 € de rango, moverse de mil en
- * mil basta y deja números redondos; en un rango corto ese mismo paso dejaría el
- * pomo con cuatro posiciones. Los extremos se redondean hacia fuera para que el
- * coche más barato y el más caro sigan cabiendo dentro del carril.
- */
-function priceDomainOf(
-  floor: number | null | undefined,
-  ceiling: number | null | undefined,
-): RangeDomain | null {
-  if (floor === null || floor === undefined) return null;
-  if (ceiling === null || ceiling === undefined) return null;
-
-  const span = ceiling - floor;
-  const step = span > 60000 ? 1000 : span > 20000 ? 500 : 100;
-  const low = Math.floor(floor / step) * step;
-  // Un catálogo con un solo precio daría un carril de ancho cero: se garantiza
-  // al menos un paso para que los dos pomos tengan dónde ponerse.
-  return { floor: low, ceiling: Math.max(Math.ceil(ceiling / step) * step, low + step), step };
-}
-
-/**
- * Lo mismo para los años, que ya vienen en su propia unidad: el paso es 1 y no
- * hay nada que redondear. Solo se garantiza el año de holgura que necesitan los
- * dos pomos cuando todo el catálogo es del mismo año.
- */
-function yearDomainOf(
-  floor: number | null | undefined,
-  ceiling: number | null | undefined,
-): RangeDomain | null {
-  if (floor === null || floor === undefined) return null;
-  if (ceiling === null || ceiling === undefined) return null;
-  return { floor, ceiling: Math.max(ceiling, floor + 1), step: 1 };
-}
-
-/** Los años se escriben enteros: «2.018» sería un precio, no un año. */
-const formatYear = (value: number | null | undefined): string =>
-  value === null || value === undefined ? "—" : String(value);
-
-/**
- * Acotación por rango: dos pomos sobre el recorrido real del conjunto, más dos
- * casillas para teclear la cifra exacta, que es más rápido que apuntar.
+ * Acotación por rango en el escritorio: dos pomos sobre el recorrido real del
+ * conjunto, más dos casillas para teclear la cifra exacta.
  *
  * Vive en un panel plegable y no suelto en la barra porque un deslizador
  * utilizable necesita unos 240 px y una fila de filtros no puede pagarlos por un
  * control que se toca una vez por sesión. Plegado ocupa lo que un botón y enseña
  * el rango puesto, así que no hace falta abrirlo para saber qué hay acotado.
+ *
+ * En el móvil no hay fila de filtros y este control se dibuja a ancho completo
+ * dentro de la hoja: es el mismo `RangeSlider`, sin panel que lo esconda.
  */
 function RangeFilter({
   name,
@@ -1159,7 +1230,7 @@ function RangeFilter({
   const { floor, ceiling, step } = domain;
 
   /** Un pomo en el extremo del dominio no acota nada: se guarda como «sin límite». */
-  function commit([lo, hi]: [number, number]) {
+  function commitRange([lo, hi]: [number, number]) {
     onChange([lo <= floor ? null : lo, hi >= ceiling ? null : hi]);
   }
 
@@ -1186,7 +1257,7 @@ function RangeFilter({
           max={ceiling}
           step={step}
           value={[min ?? floor, max ?? ceiling]}
-          onChange={commit}
+          onChange={commitRange}
           format={format}
           labelMin={`${name} mínimo`}
           labelMax={`${name} máximo`}
@@ -1251,42 +1322,12 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-/**
- * Etiqueta pequeña sobre un valor tabular. Es el mismo primitivo para las
- * desviaciones del panel de detalle y para las métricas de la cabecera: el
- * tamaño lo pone el contenedor, no el componente.
- */
-function Figure({
-  label,
-  value,
-  tone = "",
-  hint,
-}: {
-  label: string;
-  value: string;
-  tone?: string;
-  hint?: string;
-}) {
-  return (
-    <div className="figure">
-      <span className="figure-label">{label}</span>
-      <span className={`figure-value ${tone}`}>{value}</span>
-      {hint ? <span className="figure-hint">{hint}</span> : null}
-    </div>
-  );
-}
-
 /** Barato respecto a la referencia es bueno, caro es malo; ±5 % es ruido. */
 function comparisonTone(pct: number | null): string {
   if (pct === null) return "none";
   if (pct <= -5) return "positive";
   if (pct >= 5) return "negative";
   return "";
-}
-
-/** Ubicación del coche, con la ciudad del dealer como respaldo. */
-function locationOf(offer: Offer): string {
-  return offer.location || offer.dealer.city || "—";
 }
 
 function hostOf(url: string): string {
@@ -1298,24 +1339,23 @@ function hostOf(url: string): string {
 }
 
 /**
- * Vista del anuncio: foto, titular y precio, todo dentro de un enlace al original.
+ * Vista del anuncio: foto y titular.
  *
  * No es un iframe de la página real a propósito: los portales de coches sirven
- * `X-Frame-Options`/`frame-ancestors` y el iframe saldría en blanco. Esto muestra
- * lo que sí tenemos scrapeado, y al pulsarlo se abre el anuncio de verdad.
+ * `X-Frame-Options`/`frame-ancestors` y el iframe saldría en blanco.
+ *
+ * **Ya no es un enlace.** Toda la tarjeta lo era, y con ella el viaje de ida a
+ * Safari se disparaba con un toque mal puesto sobre la foto —el objeto más
+ * grande de la ficha— justo cuando lo que se estaba haciendo era leerla. Salir
+ * de la app es ahora una acción explícita y única, con su botón y con el host a
+ * la vista.
  */
 function OfferPreview({ offer }: { offer: Offer }) {
   const [imageFailed, setImageFailed] = useState(false);
   const showImage = Boolean(offer.image_url) && !imageFailed;
 
   return (
-    <a
-      className="offer-preview"
-      href={offer.url}
-      target="_blank"
-      rel="noreferrer"
-      title={`Abrir en ${hostOf(offer.url)}`}
-    >
+    <figure className="offer-preview static">
       {showImage ? (
         <img
           className="offer-preview-image"
@@ -1331,20 +1371,70 @@ function OfferPreview({ offer }: { offer: Offer }) {
       )}
 
       {/* Sin precio: lo dice la franja de veredicto, justo encima. */}
-      <div className="offer-preview-body">
+      <figcaption className="offer-preview-body">
         <span className="offer-preview-title">{offer.title}</span>
         <span className="tiny muted">
           {offer.dealer.name} · {hostOf(offer.url)}
         </span>
-        <span className="tiny offer-preview-cta">Abrir el anuncio original ↗</span>
-      </div>
-    </a>
+      </figcaption>
+    </figure>
+  );
+}
+
+/**
+ * La salida al anuncio del dealer.
+ *
+ * Una sola acción explícita, con el host escrito en el propio rótulo: lo que se
+ * está a punto de hacer es dejar la app, y en una PWA instalada eso significa
+ * abrir la superlativa in-app, que tiene su botón «Done» pero no siempre
+ * devuelve el contexto. Por eso el estado de la lista ya está en la URL antes de
+ * salir, y por eso hay un «Copiar enlace» para quien prefiera abrirlo en Safari
+ * de verdad.
+ *
+ * `target="_blank" rel="noopener"` y **sin** `-webkit-touch-callout: none`: la
+ * pulsación larga y su «Abrir en Safari» son la única ruta fiable al navegador
+ * real, y quitarla por estética la cerraría.
+ */
+function OfferExit({ offer }: { offer: Offer }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(offer.url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    } catch {
+      // Sin permiso de portapapeles no hay nada que hacer desde aquí: la URL
+      // completa está escrita en «Procedencia», al final de la ficha.
+      setCopied(false);
+    }
+  }
+
+  return (
+    <div className="offer-exit">
+      <a
+        className="btn btn-primary offer-exit-open"
+        href={offer.url}
+        target="_blank"
+        rel="noopener"
+      >
+        Abrir el anuncio ↗ {hostOf(offer.url)}
+      </a>
+      <button type="button" className="btn offer-exit-copy" onClick={copy}>
+        {copied ? "Enlace copiado" : "Copiar enlace"}
+      </button>
+      <p className="tiny muted offer-exit-note" role="status">
+        {copied
+          ? "Enlace copiado al portapapeles."
+          : "Salir abre el anuncio fuera de la app. El filtro y la ficha están en la dirección, así que al volver la lista sigue igual."}
+      </p>
+    </div>
   );
 }
 
 /**
  * Payload crudo del scraper. Vive en su propio componente para que la petición
- * salga al desplegar y no al abrir el panel: casi nadie lo mira.
+ * salga al desplegar y no al abrir la ficha: casi nadie lo mira.
  */
 function RawPayload({ offerId }: { offerId: number }) {
   const detail = useAsync<OfferRaw>(() => api.get(`/offers/${offerId}/raw`), [offerId]);
@@ -1366,198 +1456,6 @@ function RawPayload({ offerId }: { offerId: number }) {
     <div className="fact-group">
       <p className="fact-label">Payload del scraper ({Object.keys(raw).length} campos)</p>
       <pre className="raw-json">{JSON.stringify(raw, null, 2)}</pre>
-    </div>
-  );
-}
-
-/* -------------------------------------------------------------------------- *
- * Perfil frente a sus comparables
- * -------------------------------------------------------------------------- */
-
-/** Lo que hace falta de una oferta para colocarla en el radar. */
-type Comparable = Pick<
-  SegmentPoint,
-  "price" | "mileage_km" | "year" | "km_per_year" | "value_score"
->;
-
-const asComparable = (offer: Offer): Comparable => ({
-  price: offer.price,
-  mileage_km: offer.mileage_km,
-  year: offer.year,
-  km_per_year: offer.metrics.km_per_year,
-  value_score: offer.metrics.value_score,
-});
-
-/**
- * Los cinco ejes, todos orientados a favor de quien compra: más lejos del centro
- * es mejor, siempre. Es la misma escala que la Analítica —mediana en el centro,
- * mayor desviación del conjunto en el borde, con un recorrido mínimo para que
- * una diferencia pequeña no se estire—, solo que aquí el conjunto son las otras
- * ofertas del mismo binomio marca-modelo.
- *
- * El descuento sobre PVP no tiene eje propio: solo una de cada tres ofertas trae
- * `original_price`, así que el eje se caía casi siempre y cuando no, comparaba
- * contra una mediana de cuatro anuncios. Sigue contando donde tiene sentido, que
- * es dentro de «Valor».
- *
- * «Valor» es la puntuación de la plataforma, o sea el resumen que ya sale arriba
- * del panel. Está aquí porque no es una función de los otros cuatro ejes: mira el
- * precio contra la mediana de *su versión exacta*, no contra la del binomio, y
- * suma el descuento, la bajada de precio y la valoración del dealer, que no
- * tienen eje propio.
- */
-const OFFER_AXES: (Omit<RadarAxis, "cohort" | "values"> & {
-  of: (item: Comparable) => number | null;
-})[] = [
-  {
-    label: "Precio",
-    hint: "frente al binomio, no a la versión",
-    direction: -1,
-    minSpan: 0.15,
-    relative: true,
-    format: formatPrice,
-    of: (item) => item.price,
-  },
-  {
-    label: "Kilómetros",
-    hint: "recorridos",
-    direction: -1,
-    minSpan: 0.2,
-    relative: true,
-    format: formatKm,
-    of: (item) => item.mileage_km,
-  },
-  {
-    label: "Año",
-    hint: "de matrícula",
-    direction: 1,
-    minSpan: 1.5,
-    format: (value) => String(Math.round(value)),
-    of: (item) => item.year,
-  },
-  {
-    label: "Km / año",
-    hint: "uso",
-    direction: -1,
-    minSpan: 0.2,
-    relative: true,
-    format: formatNumber,
-    of: (item) => item.km_per_year,
-  },
-  {
-    label: "Valor",
-    hint: "puntuación de la plataforma",
-    direction: 1,
-    minSpan: 8,
-    format: (value) => `${formatNumber(value)}/100`,
-    of: (item) => item.value_score,
-  },
-];
-
-/**
- * Dónde cae esta oferta dentro de su mercado.
- *
- * El conjunto de comparación es el **binomio marca-modelo**, no la fila de
- * `car_models`: el catálogo se fragmenta por acabado —un «Audi A4 Allroad
- * Quattro» son once filas— y contra dos o tres ofertas de la misma versión
- * exacta no hay mediana que valga. Por eso el cohorte se pide a `/analytics`,
- * que agrupa por marca y modelo, y no al listado filtrando por modelo.
- *
- * La propia oferta cuenta dentro del cohorte, como cualquier otra: quitarla
- * movería la mediana de un mercado del que forma parte, y con dos docenas de
- * anuncios la diferencia sería de todos modos invisible.
- *
- * Vive en su propio componente para que la petición salga al abrir el panel de
- * *esta* oferta y no con la tabla entera.
- */
-function OfferRadar({ offer }: { offer: Offer }) {
-  const key = `${offer.car_model.make.toLowerCase()}|${offer.car_model.model.toLowerCase()}`;
-  const cohort = useAsync<AnalyticsSegments>(
-    () => api.get("/analytics/segments", { keys: key }),
-    [key],
-  );
-
-  if (cohort.loading) return <Loading label="Buscando comparables…" />;
-  if (cohort.error) return <Banner kind="error">{cohort.error}</Banner>;
-
-  const segment = cohort.data?.segments.find((item) => item.key === key);
-  const points = segment?.points ?? [];
-
-  // El cohorte lo forman las ofertas **activas**: una descartada o expirada se
-  // sigue pudiendo mirar, y compararla contra el mercado que hay hoy es
-  // justamente la pregunta («¿qué me perdí?»). Solo hay que decirlo.
-  if (points.length < 4) {
-    const n = points.length;
-    return (
-      <p className="tiny muted" style={{ margin: 0 }}>
-        {segment
-          ? `Solo hay ${formatNumber(n)} oferta${n === 1 ? "" : "s"} activa${n === 1 ? "" : "s"} de ${segment.label}: hacen falta al menos cuatro para que la mediana signifique algo.`
-          : "No hay ofertas activas de este binomio marca-modelo contra las que comparar."}
-      </p>
-    );
-  }
-
-  const { rows, dropped } = buildRadar(
-    OFFER_AXES.map((axis) => ({
-      ...axis,
-      cohort: points.map(axis.of),
-      values: [axis.of(asComparable(offer))],
-    })),
-    ["offer"],
-  );
-
-  if (rows.length < RADAR_MIN_AXES) {
-    return (
-      <p className="tiny muted" style={{ margin: 0 }}>
-        Esta oferta y sus comparables no comparten datos suficientes para dibujar un
-        perfil: {dropped.join(", ").toLowerCase()} se quedan fuera.
-      </p>
-    );
-  }
-
-  const series: RadarSeries[] = [
-    { key: "offer", label: "Esta oferta", color: "var(--color-chart-1)" },
-  ];
-
-  return (
-    <div className="radar-split">
-      <RadarProfile
-        rows={rows}
-        series={series}
-        referenceLabel={`Mediana de ${formatNumber(points.length)} comparables`}
-      />
-
-      {/* La lista hace de leyenda y de lectura a la vez, y es el equivalente
-          accesible del dibujo: lo que ahí es posición, aquí es una frase. */}
-      <ul className="chart-notes radar-notes">
-        <li>
-          <RadarMark color="var(--color-chart-1)" />
-          <span className="chart-note-label">Esta oferta</span>
-          <RadarReading rows={rows} seriesKey="offer" />
-        </li>
-        <li>
-          <RadarMark color="var(--text-tertiary)" dashed />
-          <span className="chart-note-label">
-            Mediana de {formatNumber(points.length)} comparables
-          </span>
-          <span className="muted">la oferta típica de {segment?.label}</span>
-        </li>
-        {/* «Valor» es el único eje que no se lee en el propio anuncio; su cuenta
-            completa —señal a señal, con los pesos finales— está en el desglose
-            de arriba de este mismo panel, así que aquí basta la definición. */}
-        <li className="muted note">
-          <span className="chart-note-label">Valor</span> es la media ponderada de las
-          señales del desglose de arriba: precio frente al mercado y frente al valor
-          esperado por depreciación, kilometraje, antigüedad, bajada, descuento, dealer y
-          frescura. Los pesos se ven y se editan en Ajustes.
-        </li>
-        {dropped.length ? (
-          <li className="muted note">
-            Fuera del radar: {dropped.join(", ").toLowerCase()}. Un eje se cae cuando esta
-            oferta no trae el dato o cuando sus comparables no lo traen.
-          </li>
-        ) : null}
-      </ul>
     </div>
   );
 }
@@ -1643,6 +1541,47 @@ function ScoreBreakdown({ metrics }: { metrics: OfferMetrics }) {
 }
 
 /**
+ * La ficha, resuelta desde la URL.
+ *
+ * Si la oferta está en la lista cargada se usa esa —así el favorito que se acaba
+ * de marcar se ve al abrirla—; si no está, se pide. El segundo caso es el que
+ * importa: es el arranque en frío con `?offer=8412` en la dirección, o sea la
+ * vuelta desde el anuncio del dealer después de que iOS haya matado la app.
+ */
+function OfferDetail({
+  id,
+  known,
+  onClose,
+  onMove,
+}: {
+  id: number;
+  known: Offer | null;
+  onClose: () => void;
+  onMove: (offer: Offer, target: OfferStatus) => void;
+}) {
+  const missing = known === null;
+  const remote = useAsync<Offer | null>(
+    () => (missing ? api.get<Offer>(`/offers/${id}`) : Promise.resolve(null)),
+    [id, missing],
+  );
+  const offer = known ?? remote.data;
+
+  if (!offer) {
+    return (
+      <Drawer wide title="Oferta" onClose={onClose}>
+        {remote.error ? (
+          <Banner kind="error">{remote.error}</Banner>
+        ) : (
+          <Loading label="Cargando la oferta…" />
+        )}
+      </Drawer>
+    );
+  }
+
+  return <OfferSheet offer={offer} onClose={onClose} onMove={onMove} />;
+}
+
+/**
  * Todo lo que se sabe de una oferta, en tres franjas de densidad distinta.
  *
  * El orden no es el del esquema, es el de la pregunta: **¿merece la pena abrir
@@ -1650,11 +1589,8 @@ function ScoreBreakdown({ metrics }: { metrics: OfferMetrics }) {
  * del todo, sin scroll; la ficha del coche es la evidencia que las respalda; y
  * la procedencia (fuente, IDs, fechas de scrapeo, `raw`) va plegada, porque es
  * dato de diagnóstico y no de decisión.
- *
- * Antes esto eran seis tarjetas iguales apiladas, con la puntuación de valor
- * enterrada en la fila 8 de la tercera.
  */
-function ScrapedDrawer({
+function OfferSheet({
   offer,
   onClose,
   onMove,
@@ -1679,9 +1615,9 @@ function ScrapedDrawer({
       subtitle={`${offer.car_model.display_name} · ${offer.dealer.name}`}
       onClose={onClose}
       /* Con su nombre escrito y no como iconos: aquí se llega después de leer la
-         ficha y de abrir el anuncio en otra pestaña, que es justo cuando se
-         descubre que el coche ya no está. Es el sitio donde más se va a pulsar
-         «No disponible», así que no puede depender de reconocer un dibujo. */
+         ficha y de abrir el anuncio, que es justo cuando se descubre que el
+         coche ya no está. Es el sitio donde más se va a pulsar «No disponible»,
+         así que no puede depender de reconocer un dibujo. */
       actions={<OfferActions offer={offer} variant="wide" onMove={onMove} />}
     >
       <div className="offer-detail">
@@ -1714,9 +1650,9 @@ function ScrapedDrawer({
           </div>
 
           <div className="verdict-deltas">
-            {/* «del modelo» no es adorno: la columna de la tabla enseña otra
-                desviación, la de las filas en pantalla, y sin esto son dos
-                números distintos con el mismo nombre. */}
+            {/* «del modelo» no es adorno: la lista enseña otra desviación, la de
+                las filas en pantalla, y sin esto son dos números distintos con
+                el mismo nombre. */}
             <Figure
               label="vs mediana"
               value={formatPct(m.price_vs_median_pct, true)}
@@ -1729,9 +1665,7 @@ function ScrapedDrawer({
               tone={comparisonTone(m.price_vs_reference_pct)}
             />
             {/* El ancla de la depreciación: qué debería costar hoy este coche
-                por edad y km, y a cuánto está la oferta de esa cifra. El origen
-                del ancla importa: «PVP» es la cifra curada de la versión,
-                «mercado» la estimada invirtiendo la curva sobre el binomio. */}
+                por edad y km, y a cuánto está la oferta de esa cifra. */}
             <Figure
               label="vs valor esperado"
               value={formatPct(m.price_vs_expected_pct, true)}
@@ -1781,7 +1715,10 @@ function ScrapedDrawer({
 
         {/* ---- 2. Evidencia ---- */}
         <div className="offer-evidence">
-          <OfferPreview offer={offer} />
+          <div className="offer-evidence-main">
+            <OfferPreview offer={offer} />
+            <OfferExit offer={offer} />
+          </div>
 
           <div className="offer-facts">
             <div className="fact-group">
@@ -1838,13 +1775,13 @@ function ScrapedDrawer({
           </div>
         </div>
 
-        {/* El radar va detrás de la ficha y no pegado al veredicto: sus ejes son
+        {/* El perfil va detrás de la ficha y no pegado al veredicto: sus ejes son
             el año, los kilómetros y el precio que se acaban de leer ahí arriba,
             así que aquí lo que hace es contestar «¿y eso es mucho o poco?» sobre
             unas cifras que el lector todavía tiene en la cabeza. */}
         <div className="fact-group">
           <p className="fact-label">Perfil frente a sus comparables</p>
-          <OfferRadar offer={offer} />
+          <OfferProfile offer={offer} />
         </div>
 
         {/* El historial explica la «Bajada» de arriba: va junto, no 400 px más abajo. */}
@@ -1856,33 +1793,8 @@ function ScrapedDrawer({
             <Loading />
           ) : history.error ? (
             <Banner kind="error">{history.error}</Banner>
-          ) : points.length <= 1 ? (
-            <p className="tiny muted" style={{ margin: 0 }}>
-              Un solo precio registrado: todavía no ha cambiado desde que se vio.
-            </p>
           ) : (
-            <ol className="price-track">
-              {points.map((point, index) => {
-                const previous = index > 0 ? points[index - 1].price : null;
-                const change = previous === null ? 0 : point.price - previous;
-                return (
-                  <li key={point.recorded_at}>
-                    <span className="tiny muted">{formatDate(point.recorded_at)}</span>
-                    <span className="price-track-price">
-                      {formatPrice(point.price)}
-                      {change ? (
-                        <span
-                          className={`price-track-delta ${change < 0 ? "positive" : "negative"}`}
-                        >
-                          {change < 0 ? "−" : "+"}
-                          {formatPrice(Math.abs(change))}
-                        </span>
-                      ) : null}
-                    </span>
-                  </li>
-                );
-              })}
-            </ol>
+            <PriceHistory points={points} />
           )}
         </div>
 
@@ -1918,3 +1830,4 @@ function ScrapedDrawer({
     </Drawer>
   );
 }
+
