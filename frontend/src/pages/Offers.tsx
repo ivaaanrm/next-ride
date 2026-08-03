@@ -1482,11 +1482,13 @@ function metricText(item: ScoreBreakdownItem): string {
  */
 function ScoreBreakdown({ metrics }: { metrics: OfferMetrics }) {
   const rows = metrics.score_breakdown;
+  const touch = useTouchLayout();
   if (rows.length === 0) return null;
   const missing = rows.filter((row) => !row.available);
+  const shown = rows.length - missing.length;
 
-  return (
-    <div className="score-breakdown">
+  const body = (
+    <>
       <div className="score-breakdown-grid" role="table" aria-label="Desglose de la puntuación">
         <div className="score-breakdown-row head" role="row">
           <span role="columnheader">Señal</span>
@@ -1536,8 +1538,32 @@ function ScoreBreakdown({ metrics }: { metrics: OfferMetrics }) {
       <p className="tiny muted" style={{ margin: "4px 0 0" }}>
         Los pesos se editan en Ajustes y aplican a todo el catálogo.
       </p>
-    </div>
+    </>
   );
+
+  /* En la mano el desglose se pliega, y empieza plegado.
+   *
+   * Es una rejilla de cinco columnas y ocho filas —la auditoría de la cifra, no
+   * la cifra— y en 390 pt ocupaba media pantalla por encima del veredicto de la
+   * IA y de la foto. Quien abre una ficha viene a ver si el coche merece la
+   * pena; el reparto de pesos señal a señal se consulta después, y casi nunca.
+   *
+   * `<details>` y no un estado propio: el mismo primitivo que ya usa
+   * «Procedencia» en esta misma ficha, con su triángulo y su semántica de
+   * plegado sin JavaScript.
+   *
+   * En escritorio no se pliega nada: ahí el panel mide 880 px, la rejilla cabe
+   * al lado de la foto y esconderla solo añadiría un clic. */
+  if (touch) {
+    return (
+      <details className="score-breakdown collapsible">
+        <summary>Desglose de la puntuación · {shown} señales</summary>
+        <div className="score-breakdown-body">{body}</div>
+      </details>
+    );
+  }
+
+  return <div className="score-breakdown">{body}</div>;
 }
 
 /**

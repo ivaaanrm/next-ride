@@ -2022,6 +2022,49 @@ table.records tbody tr.row-leaving {
   padding-top: var(--space-md);
 }
 
+/* La variante plegable, que solo se monta en táctil (`useTouchLayout` en
+   `Offers.tsx`): por eso el suelo de 44 pt del rótulo va aquí y no dentro del
+   punto de corte —esta regla no existe en escritorio.
+
+   El galón y su giro son los mismos de «Procedencia», dos secciones más abajo:
+   dos plegables en la misma ficha tienen que abrirse con el mismo gesto y
+   avisar con el mismo dibujo. */
+.score-breakdown.collapsible > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-height: var(--tap-target);
+  cursor: pointer;
+  list-style: none;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+}
+
+.score-breakdown.collapsible > summary::-webkit-details-marker {
+  display: none;
+}
+
+.score-breakdown.collapsible > summary::before {
+  content: "▸";
+  display: inline-block;
+  font-size: 11px;
+  line-height: 1;
+  transition: transform 150ms ease;
+}
+
+.score-breakdown.collapsible[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+/* El aire que en la variante fija ponía el `padding-top` de la sección: abierta,
+   la rejilla no puede empezar pegada al rótulo que la abre. */
+.score-breakdown-body {
+  padding-top: var(--space-xs);
+}
+
 /* Rejilla y no tabla: cinco columnas fijas donde solo la primera cede ancho.
    Los números van pegados a la derecha para poder sumarse con la vista, que es
    exactamente lo que promete el desglose. */
