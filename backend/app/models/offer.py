@@ -15,6 +15,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -119,6 +120,22 @@ class Offer(Base, TimestampMixin):
     last_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+    # Corrección manual: qué columnas ha escrito una persona a mano.
+    #
+    # No es metadato decorativo, es lo único que hace que corregir sirva de algo:
+    # `upsert_offer` reescribe la fila entera en cada pase del scraper, así que un
+    # año arreglado a mano duraría hasta el siguiente rastreo. Los campos que
+    # están en esta lista el scraper no los toca; el resto los sigue mandando él.
+    #
+    # Es de la oferta y no del usuario —al contrario que los favoritos—: la
+    # corrección afirma algo sobre el coche («este anuncio dice 2019 y el coche es
+    # de 2018»), no sobre quien la escribió.
+    manual_fields: Mapped[list[str]] = mapped_column(
+        JSON, default=list, server_default=text("'[]'"), nullable=False
+    )
+    edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    edited_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
 
     # Payload crudo del scraper, para depurar y para re-procesar sin re-scrapear.
     raw: Mapped[dict[str, Any] | None] = mapped_column(JSON)

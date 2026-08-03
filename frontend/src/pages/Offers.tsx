@@ -19,6 +19,7 @@ import {
   yearDomainOf,
   type RangeDomain,
 } from "../components/OfferFilters";
+import { OfferEditor } from "../components/OfferEdit";
 import { OfferProfile, PriceHistory } from "../components/OfferProfile";
 import { locationOf, OfferRow, VsMedian } from "../components/OfferRow";
 import { useSwipeHint, useTouchLayout } from "../components/SwipeRow";
@@ -489,6 +490,23 @@ export function OffersPage() {
     } finally {
       setFavBusyId(null);
     }
+  }
+
+  /**
+   * Una oferta que se acaba de corregir a mano.
+   *
+   * La fila se parchea en sitio con lo que devuelve el `PATCH` —que ya trae las
+   * métricas rehechas—, y las cifras de cabecera se rehacen porque el conjunto
+   * ha cambiado de precio o de kilómetros. Lo que **no** se hace es recargar la
+   * lista: el orden por puntuación se recalcularía y la fila que se estaba
+   * mirando saltaría de sitio justo al cerrar el editor. La corrección se ve
+   * donde estaba; el orden nuevo llega con el siguiente «Actualizar».
+   */
+  function applyEdit(updated: Offer) {
+    setRows((previous) =>
+      previous.map((item) => (item.id === updated.id ? updated : item)),
+    );
+    stats.reload();
   }
 
   /* ---- Mover una oferta de lista ------------------------------------------
@@ -1110,6 +1128,7 @@ export function OffersPage() {
           id={view.offer}
           known={openRow}
           onClose={closeOffer}
+          onSaved={applyEdit}
           onMove={(offer, target) => {
             // La ficha se cierra al mover: la oferta que describe acaba de salir
             // de la lista que hay detrás, y dejarla abierta sobre algo que ya no
@@ -1579,18 +1598,25 @@ function OfferDetail({
   known,
   onClose,
   onMove,
+  onSaved,
 }: {
   id: number;
   known: Offer | null;
   onClose: () => void;
   onMove: (offer: Offer, target: OfferStatus) => void;
+  onSaved: (offer: Offer) => void;
 }) {
   const missing = known === null;
   const remote = useAsync<Offer | null>(
     () => (missing ? api.get<Offer>(`/offers/${id}`) : Promise.resolve(null)),
     [id, missing],
   );
-  const offer = known ?? remote.data;
+  // Lo que devuelve una corrección, para la ficha que **no** está en la lista:
+  // en un arranque en frío con `?offer=8412` no hay fila que parchear, así que
+  // sin esto el editor guardaría y la ficha seguiría enseñando lo de antes.
+  // `known` va delante porque, cuando existe, es la fila ya parcheada.
+  const [edited, setEdited] = useState<Offer | null>(null);
+  const offer = known ?? edited ?? remote.data;
 
   if (!offer) {
     return (
@@ -1604,7 +1630,17 @@ function OfferDetail({
     );
   }
 
-  return <OfferSheet offer={offer} onClose={onClose} onMove={onMove} />;
+  return (
+    <OfferSheet
+      offer={offer}
+      onClose={onClose}
+      onMove={onMove}
+      onSaved={(updated) => {
+        setEdited(updated);
+        onSaved(updated);
+      }}
+    />
+  );
 }
 
 /**
@@ -1620,16 +1656,19 @@ function OfferSheet({
   offer,
   onClose,
   onMove,
+  onSaved,
 }: {
   offer: Offer;
   onClose: () => void;
   onMove: (offer: Offer, target: OfferStatus) => void;
+  onSaved: (offer: Offer) => void;
 }) {
   const history = useAsync<OfferPricePoint[]>(
     () => api.get(`/offers/${offer.id}/price-history`),
     [offer.id],
   );
   const [rawOpen, setRawOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
 
   const m = offer.metrics;
   const points = history.data ?? [];
@@ -1644,7 +1683,23 @@ function OfferSheet({
          ficha y de abrir el anuncio, que es justo cuando se descubre que el
          coche ya no está. Es el sitio donde más se va a pulsar «No disponible»,
          así que no puede depender de reconocer un dibujo. */
-      actions={<OfferActions offer={offer} variant="wide" onMove={onMove} />}
+      actions={
+        <>
+          {/* Corregir vive aquí y no en la fila: los datos malos se descubren
+              leyendo la ficha —o el anuncio, que se abre desde ella—, nunca
+              barriendo la lista. En la tabla habría sido un tercer icono de 24 px
+              compitiendo con los dos que sacan la oferta de la lista. */}
+          <button
+            type="button"
+            className="btn btn-sm"
+            title="Corregir o completar los datos de esta oferta"
+            onClick={() => setEditing(true)}
+          >
+            Corregir
+          </button>
+          <OfferActions offer={offer} variant="wide" onMove={onMove} />
+        </>
+      }
     >
       <div className="offer-detail">
         {/* ---- 1. Veredicto ---- */}
@@ -1842,6 +1897,15 @@ function OfferSheet({
                 {offer.dismissed_at ? ` · ${formatDateTime(offer.dismissed_at)}` : ""}
                 {offer.dismiss_reason ? ` · ${offer.dismiss_reason}` : ""}
               </Row>
+              {/* La corrección manual es procedencia: dice qué parte de esta
+                  ficha no viene del anuncio. Solo aparece si la hay. */}
+              {offer.manual_fields.length > 0 ? (
+                <Row label="Corregido a mano">
+                  {offer.manual_fields.length}{" "}
+                  {offer.manual_fields.length === 1 ? "campo" : "campos"}
+                  {offer.edited_at ? ` · ${formatDateTime(offer.edited_at)}` : ""}
+                </Row>
+              ) : null}
               <Row label="URL">
                 <span className="mono" style={{ wordBreak: "break-all" }}>
                   {offer.url}
@@ -1853,6 +1917,22 @@ function OfferSheet({
           </div>
         </details>
       </div>
+
+      {/* El editor se abre **encima** de la ficha y no en su lugar: lo que se
+          corrige es lo que se está leyendo, y cerrarlo tiene que devolver a la
+          misma ficha, no a la lista. */}
+      {editing ? (
+        <OfferEditor
+          offer={offer}
+          onClose={() => setEditing(false)}
+          onSaved={(updated) => {
+            onSaved(updated);
+            // Corregir el precio anota un punto en el historial: la serie que hay
+            // debajo tiene que enterarse o seguiría acabando en el precio viejo.
+            history.reload();
+          }}
+        />
+      ) : null}
     </Drawer>
   );
 }

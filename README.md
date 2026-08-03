@@ -67,7 +67,7 @@ Otros comandos: `make logs`, `make ps`, `make shell-db`, `make down`,
 | `dealers` | Concesionarios, con valoración opcional |
 | `car_models` | Marca + modelo + acabado, con PVP de referencia |
 | `tracked_models` | Modelos que cada usuario decide seguir, con criterios |
-| `offers` | Ofertas. Clave natural: `url` (el upsert va por ahí) |
+| `offers` | Ofertas. Clave natural: `url` (el upsert va por ahí). `manual_fields` lista las columnas corregidas a mano, que el scraper ya no pisa |
 | `offer_favorites` | Ofertas marcadas por cada usuario (marca personal, no estado de la oferta) |
 | `offer_price_history` | Un registro por cambio de precio → detecta bajadas |
 | `ranking_runs`, `offer_rankings` | Cada ejecución del agente y su veredicto por oferta |
@@ -86,10 +86,19 @@ revisión de Alembic:
 docker compose exec backend alembic upgrade head
 ```
 
-Hay una: `0001_ranking_por_binomio`, que mueve el objetivo de `ranking_runs` de
-`car_model_id` al binomio marca-modelo. Se salta a sí misma si la tabla ya tiene
-la forma nueva, para que una base recién creada por `create_all` no falle al
-aplicarla.
+Hay cuatro, y todas se saltan a sí mismas si el esquema ya tiene la forma nueva,
+para que una base recién creada por `create_all` no falle al aplicarlas:
+
+| Revisión | Qué cambia |
+|---|---|
+| `0001_ranking_por_binomio` | Mueve el objetivo de `ranking_runs` de `car_model_id` al binomio marca-modelo |
+| `0002_scraping_config_api` | `scrape_sources` y `scrape_targets` |
+| `0003_score_config` | `score_config`: pesos y parámetros editables de la puntuación |
+| `0004_offer_manual_edit` | `offers.manual_fields`, `edited_at` y `edited_by_id`: la corrección manual |
+
+`0004` es la única que toca una tabla viva y con datos, así que **es obligatoria**
+para que el editor de ofertas funcione: `create_all` crea tablas que faltan, no
+columnas que faltan.
 
 Para regenerar el esquema desde cero (borra los datos):
 
@@ -251,6 +260,7 @@ oferta mal formada se reporta en `errors` sin tumbar el lote.
 | `GET` | `/offers/stats` | Agregados **del conjunto filtrado**: recuento, modelos distintos, precio medio, km medios, km/año medios, descuento medio, mejor chollo y los dominios `price_floor`/`price_ceiling` y `year_floor`/`year_ceiling` |
 | `GET` | `/offers/{id}` · `/offers/{id}/price-history` | Detalle e historial |
 | `GET` | `/offers/{id}/raw` | Payload crudo del scraper. **No** va en `OfferRead`: 50 payloads por página es peso que casi nadie mira |
+| `PATCH` | `/offers/{id}` | **Corrección manual.** Escribe solo los campos que vienen en el cuerpo y los ancla para que el scraper no los pise |
 | `DELETE` | `/offers/{id}` | **Descarte manual** (borrado lógico) |
 | `POST` | `/offers/{id}/restore` | Deshace el descarte |
 | `POST`/`DELETE` | `/offers/{id}/favorite` | Marca / desmarca favorito. Idempotentes; devuelven la oferta |
@@ -275,6 +285,32 @@ carril de los años.
 
 El descarte es lógico a propósito: el scraper vuelve a ver la oferta en el
 origen y **no debe resucitarla**. Una oferta `expired` sí se reactiva si reaparece.
+
+`PATCH /offers/{id}` corrige a mano lo que el scraper trajo mal o no trajo:
+`title`, `price`, `original_price`, `currency`, `year`, `mileage_km`, `power_hp`,
+`condition`, `fuel_type`, `transmission`, `location`, `image_url`, y la
+atribución (`car_model_id`, `dealer_id`). Fuera quedan `url` —es la clave del
+upsert: cambiarla no corregiría esta oferta, crearía otra— y la procedencia
+(`external_id`, `source`, `raw`), que existe justamente para depurar el scraper.
+
+Dos reglas gobiernan el endpoint:
+
+- **Solo se escribe lo que viaja.** El cuerpo se lee con `exclude_unset`, así que
+  no mandar `year` lo deja como está y mandar `year: null` lo borra. El
+  formulario del frontend manda el diff, no sus catorce campos.
+- **Lo que se corrige queda anclado.** Cada campo del cuerpo entra en
+  `offers.manual_fields`, y `upsert_offer` deja de escribirlo en los siguientes
+  pases del scraper. Sin esto, corregir un año duraría hasta el rastreo de esa
+  noche. `{"clear_manual": true}` suelta todos los anclajes —los valores se
+  quedan, el scraper vuelve a mandar en ellos—, que es la salida para una
+  corrección que ya no hace falta o que estaba mal.
+
+No hay nada que recalcular al guardar: las métricas y `value_score` se computan
+al leer, así que la respuesta del `PATCH` ya trae el km/año, el valor esperado y
+la puntuación rehechos. El veredicto del agente **no** se rehace: es de un run
+pasado y se hizo con los datos de entonces. Corregir el precio anota un punto en
+`offer_price_history`, para que el último punto de la serie y la cifra de la
+ficha no digan cosas distintas.
 
 Los favoritos son **por usuario**: `OfferRead.is_favorite` es la marca de quien
 hace la petición, no un atributo de la oferta. Por eso viven en su propia tabla
@@ -375,7 +411,7 @@ sigue oculta, como antes.
 
 | Vista | |
 |---|---|
-| **Ofertas** | Tabla principal (marca / modelo / versión, ubicación, precio, km, km/año, métricas, filtros, orden, favoritos ★, descarte) y panel de detalle con todo lo scrapeado |
+| **Ofertas** | Tabla principal (marca / modelo / versión, ubicación, precio, km, km/año, métricas, filtros, orden, favoritos ★, descarte), panel de detalle con todo lo scrapeado y editor para corregir a mano lo que vino mal |
 | **Analítica** | Hasta tres binomios marca-modelo comparados en seis gráficos y un cuadro de dieciséis métricas |
 | **Modelos** | Una fila por binomio marca-modelo, desplegable en sus versiones. Panel único de seguimiento (elegir del catálogo o crear al vuelo + criterios) y panel de ranking IA con pros/cons y traza de tools |
 | **Dealers** | Agregados por concesionario, con edición y aviso de duplicados |
@@ -425,6 +461,21 @@ Dos decisiones de interacción que no son obvias:
   ficha del coche y del dealer), y la **procedencia** plegada al final (fuente,
   IDs, fechas de scrapeo, `raw`), que es dato de diagnóstico y no de decisión. El
   `raw` solo se pide al desplegarlo.
+- **Corregir una oferta se hace desde su ficha, y lo corregido queda marcado.**
+  El botón «Corregir» está en la cabecera del panel de detalle y no en la fila:
+  los datos malos se descubren leyendo la ficha —o el anuncio, que se abre desde
+  ella—, nunca barriendo la tabla, y en la fila habría sido un tercer icono de
+  24 px compitiendo con los dos que sacan la oferta de la lista. Es el mismo
+  formulario en dos superficies: en escritorio un panel de 880 px con los campos
+  a tres columnas, encima de la ficha y del mismo ancho para taparla entera; en
+  un móvil una hoja inferior a una columna, con teclado numérico en las cifras y
+  la lista de versiones como buscador + opciones de 44 pt, porque un `<select>`
+  de ciento setenta y ocho acabados es una rueda que hay que girar a ciegas. Los
+  campos que lleva la mano salen con la marca **a mano** en su rótulo, y al pie
+  del formulario está la salida («Devolver al scraper»): un anclaje sin salida es
+  una decisión de hoy que sobrevive a la fuente para siempre. La ficha, además,
+  anota en «Procedencia» cuántos campos se corrigieron y cuándo, porque eso es
+  justamente lo que dice qué parte de la ficha no viene del anuncio.
 - **El preview del anuncio no es un iframe.** Los portales de coches sirven
   `X-Frame-Options`/`frame-ancestors` y saldría en blanco. La columna izquierda del
   panel monta la vista con lo que sí tenemos scrapeado —`image_url`, titular,
@@ -516,10 +567,14 @@ python3 backend/scripts/smoke_api.py
 docker compose exec backend python -m scripts.test_ranking_agent
 ```
 
-- `smoke_api.py` (70 comprobaciones) recorre la API end-to-end contra el stack en
+- `smoke_api.py` (114 comprobaciones) recorre la API end-to-end contra el stack en
   marcha: autenticación, ingesta con API key, métricas, filtros, orden, descarte,
   favoritos (incluido que son por usuario), seguimiento con criterios, edición de
-  dealers y que el `raw` se sirve aparte y no cuela en el listado. Es idempotente.
+  dealers y que el `raw` se sirve aparte y no cuela en el listado. La corrección
+  manual va entera: que solo se escriba lo que viaja, que lo corregido sobreviva
+  al siguiente pase del scraper mientras el resto sí se actualiza, que el precio
+  corregido se anote en el historial, y que soltar los anclajes devuelva la
+  columna al origen sin borrar el valor. Es idempotente.
 - `test_ranking_agent.py` (39 comprobaciones) ejercita el agente con la API de
   Anthropic simulada: despacho de tools, salida estructurada, renumerado de
   rangos, descarte de `offer_id` inventados, y las rutas de error (rechazo,

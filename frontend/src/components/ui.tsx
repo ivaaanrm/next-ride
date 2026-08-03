@@ -442,6 +442,7 @@ export function Drawer({
   children,
   actions,
   wide = false,
+  over = false,
 }: {
   title: string;
   subtitle?: ReactNode;
@@ -450,14 +451,20 @@ export function Drawer({
   actions?: ReactNode;
   /** Para paneles con contenido a dos columnas. */
   wide?: boolean;
+  /** Un panel que se abre **desde** otro (el editor desde la ficha).
+   *
+   * Sin esto, el velo del segundo se dibuja por debajo del primero —los dos
+   * viven en el mismo escalón, 20/21— y el panel de detrás se quedaba a plena
+   * luz, sin atenuar y con sus controles pidiendo un clic que ya no le toca. */
+  over?: boolean;
 }) {
   const close = useModalSurface(onClose);
 
   return createPortal(
     <>
-      <div className="drawer-backdrop" onClick={onClose} />
+      <div className={`drawer-backdrop${over ? " over" : ""}`} onClick={onClose} />
       <aside
-        className={`drawer${wide ? " wide" : ""}`}
+        className={`drawer${wide ? " wide" : ""}${over ? " over" : ""}`}
         role="dialog"
         aria-modal="true"
         aria-label={title}
@@ -513,6 +520,7 @@ export function Sheet({
   action,
   footer,
   children,
+  over = false,
 }: {
   title: string;
   onClose: () => void;
@@ -523,13 +531,21 @@ export function Sheet({
   /** Pie en flujo: la acción principal de la hoja. */
   footer?: ReactNode;
   children: ReactNode;
+  /** La hoja se abre **sobre** una ficha ya abierta: sube un escalón para que su
+   *  velo tape la ficha en vez de quedarse debajo. Mismo motivo que en `Drawer`. */
+  over?: boolean;
 }) {
   const close = useModalSurface(onClose);
 
   return createPortal(
     <>
-      <div className="sheet-backdrop" onClick={onClose} />
-      <div className="sheet" role="dialog" aria-modal="true" aria-label={title}>
+      <div className={`sheet-backdrop${over ? " over" : ""}`} onClick={onClose} />
+      <div
+        className={`sheet${over ? " over" : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+      >
         <span className="sheet-grip" aria-hidden="true" />
         <header className="sheet-header">
           <button ref={close} type="button" className="sheet-close" onClick={onClose}>

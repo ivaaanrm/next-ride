@@ -4810,6 +4810,151 @@ table.records tbody tr.row-leaving {
 }
 
 /* ------------------------------------------------------------------------- *
+ * Corregir una oferta a mano
+ *
+ * El mismo formulario en dos superficies: panel lateral en escritorio, hoja
+ * inferior en la mano. Lo único que cambia entre las dos es la rejilla —dos
+ * columnas contra una— y de eso se encarga `.edit-grid` en la capa móvil; todo
+ * lo demás de aquí sirve igual en las dos.
+ *
+ * `over` es el escalón de encima: el editor se abre **desde** la ficha, y con
+ * los dos en 20/21 el velo del editor se dibujaba por debajo de la ficha, que
+ * se quedaba a plena luz con sus botones pidiendo un clic que ya no le tocaba.
+ * 22/23 sigue por debajo de los avisos (30), que tienen que verse desde aquí.
+ * ------------------------------------------------------------------------- */
+.drawer-backdrop.over,
+.sheet-backdrop.over {
+  z-index: 22;
+}
+
+.drawer.over,
+.sheet.over {
+  z-index: 23;
+}
+
+.edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+}
+
+.edit-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+/* Rótulo de grupo, no titular: la jerarquía la lleva el título del panel. */
+.edit-legend {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--font-micro);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Tres columnas para campos cortos —un año, unos kilómetros, un desplegable—:
+   a lo ancho de los 880 px del panel, cada uno sería un campo de dos palabras
+   con tres cuartos de fila vacíos al lado. Número fijo y no `auto-fit`: con
+   `auto-fit` el mismo bloque salía a cinco columnas aquí y a dos en un móvil
+   apaisado, y una fila de seis campos se partía en 5+1.
+
+   `align-items: end` alinea las cajas y no los rótulos: «PVP anunciado» con su
+   aclaración al lado ocupa dos renglones donde «Año» ocupa uno, y sin esto el
+   campo de al lado quedaba un renglón más abajo que sus vecinos. */
+.edit-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: end;
+  gap: var(--space-md);
+}
+
+/* Para las filas de dos campos: repartidos, no dos tercios y un hueco. */
+.edit-grid.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.edit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.edit-field label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.edit-field .input,
+.edit-field .select {
+  width: 100%;
+}
+
+/* La aclaración del rótulo: qué unidad, o contra qué se mide. */
+.edit-hint {
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+
+/* La marca de campo anclado. Lleva el mismo acento que todo lo que en esta app
+   significa «esto lo has puesto tú», y va en el rótulo y no en el control:
+   describe de dónde viene el dato, no qué se puede hacer con él. */
+.edit-pin {
+  padding: 0 5px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-size: var(--font-micro);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.edit-note {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--font-meta);
+  line-height: 1.45;
+}
+
+/* La URL del anuncio: se enseña para explicar por qué no se edita, así que va
+   entera y partida donde haga falta, sin robarle sitio a los campos. */
+.edit-url {
+  display: block;
+  margin-top: 4px;
+  word-break: break-all;
+  color: var(--text-secondary);
+}
+
+/* Lo que lleva la mano, y la salida. Encuadrado porque no es un campo más: es
+   una nota sobre el resto del formulario. */
+.edit-manual {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+}
+
+.edit-manual .edit-note {
+  flex: 1 1 240px;
+}
+
+.edit-actions {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+/* ------------------------------------------------------------------------- *
  * La capa móvil
  *
  * Un solo punto de corte en toda la app, el mismo con el que ya desaparecía la
@@ -4922,6 +5067,20 @@ table.records tbody tr.row-leaving {
   .star {
     width: var(--tap-target);
     height: var(--tap-target);
+  }
+
+  /* ---- Corregir una oferta ----
+     Una columna. `auto-fit` habría metido dos campos de 170 px en 390 pt, que
+     es ancho de sobra para la caja y de menos para su rótulo: «PVP anunciado»
+     con su marca de «a mano» al lado se parte en tres renglones. El rótulo sube
+     a 12 px por lo mismo que el cuerpo: 11 está afinado para un puntero. */
+  .edit-grid,
+  .edit-grid.two {
+    grid-template-columns: 1fr;
+  }
+
+  .edit-field label {
+    font-size: var(--font-meta);
   }
 
   /* El carril del deslizador agarra en 44 pt de alto en vez de 19: es el gesto

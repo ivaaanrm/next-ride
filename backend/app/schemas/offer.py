@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, HttpUrl, field_validator
+from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 
 from app.models.offer import FuelType, OfferStatus, Transmission, VehicleCondition
 from app.schemas.catalog import CarModelRead, DealerRead
@@ -69,6 +69,11 @@ class OfferRead(ORMModel):
     ai: OfferRankSummary | None = None
     # Marca del usuario que hace la petición, no un atributo de la oferta.
     is_favorite: bool = False
+    # Campos corregidos a mano: el scraper ya no los pisa. Viaja en el listado
+    # —no solo en el detalle— porque es lo que distingue un dato del origen de uno
+    # escrito por una persona, y eso hay que poder verlo antes de fiarse de él.
+    manual_fields: list[str] = Field(default_factory=list)
+    edited_at: datetime | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -136,6 +141,92 @@ class IngestResult(BaseModel):
     skipped: int = 0
     errors: list[str] = Field(default_factory=list)
     offer_ids: list[int] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------- #
+# Corrección manual
+# --------------------------------------------------------------------------- #
+#: Las columnas que se pueden escribir a mano, en el orden en que se editan.
+#:
+#: `url` no está y no debe estar: es la clave natural del upsert, así que
+#: cambiarla no corregiría esta oferta, crearía otra y dejaría la vieja huérfana.
+#: `external_id`, `source` y `raw` tampoco: son la procedencia, y una procedencia
+#: editable deja de servir para lo único que sirve, que es depurar el scraper.
+EDITABLE_FIELDS: tuple[str, ...] = (
+    "title",
+    "price",
+    "original_price",
+    "currency",
+    "year",
+    "mileage_km",
+    "power_hp",
+    "condition",
+    "fuel_type",
+    "transmission",
+    "location",
+    "image_url",
+    "car_model_id",
+    "dealer_id",
+)
+
+#: Columnas `NOT NULL`: se pueden corregir, pero no vaciar.
+_REQUIRED_FIELDS = frozenset(
+    {"title", "price", "currency", "condition", "car_model_id", "dealer_id"}
+)
+
+
+class OfferUpdate(BaseModel):
+    """Corrección manual de una oferta.
+
+    **Solo viajan los campos que se tocan.** El cuerpo se lee con
+    `exclude_unset`, así que «no mandar `year`» y «mandar `year: null`» son cosas
+    distintas: lo primero deja el año como está, lo segundo lo borra. Un
+    formulario que mandara los catorce campos siempre anclaría los catorce.
+
+    Cada campo que llega queda **anclado**: entra en `Offer.manual_fields` y el
+    scraper deja de escribirlo (ver `upsert_offer`). Sin eso, corregir un dato
+    sería pintarlo hasta el siguiente rastreo.
+    """
+
+    title: str | None = Field(default=None, min_length=1, max_length=400)
+    price: float | None = Field(default=None, gt=0)
+    original_price: float | None = Field(default=None, gt=0)
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    year: int | None = Field(default=None, ge=1950, le=2100)
+    mileage_km: int | None = Field(default=None, ge=0)
+    power_hp: int | None = Field(default=None, ge=0)
+    condition: VehicleCondition | None = None
+    fuel_type: FuelType | None = None
+    transmission: Transmission | None = None
+    location: str | None = Field(default=None, max_length=160)
+    image_url: str | None = Field(default=None, max_length=1000)
+    # Reatribuir la oferta a otra versión o a otro dealer. Es la corrección más
+    # cara de las que hay aquí: el mercado contra el que se mide una oferta es el
+    # de su binomio marca-modelo, así que una versión mal resuelta no estropea una
+    # celda, estropea la mediana, la desviación y con ellas la puntuación.
+    car_model_id: int | None = None
+    dealer_id: int | None = None
+
+    #: Suelta todos los anclajes: los valores se quedan, pero el scraper vuelve a
+    #: mandar en ellos. Es la salida de una corrección que ya no hace falta —o que
+    #: estaba mal—, y evita que un error de hoy sobreviva a la fuente para siempre.
+    clear_manual: bool = False
+
+    @field_validator("currency")
+    @classmethod
+    def _upper_currency(cls, value: str | None) -> str | None:
+        return value.upper() if value else value
+
+    @model_validator(mode="after")
+    def _no_blank_required(self) -> "OfferUpdate":
+        empty = sorted(
+            field
+            for field in self.model_fields_set & _REQUIRED_FIELDS
+            if getattr(self, field) is None
+        )
+        if empty:
+            raise ValueError(f"Estos campos no pueden quedarse vacíos: {', '.join(empty)}")
+        return self
 
 
 class OfferDismiss(BaseModel):
