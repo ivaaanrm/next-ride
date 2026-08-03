@@ -34,3 +34,4 @@ fixtures/
 state/
 reports/
 *.bak
+backups/
