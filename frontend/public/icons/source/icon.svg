@@ -1,0 +1,31 @@
+<!--
+  Maestro del icono de la app. 512 × 512, fondo del azul de acento a sangre y el
+  monograma «NR» en blanco: el mismo par que ya usa `.brand-mark` en la barra
+  lateral.
+
+  Las letras son trazados y no `<text>`: el rasterizado tiene que dar el mismo
+  PNG en cualquier máquina, y un `<text>` depende de la fuente que resuelva el
+  sistema que lo convierte.
+
+  Sin transparencia y sin esquinas redondeadas: iOS compone el alfa contra negro
+  y aplica él mismo la máscara. El PNG rasterizado es el artefacto que se
+  despliega; este fichero solo existe para poder regenerarlo con `sips`, como
+  está escrito en el blueprint (§8.3).
+
+  Ojo al editar: XML no admite dos guiones seguidos dentro de un comentario, así
+  que aquí no se pueden escribir los nombres de los tokens tal cual.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#1961ed" />
+  <g fill="#ffffff">
+    <!-- N: dos astas y la diagonal que las une. -->
+    <path d="M104 180h36v152h-36z M204 180h36v152h-36z M104 180h36l100 152h-36z" />
+    <!-- R: asta, panza (contorno menos hueco) y pierna. -->
+    <path d="M272 180h36v152h-36z" />
+    <path
+      fill-rule="evenodd"
+      d="M272 180H342A48 48 0 0 1 342 276H272ZM308 216H342A12 12 0 0 1 342 240H308Z"
+    />
+    <path d="M324 276h46l38 56h-46z" />
+  </g>
+</svg>

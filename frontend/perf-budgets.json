@@ -1,0 +1,22 @@
+{
+  "$comment": [
+    "Presupuesto de bytes para la versión PWA/iPhone. Lo aplica scripts/check-budgets.mjs.",
+    "Todos los valores son KB comprimidos con gzip, que es como nginx los sirve.",
+    "Subir un límite para que la puerta pase es una regresión disfrazada: el validador",
+    "de rendimiento del workflow `pwa-ios` trata ese cambio como hallazgo bloqueante."
+  ],
+  "budgets": {
+    "initialJsGzipKb": 140,
+    "initialCssGzipKb": 24,
+    "initialTotalGzipKb": 160,
+    "largestAsyncChunkGzipKb": 120,
+    "totalPrecacheGzipKb": 1200
+  },
+  "baseline": {
+    "measuredOn": "2026-07-31",
+    "initialJsGzipKb": 189.3,
+    "initialCssGzipKb": 8.8,
+    "initialTotalGzipKb": 198.1,
+    "note": "El punto de partida incumple el presupuesto por una razón concreta y localizada: src/pages/Offers.tsx (la ruta por defecto) importa ../components/charts, que arrastra recharts + d3 al chunk de entrada, anulando el lazy() de Analytics. Sacar la visualización de la ruta por defecto es lo que debe cerrar la brecha; el presupuesto está fijado para que ese arreglo sea obligatorio y no opcional."
+  }
+}

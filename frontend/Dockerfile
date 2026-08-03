@@ -8,6 +8,11 @@ RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
 COPY tsconfig.json vite.config.ts index.html ./
 COPY src ./src
+# Sin esta línea el manifest, los iconos y el service worker existen en el
+# repositorio, pasan `check:pwa` —que audita el repositorio, no la imagen— y no
+# están en el contenedor: la app no se puede instalar y no hay worker que
+# registrar. Vite copia `public/` a `dist/` tal cual, sin tocar los nombres.
+COPY public ./public
 
 RUN npm run build
 
