@@ -3,8 +3,10 @@ import { Link } from "react-router-dom";
 
 import { PageHeader } from "../components/Layout";
 import { noticeCountLabel, useNotices } from "../components/Notifications";
+import { ThemeIcon, themeLabel } from "../components/ThemeToggle";
 import { Sheet, useAppUpdate } from "../components/ui";
 import { useAuth } from "../lib/auth";
+import { useTheme } from "../lib/theme";
 
 /**
  * «Más»: la cola de la navegación.
@@ -20,6 +22,7 @@ import { useAuth } from "../lib/auth";
  */
 export function MorePage() {
   const { user, logout } = useAuth();
+  const { theme, toggle: toggleTheme } = useTheme();
   const { count, open: openNotices, isOpen: noticesOpen } = useNotices();
   const update = useAppUpdate();
   const [install, setInstall] = useState(false);
@@ -55,6 +58,17 @@ export function MorePage() {
           </MoreSection>
 
           <MoreSection title="Aplicación">
+            {/* La fila enseña el tema puesto —que es el dato— y el botón lleva
+                escrito a dónde va, que es lo que hace falta para pulsarlo a
+                ciegas con VoiceOver. Sin galón: no navega a ninguna parte, el
+                cambio ocurre aquí mismo. */}
+            <MoreButton
+              label="Tema"
+              value={theme === "dark" ? "Oscuro" : "Claro"}
+              onClick={toggleTheme}
+              ariaLabel={themeLabel(theme)}
+              icon={<ThemeIcon dark={theme === "dark"} />}
+            />
             {/* Lo que en un navegador haría el botón de refresco. Instalada, la
                 app no tiene ninguno: sin esta fila, un documento en mal estado
                 solo se arregla matando la app. */}
@@ -131,6 +145,8 @@ function MoreButton({
   tone,
   haspopup = false,
   expanded,
+  icon,
+  ariaLabel,
 }: {
   label: string;
   value?: string;
@@ -138,20 +154,31 @@ function MoreButton({
   tone?: "accent";
   haspopup?: boolean;
   expanded?: boolean;
+  /** Sustituye al galón cuando la fila no lleva a ninguna parte y resuelve
+   *  aquí mismo. */
+  icon?: ReactNode;
+  /** Cuando el rótulo nombra el ajuste («Tema») y el nombre accesible tiene que
+   *  nombrar la acción («Tema oscuro»). */
+  ariaLabel?: string;
 }) {
   return (
     <button
       type="button"
       className={`more-row${tone ? ` ${tone}` : ""}`}
       onClick={onClick}
+      aria-label={ariaLabel}
       aria-haspopup={haspopup ? "dialog" : undefined}
       aria-expanded={haspopup ? expanded : undefined}
     >
       <span className="more-label">{label}</span>
       {value ? <span className="more-value">{value}</span> : null}
-      <span className="more-chevron" aria-hidden="true">
-        ›
-      </span>
+      {icon ? (
+        <span className="more-icon">{icon}</span>
+      ) : (
+        <span className="more-chevron" aria-hidden="true">
+          ›
+        </span>
+      )}
     </button>
   );
 }

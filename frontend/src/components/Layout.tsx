@@ -2,8 +2,10 @@ import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 
 import { useAuth } from "../lib/auth";
+import { useTheme } from "../lib/theme";
 import { NoticesProvider, NotificationsNav } from "./Notifications";
 import { TabBar } from "./TabBar";
+import { ThemeIcon, themeLabel } from "./ThemeToggle";
 
 const NAV = [
   { to: "/offers", label: "Ofertas", icon: "◱" },
@@ -21,6 +23,7 @@ const COLLAPSED_KEY = "nr.sidebar_collapsed";
 
 export function Layout() {
   const { user, logout } = useAuth();
+  const { theme, toggle: toggleTheme } = useTheme();
   const { pathname } = useLocation();
   const initials = (user?.full_name || user?.email || "?").slice(0, 2);
 
@@ -103,6 +106,17 @@ export function Layout() {
               <span className="avatar">{initials}</span>
               <span className="user-email">{user?.email}</span>
             </div>
+            {/* El rótulo dice a dónde se va, no dónde se está: es un botón que
+                hace una cosa, no un interruptor con dos estados que leer. */}
+            <button
+              className="btn btn-ghost btn-sm theme-toggle"
+              onClick={toggleTheme}
+              aria-label={themeLabel(theme)}
+              title={tip(themeLabel(theme))}
+            >
+              <ThemeIcon dark={theme === "dark"} />
+              <span className="nav-label">{themeLabel(theme)}</span>
+            </button>
             <button
               className="btn btn-ghost btn-sm"
               onClick={logout}

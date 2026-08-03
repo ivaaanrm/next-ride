@@ -6,10 +6,16 @@ import { App } from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { registerServiceWorker } from "./components/ui";
 import { AuthProvider } from "./lib/auth";
+import { initTheme } from "./lib/theme";
 // Antes que `styles.css`: las utilidades de Tailwind solo las usan los gráficos,
 // y así el CSS propio de la app sigue teniendo la última palabra.
 import "./tailwind.css";
 import "./styles.css";
+
+// Lo normal es que el script en línea de `index.html` ya lo haya dejado puesto.
+// Esto cubre el documento cacheado por el service worker de antes de que ese
+// script existiera, que puede seguir sirviéndose durante días.
+initTheme();
 
 // Solo en producción: en `npm run dev` un worker sirviendo caché rancia es una
 // tarde perdida buscando por qué un cambio no aparece.

@@ -8,6 +8,16 @@
  * anotados están medidos con la fórmula de luminancia relativa de WCAG 2.1.
  * ------------------------------------------------------------------------- */
 :root {
+  /* El claro es el juego por defecto y no una rama de `prefers-color-scheme`:
+     se sirve igual en escritorio y en la mano, y el oscuro se elige. El
+     conmutador vive en `lib/theme.ts` y solo escribe `data-theme` aquí arriba.
+
+     `color-scheme` va con el juego, no con el sistema: es quien pinta las
+     barras de scroll, los controles nativos y el fondo del documento antes de
+     que llegue el CSS. Sin él, un iPhone en oscuro dibujaba campos oscuros
+     dentro de una app clara. */
+  color-scheme: light;
+
   --bg: #fbfbfb;
   --surface: #ffffff;
   --surface-hover: #f7f7f7;
@@ -125,58 +135,63 @@
 /* ------------------------------------------------------------------------- *
  * Modo oscuro
  *
- * Sin conmutador: se sigue a `prefers-color-scheme`, que es lo que el sistema
- * ya sabe. Un iPhone se mira de noche y este producto se consulta en la cama;
- * dejarlo para después es una app que quema.
+ * Se entra por elección y no por el ajuste del sistema: `prefers-color-scheme`
+ * dice cómo tiene el teléfono el resto de sus apps, no cómo se quiere leer una
+ * tabla de precios, y quien lo tenía en «automático» abría esto en oscuro de
+ * noche sin haberlo pedido y sin forma de volver. El conmutador está en el pie
+ * de la barra lateral y en «Más» → Tema.
+ *
+ * Un solo atributo en `<html>` cambia el juego entero: los tokens son los
+ * mismos nombres, así que no hay ni una regla de componente que sepa de esto.
  *
  * El lenguaje no cambia —superficies planas con filetes—, se invierte. Todos
  * los pares están medidos: ninguno baja de 4,5:1 para texto ni de 3:1 para el
  * límite de un componente.
  * ------------------------------------------------------------------------- */
-@media (prefers-color-scheme: dark) {
-  :root {
-    /* Casi negro y no negro puro: sobre negro puro los filetes desaparecen. */
-    --bg: #121211;
-    --surface: #1a1a19;
-    --surface-hover: #232322;
-    --surface-sunken: #0e0e0d;
-    --border: #2b2b29;
-    --border-strong: #3a3a37;
-    --border-control: #6e6e69; /* 3,40:1 sobre --surface */
+:root[data-theme="dark"] {
+  color-scheme: dark;
 
-    --text: #f2f1ee; /* 15,42:1 surface · 16,60:1 bg */
-    --text-secondary: #a5a49e; /* 6,97:1 surface · 6,30:1 hover */
-    --text-tertiary: #8e8d87; /* 5,23 surface · 5,63 bg · 4,73 hover · 5,80 sunken */
+  /* Casi negro y no negro puro: sobre negro puro los filetes desaparecen. */
+  --bg: #121211;
+  --surface: #1a1a19;
+  --surface-hover: #232322;
+  --surface-sunken: #0e0e0d;
+  --border: #2b2b29;
+  --border-strong: #3a3a37;
+  --border-control: #6e6e69; /* 3,40:1 sobre --surface */
 
-    --accent: #7fa9ff; /* 7,48:1 surface · 6,39:1 sobre su propio soft */
-    --accent-hover: #9cbcff;
-    --accent-soft: #1b2740;
+  --text: #f2f1ee; /* 15,42:1 surface · 16,60:1 bg */
+  --text-secondary: #a5a49e; /* 6,97:1 surface · 6,30:1 hover */
+  --text-tertiary: #8e8d87; /* 5,23 surface · 5,63 bg · 4,73 hover · 5,80 sunken */
 
-    --positive: #55c98a; /* 8,38 surface · 7,35 sobre su soft */
-    --positive-soft: #122a1d;
-    --warm: #e0a355; /* 7,91 surface · 7,22 sobre su soft */
-    --warm-soft: #2c2011;
-    --negative: #ff7a6e; /* 6,85 surface · 6,53 sobre su soft */
-    --negative-soft: #331613;
-    --neutral-soft: #262625;
+  --accent: #7fa9ff; /* 7,48:1 surface · 6,39:1 sobre su propio soft */
+  --accent-hover: #9cbcff;
+  --accent-soft: #1b2740;
 
-    /* En oscuro, blanco sobre un relleno claro fallaría. */
-    --on-solid: #121211; /* 8,05 sobre el acento, 8,51 warm, 7,37 negative, 9,02 positive */
-    --backdrop: rgba(0, 0, 0, 0.55);
-    /* La sombra clara no se lee sobre fondo oscuro: hay que profundizarla. */
-    --shadow: 0 2px 4px rgba(0, 0, 0, 0.5), 0 12px 24px rgba(0, 0, 0, 0.4);
+  --positive: #55c98a; /* 8,38 surface · 7,35 sobre su soft */
+  --positive-soft: #122a1d;
+  --warm: #e0a355; /* 7,91 surface · 7,22 sobre su soft */
+  --warm-soft: #2c2011;
+  --negative: #ff7a6e; /* 6,85 surface · 6,53 sobre su soft */
+  --negative-soft: #331613;
+  --neutral-soft: #262625;
 
-    /* Puente para las clases de shadcn/ui que usan los gráficos. Va aquí y no en
-       `tailwind.css` porque esta hoja se importa después y sin capa: gana. */
-    --color-border: #2b2b29;
-    --color-background: #1a1a19;
-    --color-foreground: #f2f1ee;
-    --color-muted: #0e0e0d;
-    --color-muted-foreground: #a5a49e;
-    /* chart-1 sigue al acento; los otros dos se quedan porque ya separan y
-       contrastan sobre el fondo oscuro: 5,86:1 el naranja y 5,95:1 el verde. */
-    --color-chart-1: #7fa9ff;
-  }
+  /* En oscuro, blanco sobre un relleno claro fallaría. */
+  --on-solid: #121211; /* 8,05 sobre el acento, 8,51 warm, 7,37 negative, 9,02 positive */
+  --backdrop: rgba(0, 0, 0, 0.55);
+  /* La sombra clara no se lee sobre fondo oscuro: hay que profundizarla. */
+  --shadow: 0 2px 4px rgba(0, 0, 0, 0.5), 0 12px 24px rgba(0, 0, 0, 0.4);
+
+  /* Puente para las clases de shadcn/ui que usan los gráficos. Va aquí y no en
+     `tailwind.css` porque esta hoja se importa después y sin capa: gana. */
+  --color-border: #2b2b29;
+  --color-background: #1a1a19;
+  --color-foreground: #f2f1ee;
+  --color-muted: #0e0e0d;
+  --color-muted-foreground: #a5a49e;
+  /* chart-1 sigue al acento; los otros dos se quedan porque ya separan y
+     contrastan sobre el fondo oscuro: 5,86:1 el naranja y 5,95:1 el verde. */
+  --color-chart-1: #7fa9ff;
 }
 
 * {
@@ -456,6 +471,20 @@ summary,
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+/* El conmutador de tema comparte forma con «Cerrar sesión», que es su vecino de
+   pie: el mismo botón fantasma. Lo único suyo es que el icono no se estruja y
+   que el rótulo recorta antes que desbordar los 192 px de la barra —cuando está
+   plegada, ese rótulo lo esconde ya `.sidebar.collapsed .nav-label`. */
+.theme-toggle svg {
+  flex: none;
+}
+
+.theme-toggle .nav-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .user-chip {
@@ -2332,6 +2361,14 @@ table.records tbody tr.row-leaving {
   min-width: 0;
 }
 
+/* Las acciones son un grupo, no dos botones sueltos: así pueden bajar de línea
+   enteras en vez de una a una. */
+.drawer-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
 /* El botón de cerrar va primero en el árbol —es la salida, y en un móvil
    además es lo primero de la cabecera—, pero en escritorio se dibuja donde
    siempre estuvo, al final de la fila. `order` mueve el dibujo sin tocar ni el
@@ -3980,6 +4017,14 @@ table.records tbody tr.row-leaving {
   line-height: 1;
 }
 
+/* Ocupa el sitio del galón en las filas que resuelven aquí mismo en vez de
+   llevar a otra pantalla. Mismo hueco, otra promesa. */
+.more-icon {
+  display: flex;
+  flex: none;
+  color: var(--text-secondary);
+}
+
 /* La fila con valor ya empuja el galón con su `margin-left: auto`; la que no lo
    tiene lo necesita aquí. */
 .more-row > .more-label + .more-chevron {
@@ -4545,6 +4590,12 @@ table.records tbody tr.row-leaving {
 @container (max-width: 620px) {
   .offer-evidence-main > .offer-preview {
     max-width: 320px;
+    /* Centrada, no arrimada a la izquierda: a una columna, el tope de 320 px
+       dejaba la foto pegada al margen y un vacío de 40 px a la derecha que
+       parecía un fallo de maquetación. Lo de debajo —el botón de salida, la
+       ficha— va a ancho completo, así que el único eje de simetría posible es
+       el del propio panel. */
+    margin-inline: auto;
   }
 }
 
@@ -4858,7 +4909,19 @@ table.records tbody tr.row-leaving {
     border-radius: 0;
   }
 
+  /* ---- Cabecera del panel: dos líneas, no una fila apretada ----
+     En 390 pt, «Descartar» y «No disponible» se llevan 230 px de los 390, y con
+     el cierre y los sangrados al titular le quedaban unos cien: el título salía
+     como «Merced…» y el subtítulo se partía en seis renglones de dos palabras.
+     Cabecera de 150 px para no decir nada.
+
+     El reparto es por líneas y no por columnas: arriba el cierre y el titular
+     con todo el ancho, abajo las dos acciones a mitades. Lo que baja el grupo
+     es su propia base del 100 %, que no cabe junto a lo de arriba. */
   .drawer-header {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    row-gap: var(--space-sm);
     /* El cierre vuelve a su sitio natural: primero, a la izquierda. */
     padding: calc(var(--safe-top) + var(--space-sm)) var(--space-md) var(--space-sm);
   }
@@ -4869,13 +4932,53 @@ table.records tbody tr.row-leaving {
     min-height: var(--tap-target);
   }
 
-  /* Una línea y recortado: el título completo se lee en el cuerpo, que es donde
-     hay sitio. Antes esta cabecera medía 229 px con un título de cinco líneas:
-     el 27 % de la pantalla para repetir lo que dice la primera fila. */
+  .drawer-heading {
+    /* Base 0 y no `auto`: con el ancho del texto como base, un titular de coche
+       no cabía junto al botón de cerrar y se bajaba entero a la línea de abajo,
+       dejando 52 px de cabecera para dibujar una ✕. Encogiendo, se queda a su
+       lado y usa las dos líneas de más abajo. */
+    flex: 1 1 0;
+    /* Ópticamente centrado con el botón de cerrar, que mide 44. */
+    padding-top: var(--space-2xs);
+  }
+
+  /* El relleno que separa titular de acciones en escritorio aquí no separa
+     nada: las acciones ya están en su propia línea, y como `flex: 1` competía
+     con el titular por el ancho sobrante y se llevaba la mitad. */
+  .drawer-header .spacer {
+    display: none;
+  }
+
+  /* Hasta dos líneas y luego recorta. Una sola dejaba «Mercedes Clase A 180
+     (136 CV) (2022)» en «Merced…»; sin tope, un titular largo devolvía la
+     cabecera de cinco renglones que se quitó en su día. Dos es donde cabe un
+     nombre de coche entero sin comerse el pliegue. */
   .drawer-header h2 {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+  }
+
+  /* El subtítulo sí se queda en una línea: repite el modelo y el dealer, que
+     están escritos otra vez en la ficha, cincuenta píxeles más abajo. */
+  .drawer-subtitle {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* A lo ancho y a mitades exactas: dos acciones que retiran una oferta no
+     pueden diferenciarse por el tamaño del botón, y a 44 pt cada una hay sitio
+     de sobra para el nombre escrito. */
+  .drawer-actions {
+    flex: 1 1 100%;
+  }
+
+  .drawer-actions > * {
+    flex: 1 1 0;
+    min-width: 0;
   }
 
   .drawer-body {

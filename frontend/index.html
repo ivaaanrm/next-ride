@@ -12,9 +12,30 @@
     />
     <title>next-ride</title>
 
-    <!-- El color de la barra del sistema sigue al esquema: --bg claro y --bg oscuro. -->
-    <meta name="theme-color" content="#fbfbfb" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#121211" media="(prefers-color-scheme: dark)" />
+    <!-- El color de la barra del sistema sigue al tema **elegido**, no al del
+         sistema: una sola etiqueta con el --bg del claro, que es el de partida, y
+         `lib/theme.ts` le reescribe el contenido al conmutar. -->
+    <meta name="theme-color" content="#fbfbfb" />
+
+    <!-- El tema, antes del primer píxel.
+         El juego claro es el que trae el CSS, así que quien no ha elegido nada
+         no necesita este script para nada. Quien eligió el oscuro sí: aplicado
+         desde el bundle, el atributo llegaría después de la primera pintura y
+         cada arranque empezaría con un fogonazo blanco. En línea y en el
+         `<head>` es el único sitio donde eso no pasa.
+         La clave es la misma que la de `lib/theme.ts`. -->
+    <script>
+      try {
+        if (localStorage.getItem("nr.theme") === "dark") {
+          document.documentElement.dataset.theme = "dark";
+          document
+            .querySelector('meta[name="theme-color"]')
+            .setAttribute("content", "#121211");
+        }
+      } catch (e) {
+        /* Safari privado tira al leer localStorage: se queda el claro. */
+      }
+    </script>
 
     <!-- Instalada, la app se dibuja sin cromo de navegador. `black-translucent`
          mete el contenido *por debajo* de la barra de estado, así que el padding

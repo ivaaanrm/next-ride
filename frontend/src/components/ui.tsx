@@ -477,10 +477,14 @@ export function Drawer({
           </button>
           <div className="drawer-heading">
             <h2>{title}</h2>
-            {subtitle ? <div className="tiny muted">{subtitle}</div> : null}
+            {subtitle ? <div className="drawer-subtitle tiny muted">{subtitle}</div> : null}
           </div>
           <div className="spacer" />
-          {actions}
+          {/* Envueltas y no sueltas en la cabecera: en un móvil los botones
+              bajan a su propia línea, a mitades, y el titular recupera el ancho
+              entero. Sueltos, cada uno envolvía por su cuenta y el título se
+              quedaba en una columna de 100 px partida en seis renglones. */}
+          {actions ? <div className="drawer-actions">{actions}</div> : null}
         </header>
         <div className="drawer-body">{children}</div>
       </aside>
