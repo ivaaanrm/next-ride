@@ -8,7 +8,7 @@ WORKDIR /app
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 RUN corepack enable
 
-COPY package.json pnpm-lock.yaml* ./
+COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml ./
 # `--frozen-lockfile` requiere lockfile; si no existe (primer arranque) cae a
 # `pnpm install`, que lo resuelve desde los rangos del package.json.
 RUN if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; else pnpm install; fi
