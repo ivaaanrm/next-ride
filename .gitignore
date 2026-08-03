@@ -1,6 +1,7 @@
 # Entorno
 .env
 .env.local
+.env.prod.*
 *.local
 
 # Python

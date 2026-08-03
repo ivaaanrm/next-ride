@@ -10,8 +10,9 @@
     "check:pwa": "node scripts/check-pwa.mjs",
     "check:pwa:strict": "node scripts/check-pwa.mjs --strict",
     "check:budgets": "node scripts/check-budgets.mjs",
-    "validate:mobile": "npm run build && npm run check:pwa && npm run check:budgets"
+    "validate:mobile": "pnpm build && pnpm check:pwa && pnpm check:budgets"
   },
+  "packageManager": "pnpm@11.1.2",
   "dependencies": {
     "clsx": "^2.1.1",
     "react": "^18.3.1",

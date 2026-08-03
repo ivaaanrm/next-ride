@@ -550,7 +550,7 @@ Lo que no es obvio:
 Desarrollo con recarga en caliente (proxy a `localhost:8000`):
 
 ```bash
-cd frontend && npm install && npm run dev
+cd frontend && pnpm install && pnpm dev
 ```
 
 ---

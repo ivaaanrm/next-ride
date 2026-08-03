@@ -6,7 +6,7 @@
  * el módulo de entrada, sus imports estáticos precargados y su hoja de estilos.
  * Todo comprimido con gzip, que es como viaja (nginx tiene `gzip on`).
  *
- *   npm run build && node scripts/check-budgets.mjs
+ *   pnpm build && node scripts/check-budgets.mjs
  *   node scripts/check-budgets.mjs --json
  *
  * Los límites viven en `perf-budgets.json`. Subir un límite para que pase la
@@ -36,7 +36,7 @@ function fail(message) {
   process.exit(1);
 }
 
-if (!existsSync(DIST)) fail("no existe dist/. Ejecuta `npm run build` antes de medir.");
+if (!existsSync(DIST)) fail("no existe dist/. Ejecuta `pnpm build` antes de medir.");
 
 const budgetsPath = join(ROOT, "perf-budgets.json");
 const config = existsSync(budgetsPath) ? JSON.parse(readFileSync(budgetsPath, "utf8")) : {};

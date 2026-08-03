@@ -3,7 +3,8 @@
  *
  * JavaScript plano, servido tal cual desde `public/`: sin bundling, sin
  * `vite-plugin-pwa`, sin dependencia nueva y sin tocar el lockfile que usa
- * `npm ci`. Lo que da esto es que la app **arranca sin red** —el shell, la
+ * `pnpm install --frozen-lockfile`. Lo que da esto es que la app **arranca sin
+ * red** —el shell, la
  * navegación y el estado «Sin conexión»— en vez de la página de error de
  * Safari. Datos frescos no da ninguno, y en un producto cuyo valor son los
  * precios de hoy eso es lo correcto.

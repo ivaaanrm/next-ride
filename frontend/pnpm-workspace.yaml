@@ -1,0 +1,8 @@
+# Ajustes de pnpm. Van aquí y no en el campo `pnpm` del package.json: pnpm 11
+# ya no lee ese campo, y el `install` falla sin decir que lo está ignorando.
+#
+# pnpm no ejecuta los scripts de instalación de las dependencias salvo que se
+# aprueben una a una. esbuild —que entra por vite— usa el suyo para dejar el
+# binario de la plataforma en su sitio, y sin él `vite build` no arranca.
+allowBuilds:
+  esbuild: true
