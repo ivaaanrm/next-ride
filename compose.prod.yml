@@ -1,0 +1,132 @@
+# Stack de producción, detrás del Traefik v3 compartido del servidor.
+#
+#   docker compose --env-file .env.prod -f compose.prod.yml up -d --build
+#
+# Diferencias con `docker-compose.yml` (que es el de desarrollo):
+#
+#   - Ningún servicio publica puertos en el host. Traefik llega a los
+#     contenedores por la red `traefik-public`; la base de datos no sale de
+#     `internal`.
+#   - Nombre de proyecto propio (`next-ride-prod`), para que los contenedores y
+#     el volumen no colisionen con los del stack de desarrollo.
+#   - Las variables críticas usan `${VAR:?...}`: sin fichero de entorno, el
+#     `compose` falla al arrancar en vez de levantar la app con la contraseña
+#     de ejemplo.
+name: next-ride-prod
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-nextride}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?define POSTGRES_PASSWORD en .env.prod}
+      POSTGRES_DB: ${POSTGRES_DB:-nextride}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    # Sin `ports`: a la base de datos solo se llega desde `internal`. Para
+    # inspeccionarla desde fuera, un túnel SSH contra el servidor.
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nextride} -d ${POSTGRES_DB:-nextride}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-nextride}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?define POSTGRES_PASSWORD en .env.prod}
+      POSTGRES_DB: ${POSTGRES_DB:-nextride}
+      # v1: el esquema se crea al arrancar. Cuando el proyecto pase a Alembic,
+      # esto va a false y las migraciones se lanzan a mano en el despliegue.
+      AUTO_CREATE_TABLES: ${AUTO_CREATE_TABLES:-true}
+      SECRET_KEY: ${SECRET_KEY:?define SECRET_KEY en .env.prod (openssl rand -hex 32)}
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-false}
+      FIRST_SUPERUSER_EMAIL: ${FIRST_SUPERUSER_EMAIL:-}
+      FIRST_SUPERUSER_PASSWORD: ${FIRST_SUPERUSER_PASSWORD:-}
+      BOOTSTRAP_SCRAPER_API_KEY: ${BOOTSTRAP_SCRAPER_API_KEY:-}
+      # Frontend y API comparten origen, así que en la práctica no hay petición
+      # con CORS; se declara igualmente por si algún día se llama a la API desde
+      # otro sitio.
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://${DOMAIN}}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-opus-5}
+      ANTHROPIC_EFFORT: ${ANTHROPIC_EFFORT:-high}
+      ANTHROPIC_ENABLE_FALLBACKS: ${ANTHROPIC_ENABLE_FALLBACKS:-true}
+      RANKING_MAX_OFFERS: ${RANKING_MAX_OFFERS:-40}
+      # Uvicorn ignora `X-Forwarded-Proto` salvo que el salto anterior esté en
+      # esta lista, y entonces cree que la petición vino por http: un 307 de
+      # los que añaden la barra final saldría con `http://` y el navegador lo
+      # bloquearía por contenido mixto. Al contenedor solo se llega por Traefik
+      # (no publica puertos), así que fiarse de la cabecera aquí es seguro.
+      FORWARDED_ALLOW_IPS: "*"
+    expose:
+      - "8000"
+    networks:
+      - internal
+      - traefik-public
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik-public"
+      # Las tres raíces que sirve FastAPI: `/api` (incluido
+      # `/api/v1/openapi.json`), `/docs` y `/health`. Todo lo demás cae al
+      # router del frontend, que tiene prioridad 1.
+      - "traefik.http.routers.nextride-api.rule=Host(`${DOMAIN:?falta DOMAIN}`) && (PathPrefix(`/api`) || PathPrefix(`/docs`) || PathPrefix(`/health`))"
+      - "traefik.http.routers.nextride-api.priority=10"
+      - "traefik.http.routers.nextride-api.entrypoints=websecure"
+      - "traefik.http.routers.nextride-api.tls.certresolver=letsencrypt"
+      - "traefik.http.services.nextride-api.loadbalancer.server.port=8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Vite sustituye `import.meta.env` en tiempo de build: el dominio queda
+        # horneado en el bundle y cambiarlo obliga a reconstruir la imagen.
+        VITE_API_BASE_URL: https://${DOMAIN:?falta DOMAIN}/api/v1
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    expose:
+      - "80"
+    # `internal` además de `traefik-public`: nginx resuelve el `proxy_pass
+    # http://backend:8000` de `nginx.conf` al arrancar, y si el nombre no
+    # resuelve el contenedor no llega a levantar.
+    networks:
+      - internal
+      - traefik-public
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik-public"
+      # Catch-all del dominio: la SPA responde a cualquier ruta que no se haya
+      # llevado el router de la API.
+      - "traefik.http.routers.nextride-frontend.rule=Host(`${DOMAIN:?falta DOMAIN}`)"
+      - "traefik.http.routers.nextride-frontend.priority=1"
+      - "traefik.http.routers.nextride-frontend.entrypoints=websecure"
+      - "traefik.http.routers.nextride-frontend.tls.certresolver=letsencrypt"
+      - "traefik.http.services.nextride-frontend.loadbalancer.server.port=80"
+
+networks:
+  # Creada a mano en el servidor y compartida con el resto de apps; Traefik solo
+  # ve los contenedores que estén aquí.
+  traefik-public:
+    external: true
+  # Tráfico interno del stack: base de datos y salto nginx → backend.
+  internal:
+    driver: bridge
+
+volumes:
+  db_data:
