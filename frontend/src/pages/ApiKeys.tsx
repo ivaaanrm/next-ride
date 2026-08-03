@@ -1,14 +1,30 @@
 import { useState, type FormEvent } from "react";
 
 import { PageHeader } from "../components/Layout";
+import { useTouchLayout } from "../components/SwipeRow";
 import { Banner, Chip, Empty, Loading } from "../components/ui";
 import { api } from "../lib/api";
 import { formatDateTime } from "../lib/format";
 import { useAsync } from "../lib/hooks";
 import type { ApiKey, ApiKeyCreated } from "../types";
 
+/**
+ * La segunda línea de la ficha, sin el prefijo, que va aparte porque va en mono.
+ *
+ * El último uso va antes que la fecha de alta a propósito: en esta pantalla la
+ * pregunta operativa es «¿sigue ingestando el scraper?», y la respuesta es esa
+ * fecha. «Sin usar todavía» en vez del guion de la tabla, que en una línea
+ * corrida no se distingue de un dato que falta.
+ */
+const keyMeta = (key: ApiKey): string =>
+  [
+    key.last_used_at ? `último uso ${formatDateTime(key.last_used_at)}` : "sin usar todavía",
+    `creada ${formatDateTime(key.created_at)}`,
+  ].join(" · ");
+
 export function ApiKeysPage() {
   const keys = useAsync<ApiKey[]>(() => api.get("/api-keys"), []);
+  const touch = useTouchLayout();
 
   const [name, setName] = useState("scraper");
   const [created, setCreated] = useState<ApiKeyCreated | null>(null);
@@ -85,7 +101,13 @@ export function ApiKeysPage() {
           <form className="row" style={{ margin: "10px 0 14px" }} onSubmit={createKey}>
             <input
               className="input grow"
+              aria-label="Nombre de la clave"
               placeholder="Nombre de la clave"
+              enterKeyHint="done"
+              autoComplete="off"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               required
               value={name}
               onChange={(event) => setName(event.target.value)}
@@ -95,12 +117,54 @@ export function ApiKeysPage() {
             </button>
           </form>
 
-          <div className="table-wrap">
-            {keys.loading ? (
-              <Loading />
-            ) : (keys.data ?? []).length === 0 ? (
-              <Empty title="No hay API keys" hint="Genera una para el servicio scraper." />
-            ) : (
+          {keys.loading || (keys.data ?? []).length === 0 ? (
+            <div className="table-wrap">
+              {keys.loading ? (
+                <Loading />
+              ) : (
+                <Empty title="No hay API keys" hint="Genera una para el servicio scraper." />
+              )}
+            </div>
+          ) : touch ? (
+            /* Una `<ul>` de `<li>` y no la tabla con `display: block`: una tabla
+               desmontada con CSS pierde su semántica sin avisar. La ficha no es
+               pulsable entera —una clave no tiene detalle que abrir, y lo único
+               que se puede hacer con ella es revocarla— así que el único
+               objetivo de la fila es ese botón. */
+            <ul className="record-list">
+              {(keys.data ?? []).map((key) => (
+                <li key={key.id} className="record-item">
+                  {/* Sin `.record-link`: una clave no tiene detalle que abrir, y
+                      la cabecera y el apoyo cuelgan directamente del ítem, que es
+                      quien les pone el sangrado cuando no hay fila pulsable. */}
+                  <div className="record-head">
+                    <span className="record-title">{key.name}</span>
+                    <span className="record-value">
+                      <Chip tone={key.is_active ? "positive" : "neutral"}>
+                        {key.is_active ? "Activa" : "Revocada"}
+                      </Chip>
+                    </span>
+                  </div>
+                  <div className="record-meta">
+                    <span className="mono">nr_{key.prefix}_…</span> · {keyMeta(key)}
+                  </div>
+                  {key.is_active ? (
+                    <div className="record-actions">
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-danger"
+                        aria-label={`Revocar la API key ${key.name}`}
+                        onClick={() => revoke(key)}
+                      >
+                        Revocar
+                      </button>
+                    </div>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="table-wrap">
               <table className="records">
                 <thead>
                   <tr>
@@ -140,8 +204,8 @@ export function ApiKeysPage() {
                   ))}
                 </tbody>
               </table>
-            )}
-          </div>
+            </div>
+          )}
         </div>
 
         <div className="card">

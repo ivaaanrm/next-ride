@@ -34,11 +34,15 @@ export function Score({ value }: { value: number | null | undefined }) {
   if (value === null || value === undefined) return <span className="muted">—</span>;
   const tone = scoreTone(value);
   return (
+    // El `title` se queda para el puntero, pero la unidad va también en texto:
+    // en un móvil no hay dónde consultar un `title`, y dentro de la fila —que es
+    // un botón nombrado por su contenido— un número suelto no dice de qué es.
     <span className={`score ${tone}`} title={`Puntuación ${value}/100`}>
-      <span className="score-bar">
+      <span className="score-bar" aria-hidden="true">
         <span style={{ width: `${Math.max(2, Math.min(100, value))}%` }} />
       </span>
       {Math.round(value)}
+      <span className="sr-only"> de puntuación sobre 100</span>
     </span>
   );
 }
@@ -50,7 +54,14 @@ export function Banner({
   kind?: "info" | "error" | "warn";
   children: ReactNode;
 }) {
-  return <div className={`banner ${kind}`}>{children}</div>;
+  // Un aviso que solo se dibuja no existe para quien no mira: el error de login
+  // era un bloque rojo y silencio absoluto. `alert` interrumpe —que es lo que
+  // toca cuando algo ha fallado—; lo informativo se anuncia sin cortar.
+  return (
+    <div className={`banner ${kind}`} role={kind === "error" ? "alert" : "status"}>
+      {children}
+    </div>
+  );
 }
 
 export function Empty({ title, hint }: { title: string; hint?: ReactNode }) {
@@ -63,9 +74,11 @@ export function Empty({ title, hint }: { title: string; hint?: ReactNode }) {
 }
 
 export function Loading({ label = "Cargando…" }: { label?: string }) {
+  // «Cargando…» dibujado y no anunciado deja la pantalla en un silencio que no se
+  // distingue de una app colgada. El giro es decorativo y se oculta.
   return (
-    <div className="loading">
-      <span className="spinner" /> {label}
+    <div className="loading" role="status">
+      <span className="spinner" aria-hidden="true" /> {label}
     </div>
   );
 }
@@ -122,7 +135,7 @@ export function Popover({
   useEffect(() => {
     if (!open) return;
 
-    function onPointerDown(event: MouseEvent) {
+    function onPointerDown(event: Event) {
       if (!wrap.current?.contains(event.target as Node)) setOpen(false);
     }
 
@@ -134,10 +147,14 @@ export function Popover({
       trigger.current?.focus();
     }
 
-    document.addEventListener("mousedown", onPointerDown);
+    // `pointerdown` y no `mousedown`: iOS solo sintetiza eventos de ratón sobre
+    // elementos que ya son «clicables» —enlaces, botones, cualquier cosa con
+    // `onclick`—, y `document` no lo es. Con `mousedown`, tocar fuera del panel
+    // en un iPhone no lo cerraba y se quedaba tapando la tabla.
+    document.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
     return () => {
-      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("pointerdown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
   }, [open]);
@@ -249,8 +266,11 @@ export function useToasts(): Toasts {
  * alcanza con el tabulador cuando hace falta, en vez de solo con el ratón.
  */
 export function ToastStack({ items, dismiss }: Toasts) {
-  if (items.length === 0) return null;
-
+  // El contenedor se monta siempre, aunque esté vacío. Crear la región viva **a
+  // la vez** que su contenido es el patrón que VoiceOver se salta: no había
+  // nada que observar cuando apareció el texto. Vacío no ocupa ni intercepta
+  // —`pointer-events: none` en la caja, `auto` en cada aviso—, así que el único
+  // cambio es que la región ya existe cuando llega el mensaje.
   return createPortal(
     <div className="toasts" role="status" aria-live="polite">
       {items.map((toast) => (
@@ -422,6 +442,7 @@ export function Drawer({
   children,
   actions,
   wide = false,
+  over = false,
 }: {
   title: string;
   subtitle?: ReactNode;
@@ -430,25 +451,275 @@ export function Drawer({
   actions?: ReactNode;
   /** Para paneles con contenido a dos columnas. */
   wide?: boolean;
+  /** Un panel que se abre **desde** otro (el editor desde la ficha).
+   *
+   * Sin esto, el velo del segundo se dibuja por debajo del primero —los dos
+   * viven en el mismo escalón, 20/21— y el panel de detrás se quedaba a plena
+   * luz, sin atenuar y con sus controles pidiendo un clic que ya no le toca. */
+  over?: boolean;
 }) {
+  const close = useModalSurface(onClose);
+
   return createPortal(
     <>
-      <div className="drawer-backdrop" onClick={onClose} />
-      <aside className={`drawer${wide ? " wide" : ""}`} role="dialog" aria-label={title}>
+      <div className={`drawer-backdrop${over ? " over" : ""}`} onClick={onClose} />
+      <aside
+        className={`drawer${wide ? " wide" : ""}${over ? " over" : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+      >
+        {/* El cierre va primero en el árbol y en el orden de tabulación: es la
+            salida, y por debajo de 860px también es lo primero de la cabecera.
+            En escritorio `order` lo devuelve a su sitio de siempre, a la
+            derecha, sin mover el resto. */}
         <header className="drawer-header">
-          <div style={{ minWidth: 0 }}>
-            <h2>{title}</h2>
-            {subtitle ? <div className="tiny muted">{subtitle}</div> : null}
-          </div>
-          <div className="spacer" />
-          {actions}
-          <button className="btn btn-ghost btn-sm" onClick={onClose} aria-label="Cerrar">
+          <button
+            ref={close}
+            className="btn btn-ghost btn-sm drawer-close"
+            onClick={onClose}
+            aria-label="Cerrar"
+          >
             ✕
           </button>
+          <div className="drawer-heading">
+            <h2>{title}</h2>
+            {subtitle ? <div className="drawer-subtitle tiny muted">{subtitle}</div> : null}
+          </div>
+          <div className="spacer" />
+          {/* Envueltas y no sueltas en la cabecera: en un móvil los botones
+              bajan a su propia línea, a mitades, y el titular recupera el ancho
+              entero. Sueltos, cada uno envolvía por su cuenta y el título se
+              quedaba en una columna de 100 px partida en seis renglones. */}
+          {actions ? <div className="drawer-actions">{actions}</div> : null}
         </header>
         <div className="drawer-body">{children}</div>
       </aside>
     </>,
     document.body,
   );
+}
+
+/* -------------------------------------------------------------------------- *
+ * Hoja inferior
+ *
+ * El control del que se vuelve en segundos: filtros, orden, un menú. Ancho
+ * completo, alto según contenido hasta `--sheet-max-height`, y **el pie va en el
+ * flujo de la hoja, nunca fijo**: con el teclado abierto, en iOS el viewport de
+ * maquetación no encoge y un pie `position: fixed` se despega de la hoja y se
+ * queda flotando sobre el teclado.
+ *
+ * Tres salidas, y ninguna es un gesto: el botón de la cabecera, el toque en el
+ * velo y `Escape`. El arrastre hacia abajo se puede añadir encima, pero no
+ * puede ser la única.
+ * -------------------------------------------------------------------------- */
+export function Sheet({
+  title,
+  onClose,
+  closeLabel = "Cancelar",
+  action,
+  footer,
+  children,
+  over = false,
+}: {
+  title: string;
+  onClose: () => void;
+  /** «Cancelar» por defecto; «Cerrar» cuando la hoja no aplica nada. */
+  closeLabel?: string;
+  /** Acción secundaria a la derecha de la cabecera («Limpiar»). */
+  action?: ReactNode;
+  /** Pie en flujo: la acción principal de la hoja. */
+  footer?: ReactNode;
+  children: ReactNode;
+  /** La hoja se abre **sobre** una ficha ya abierta: sube un escalón para que su
+   *  velo tape la ficha en vez de quedarse debajo. Mismo motivo que en `Drawer`. */
+  over?: boolean;
+}) {
+  const close = useModalSurface(onClose);
+
+  return createPortal(
+    <>
+      <div className={`sheet-backdrop${over ? " over" : ""}`} onClick={onClose} />
+      <div
+        className={`sheet${over ? " over" : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+      >
+        <span className="sheet-grip" aria-hidden="true" />
+        <header className="sheet-header">
+          <button ref={close} type="button" className="sheet-close" onClick={onClose}>
+            {closeLabel}
+          </button>
+          <h2 className="sheet-title">{title}</h2>
+          <div className="sheet-action">{action}</div>
+        </header>
+        <div className="sheet-body">{children}</div>
+        {footer ? <div className="sheet-footer">{footer}</div> : null}
+      </div>
+    </>,
+    document.body,
+  );
+}
+
+/**
+ * Lo que comparten el panel y la hoja: `Escape` cierra, el fondo no hace
+ * scroll mientras están abiertos, el foco entra al botón de cierre y vuelve a
+ * quien abrió al cerrarse.
+ *
+ * El foco de vuelta importa más en un móvil de lo que parece: sin él, cerrar
+ * una hoja deja el foco en `body` y el siguiente barrido de VoiceOver empieza
+ * otra vez por la cabecera de la página.
+ */
+function useModalSurface(onClose: () => void) {
+  const close = useRef<HTMLButtonElement>(null);
+  // `onClose` casi siempre llega como flecha en línea, así que cambia de
+  // identidad en cada render de quien abre. Si fuera dependencia del efecto,
+  // cada render desmontaría y remontaría el cerrojo de scroll y devolvería el
+  // foco al botón de cerrar: escribir en un campo de dentro sería imposible.
+  const latest = useRef(onClose);
+  latest.current = onClose;
+
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    const root = document.documentElement;
+    const previousOverflow = root.style.overflow;
+    // El cerrojo de scroll es solo de la capa táctil, donde la superficie tapa
+    // la pantalla entera y el fondo que se mueve detrás es puro ruido. En
+    // escritorio el panel ocupa media ventana y la página sigue detrás como
+    // siempre: bloquearla ahí cambiaría el escritorio y, con barras de scroll
+    // clásicas, desplazaría la página al abrir.
+    const touch = window.matchMedia("(max-width: 860px)").matches;
+    if (touch) root.style.overflow = "hidden";
+    close.current?.focus();
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") latest.current();
+    }
+    document.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      if (touch) root.style.overflow = previousOverflow;
+      opener?.focus?.();
+    };
+  }, []);
+
+  return close;
+}
+
+/**
+ * Sin conexión.
+ *
+ * Es un estado aparte del error por una razón que hoy es un fallo bloqueante:
+ * una red caída y una sesión caducada renderizan la misma pantalla de login, y
+ * quien lo sufre no sabe cuál de las dos le ha pasado ni si reintentar sirve de
+ * algo. Aquí se dice las dos cosas: que es la red, y que la sesión sigue en pie.
+ */
+export function OfflineNotice({
+  onRetry,
+  retrying = false,
+  detail,
+}: {
+  onRetry: () => void;
+  retrying?: boolean;
+  /** Qué se estaba pidiendo, cuando ayuda a situarlo. */
+  detail?: ReactNode;
+}) {
+  return (
+    <div className="offline-notice" role="status">
+      <div className="offline-title">Sin conexión</div>
+      <p className="offline-body">
+        {detail ?? "No se ha podido contactar con el servidor. La sesión sigue abierta."}
+      </p>
+      <button type="button" className="btn" onClick={onRetry} disabled={retrying}>
+        {retrying ? <span className="spinner" /> : null}
+        Reintentar
+      </button>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- *
+ * Service worker: registro y relevo de versión
+ *
+ * El registro vive aquí y no en un módulo suyo porque la actualización tiene
+ * dos mitades que no pueden separarse: el `register()` del arranque y el
+ * «Actualizar a la versión nueva» que se ofrece en «Más». Las dos hablan del
+ * mismo worker en espera.
+ *
+ * El relevo nunca es automático: `sw.js` solo llama a `skipWaiting()` cuando
+ * recibe el mensaje, y el mensaje solo sale de un toque. Cambiar los assets con
+ * hash bajo una SPA ya cargada rompe el siguiente `import()` diferido.
+ * -------------------------------------------------------------------------- */
+
+let waitingWorker: ServiceWorker | null = null;
+const updateListeners = new Set<() => void>();
+
+function announceUpdate(worker: ServiceWorker | null) {
+  waitingWorker = worker;
+  updateListeners.forEach((listener) => listener());
+}
+
+function watchRegistration(registration: ServiceWorkerRegistration) {
+  // `controller` es lo que distingue una actualización de la primera
+  // instalación: sin página controlada, «instalado» solo significa que la app
+  // acaba de ganar caché, y anunciar una versión nueva ahí sería mentira.
+  if (registration.waiting && navigator.serviceWorker.controller) {
+    announceUpdate(registration.waiting);
+  }
+
+  registration.addEventListener("updatefound", () => {
+    const installing = registration.installing;
+    if (!installing) return;
+    installing.addEventListener("statechange", () => {
+      if (installing.state === "installed" && navigator.serviceWorker.controller) {
+        announceUpdate(registration.waiting ?? installing);
+      }
+    });
+  });
+}
+
+/** Se llama una vez, desde `main.tsx`, y solo en producción. */
+export function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+
+  window.addEventListener("load", () => {
+    navigator.serviceWorker
+      .register("/sw.js", { scope: "/" })
+      .then(watchRegistration)
+      // Un registro que falla —contexto no seguro, worker con un error de
+      // sintaxis, permisos del navegador— no puede tumbar la app: se anota y se
+      // sigue. Sin worker, next-ride es exactamente lo que era antes.
+      .catch((error) => console.warn("No se pudo registrar el service worker:", error));
+  });
+}
+
+export function useAppUpdate(): { available: boolean; apply: () => void } {
+  const [available, setAvailable] = useState(() => waitingWorker !== null);
+
+  useEffect(() => {
+    const listener = () => setAvailable(waitingWorker !== null);
+    updateListeners.add(listener);
+    listener();
+    return () => {
+      updateListeners.delete(listener);
+    };
+  }, []);
+
+  const apply = useCallback(() => {
+    const worker = waitingWorker;
+    if (!worker) return;
+    // Se recarga cuando el worker nuevo toma el control, no al enviar el
+    // mensaje: recargar antes volvería a servir el documento del worker viejo y
+    // el relevo se quedaría a medias.
+    navigator.serviceWorker.addEventListener(
+      "controllerchange",
+      () => window.location.reload(),
+      { once: true },
+    );
+    worker.postMessage({ type: "skip-waiting" });
+  }, []);
+
+  return { available, apply };
 }

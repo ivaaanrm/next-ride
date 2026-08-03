@@ -1,0 +1,24 @@
+{
+  "id": "/",
+  "name": "next-ride",
+  "short_name": "next-ride",
+  "description": "Ofertas de coches de varios dealers, comparadas.",
+  "start_url": "/offers",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "lang": "es",
+  "dir": "ltr",
+  "background_color": "#fbfbfb",
+  "theme_color": "#fbfbfb",
+  "icons": [
+    { "src": "/icons/icon-192.v1.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.v1.png", "sizes": "512x512", "type": "image/png" },
+    {
+      "src": "/icons/maskable-512.v1.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

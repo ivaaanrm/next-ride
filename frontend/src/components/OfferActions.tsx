@@ -27,13 +27,37 @@ export function OfferActions({
 }: {
   offer: Offer;
   busy?: boolean;
-  /** `row` son dos iconos que aparecen al pasar por encima; `wide`, dos botones
-   *  con su nombre escrito, para la cabecera del panel de detalle, donde hay
-   *  sitio y donde quien acaba de leer la ficha no viene de recorrer la tabla. */
-  variant?: "row" | "wide";
+  /** `row` son dos iconos que aparecen al pasar por encima —idioma de puntero, y
+   *  por eso solo se usa en la tabla de escritorio—; `wide`, dos botones con su
+   *  nombre escrito, para la cabecera del panel de detalle; `swipe`, los dos
+   *  botones a todo el alto que quedan a la vista al deslizar la fila en un
+   *  móvil, donde no hay `:hover` que revele nada. */
+  variant?: "row" | "wide" | "swipe";
   onMove: (offer: Offer, target: OfferStatus) => void;
 }) {
   const targets = TARGETS[offer.status];
+
+  if (variant === "swipe") {
+    return (
+      <>
+        {targets.map((target) => (
+          <button
+            key={target}
+            type="button"
+            className={`swipe-action ${target}`}
+            disabled={busy}
+            onClick={() => onMove(offer, target)}
+          >
+            {/* El nombre escrito y no el icono: el icono funcionaba porque el
+                `title` lo explicaba al pasar por encima, y en táctil no hay
+                dónde pasar. Detrás de un gesto que hay que descubrir, dos
+                dibujos sin rótulo serían dos formas de tirar una fila. */}
+            {OFFER_STATUS[target].verb}
+          </button>
+        ))}
+      </>
+    );
+  }
 
   if (variant === "wide") {
     return (

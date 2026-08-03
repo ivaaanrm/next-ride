@@ -1,6 +1,7 @@
 # Entorno
 .env
 .env.local
+.env.prod.*
 *.local
 
 # Python
@@ -33,3 +34,4 @@ fixtures/
 state/
 reports/
 *.bak
+backups/

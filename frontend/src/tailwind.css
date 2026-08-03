@@ -16,12 +16,17 @@
 @import "tailwindcss/theme.css" layer(theme);
 @import "tailwindcss/utilities.css" layer(utilities);
 
+/* Estos son los valores del modo claro. El juego oscuro vive en `styles.css`,
+ * dentro de su `@media (prefers-color-scheme: dark)`: esa hoja se importa
+ * después y sin capa, así que gana a lo de aquí sin necesidad de `!important`.
+ */
 @theme {
   --color-border: #ebebeb;
   --color-background: #ffffff;
   --color-foreground: #1b1b18;
   --color-muted: #f4f4f4;
-  --color-muted-foreground: #666663;
+  /* Sigue a --text-secondary, que subió a 6,79:1 al corregir la rampa de grises. */
+  --color-muted-foreground: #5c5b58;
   --radius: 4px;
 
   /* ---- Paleta categórica de los gráficos -----------------------------------

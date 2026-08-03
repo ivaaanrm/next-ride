@@ -3,14 +3,127 @@
  *
  * Aquí solo vive lo que se pinta en más de un sitio. Cada página sigue armando
  * sus ejes —los rótulos y los formatos son suyos—; lo común es cómo se dibuja el
- * radar y cómo se lee su tooltip, que es justo lo que no puede divergir entre la
- * Analítica y el panel de una oferta.
+ * radar y cómo se lee, que es justo lo que no puede divergir entre la Analítica
+ * y el panel de una oferta.
+ *
+ * **Este fichero no importa recharts, y eso es una condición, no una casualidad.**
+ * El radar se dibuja con SVG a mano: son ~120 líneas de trigonometría contra los
+ * 33 KB en crudo que costaba el juego polar de recharts (`RadarChart`, `Radar`,
+ * `PolarGrid`, `PolarAngleAxis`, `PolarRadiusAxis`, `Sector`) dentro del chunk
+ * diferido de Analítica. Y mientras la pantalla de ofertas siga importando de
+ * aquí, cualquier import de recharts en este fichero vuelve a arrastrar la
+ * librería entera al chunk de entrada, que es exactamente lo que el presupuesto
+ * de arranque prohíbe.
  */
 
-import { PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart } from "recharts";
+import { useLayoutEffect, useRef, useState } from "react";
 
-import { ChartContainer, ChartTooltip, type ChartConfig } from "./ui/chart";
-import { extremeAxis, type RadarRow } from "../lib/radar";
+import { extremeAxis, RADAR_MID, type RadarRow } from "../lib/radar";
+
+/* -------------------------------------------------------------------------- *
+ * Medida del contenedor
+ * -------------------------------------------------------------------------- */
+
+export interface Box {
+  width: number;
+  height: number;
+}
+
+/**
+ * El tamaño real de un contenedor, para que los ejes se dimensionen contra él y
+ * no contra un número pensado para una tarjeta de 900 px.
+ *
+ * `ResizeObserver` y no un listener de `resize`: el ancho útil depende también
+ * de si la barra lateral está plegada, y eso no cambia el tamaño del viewport.
+ * La primera medida se toma en `useLayoutEffect` para que el primer fotograma ya
+ * se pinte con el tamaño bueno y no haya un salto de escritorio a móvil.
+ */
+export function useMeasuredBox<T extends HTMLElement>(): [React.RefObject<T>, Box] {
+  const ref = useRef<T>(null);
+  const [box, setBox] = useState<Box>({ width: 0, height: 0 });
+
+  useLayoutEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    const apply = (width: number, height: number) => {
+      const next = { width: Math.round(width), height: Math.round(height) };
+      setBox((current) =>
+        current.width === next.width && current.height === next.height ? current : next,
+      );
+    };
+    const rect = node.getBoundingClientRect();
+    apply(rect.width, rect.height);
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0].contentRect;
+      apply(rect.width, rect.height);
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  return [ref, box];
+}
+
+/* -------------------------------------------------------------------------- *
+ * Medida de texto
+ * -------------------------------------------------------------------------- */
+
+let measureCtx: CanvasRenderingContext2D | null | undefined;
+let bodyFont: string | null = null;
+
+/**
+ * Cuánto mide un rótulo, de verdad.
+ *
+ * Los rótulos de eje se recortan contra el ancho que les queda, y ese recorte
+ * decide si dos etiquetas contiguas se pisan. Estimar por número de caracteres
+ * falla justo en los nombres que importan («OcasionPlus Madrid - Alcalá de
+ * Henares» mide 56 caracteres y ninguno es una eme). Un canvas fuera de pantalla
+ * lo mide con la misma tipografía que el documento y no toca el layout.
+ */
+export function measureText(text: string, fontSize: number): number {
+  if (measureCtx === undefined) {
+    measureCtx =
+      typeof document === "undefined"
+        ? null
+        : document.createElement("canvas").getContext("2d");
+  }
+  if (!measureCtx) return text.length * fontSize * 0.55;
+  if (bodyFont === null) {
+    bodyFont =
+      typeof getComputedStyle === "function"
+        ? getComputedStyle(document.body).fontFamily || "sans-serif"
+        : "sans-serif";
+  }
+  measureCtx.font = `${fontSize}px ${bodyFont}`;
+  return measureCtx.measureText(text).width;
+}
+
+/**
+ * El rótulo recortado a lo que cabe, con puntos suspensivos.
+ *
+ * El nombre entero nunca se pierde: vive en la tabla de «Ver los datos» de la
+ * tarjeta, que es el equivalente en texto del dibujo. Recortar aquí es lo que
+ * evita que un eje de nombres de dealer se coma dos tercios de la tarjeta.
+ */
+export function fitLabel(text: string, maxWidth: number, fontSize: number): string {
+  if (maxWidth <= 0 || measureText(text, fontSize) <= maxWidth) return text;
+  const ellipsis = "…";
+  const room = maxWidth - measureText(ellipsis, fontSize);
+  if (room <= 0) return ellipsis;
+  let low = 0;
+  let high = text.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (measureText(text.slice(0, mid), fontSize) <= room) low = mid;
+    else high = mid - 1;
+  }
+  return `${text.slice(0, low).trimEnd()}${ellipsis}`;
+}
+
+/* -------------------------------------------------------------------------- *
+ * Tooltip
+ * -------------------------------------------------------------------------- */
 
 /** Una línea de tooltip: rótulo a la izquierda, cifra a la derecha. */
 export function TipRow({
@@ -36,6 +149,79 @@ export interface RadarSeries {
   color: string;
 }
 
+/* -------------------------------------------------------------------------- *
+ * Radar
+ * -------------------------------------------------------------------------- */
+
+/** Los anillos de rejilla, en la misma escala 0-100 que los radios. */
+const GRID_RINGS = [20, 40, 60, 80, 100];
+const LABEL_SIZE = 11;
+/** Alto de una línea de rótulo: lo que hay que reservar arriba y abajo. */
+const LABEL_LINE = 13;
+
+/** Arriba y en el sentido de las agujas, que es como lo dibujaba recharts. */
+function axisAngle(index: number, count: number): number {
+  return -Math.PI / 2 + (index * 2 * Math.PI) / count;
+}
+
+interface Geometry {
+  cx: number;
+  cy: number;
+  radius: number;
+  axes: { angle: number; cos: number; sin: number; label: string; width: number }[];
+}
+
+/**
+ * Dónde cabe el polígono una vez colocados los rótulos.
+ *
+ * El radio no sale de un porcentaje fijo: sale de la restricción que primero se
+ * cumple. Cada eje empuja hacia fuera su vértice **más** el ancho de su rótulo,
+ * así que el eje que manda es el del nombre más largo en la dirección más
+ * horizontal. Con un porcentaje fijo, en 326 px los rótulos laterales salían de
+ * la caja; con esto, el polígono se encoge lo justo y nunca se recorta un nombre
+ * que cabía.
+ */
+function geometryFor(box: Box, labels: string[]): Geometry {
+  const count = labels.length;
+  const cx = box.width / 2;
+  const cy = box.height / 2;
+
+  const axes = labels.map((label, index) => {
+    const angle = axisAngle(index, count);
+    return {
+      angle,
+      cos: Math.cos(angle),
+      sin: Math.sin(angle),
+      label,
+      width: measureText(label, LABEL_SIZE),
+    };
+  });
+
+  let radius = Math.min(cx, cy);
+  for (const axis of axes) {
+    const horizontal = Math.abs(axis.cos);
+    const vertical = Math.abs(axis.sin);
+    // Un rótulo centrado sobresale la mitad a cada lado; uno anclado al vértice,
+    // entero hacia fuera. El umbral de 0,2 es el mismo con el que se elige el
+    // `text-anchor` unas líneas más abajo: las dos decisiones son la misma.
+    const reach = horizontal > 0.2 ? axis.width + 4 : axis.width / 2 + 2;
+    if (horizontal > 0.01) radius = Math.min(radius, (cx - reach) / horizontal);
+    if (vertical > 0.01) radius = Math.min(radius, (cy - LABEL_LINE - 4) / vertical);
+  }
+
+  return { cx, cy, radius: Math.max(radius, 24), axes };
+}
+
+/** Un punto del polígono: radio 0-100 sobre la geometría ya resuelta. */
+function pointAt(geo: Geometry, index: number, value: number): [number, number] {
+  const axis = geo.axes[index];
+  const r = (Math.max(0, Math.min(100, value)) / 100) * geo.radius;
+  return [geo.cx + axis.cos * r, geo.cy + axis.sin * r];
+}
+
+const polygon = (points: [number, number][]): string =>
+  points.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+
 /**
  * Perfil radial de una o varias entidades sobre los mismos ejes.
  *
@@ -46,7 +232,9 @@ export interface RadarSeries {
  *
  * El eje radial no lleva números a propósito. Serían un 0-100 que se lee como
  * nota y no lo es —un 100 en «Precio» dice «el más barato de este conjunto», no
- * «barato»—, así que la cifra que se enseña es siempre la cruda, en el tooltip.
+ * «barato»—, así que la cifra que se enseña es siempre la cruda: en el tooltip
+ * con un puntero, y en la tabla de «Ver los datos» de la tarjeta, que es la que
+ * queda cuando lo que hay es un dedo.
  */
 export function RadarProfile({
   rows,
@@ -60,65 +248,141 @@ export function RadarProfile({
   referenceLabel: string;
   className?: string;
 }) {
-  const config: ChartConfig = {
-    ...Object.fromEntries(
-      series.map((item) => [item.key, { label: item.label, color: item.color }]),
-    ),
-    ref: { label: referenceLabel, color: "var(--text-tertiary)" },
-  };
+  const [ref, box] = useMeasuredBox<HTMLDivElement>();
+  const [hovered, setHovered] = useState<number | null>(null);
+
+  const ready = box.width > 0 && box.height > 0 && rows.length >= 3;
+  const geo = ready ? geometryFor(box, rows.map((row) => row.axis)) : null;
 
   // Con una sola serie el relleno ayuda a leer la silueta; con tres se pisan y
   // lo que queda es un gris del que no sale ninguna de las tres.
   const fillOpacity = series.length > 1 ? 0.08 : 0.16;
 
+  const active = hovered !== null && rows[hovered] ? rows[hovered] : null;
+  const activePoint = geo && hovered !== null ? pointAt(geo, hovered, 100) : null;
+
   return (
-    <ChartContainer config={config} className={className}>
-      <RadarChart data={rows} outerRadius="66%" margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
-        <PolarGrid stroke="var(--border)" />
-        <PolarAngleAxis
-          dataKey="axis"
-          tick={{ fontSize: 11, fill: "var(--text-secondary)" }}
-        />
-        {/* Cinco marcas sobre 0-100 dejan un anillo de rejilla justo en el 50, que
-            es donde va la referencia: el aro discontinuo cae sobre una línea que
-            ya existe en vez de inventar un radio suelto. Sin rótulos, porque un
-            0-100 alrededor del dibujo se lee como nota y no lo es. */}
-        <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} tickCount={5} />
-        <ChartTooltip content={<RadarTip series={series} referenceLabel={referenceLabel} />} />
-        {/* El anillo va primero: es el fondo contra el que se leen las series. */}
-        <Radar
-          dataKey="ref"
-          name="ref"
-          stroke="var(--text-tertiary)"
-          strokeWidth={1}
-          strokeDasharray="4 4"
-          fill="var(--text-tertiary)"
-          fillOpacity={0}
-          dot={false}
-          isAnimationActive={false}
-        />
-        {series.map((item) => (
-          <Radar
-            key={item.key}
-            dataKey={item.key}
-            name={item.key}
-            stroke={item.color}
-            strokeWidth={2}
-            fill={item.color}
-            fillOpacity={fillOpacity}
-            // `fillOpacity` explícito en el punto: Recharts le pasa al `dot` las
-            // props del propio radar, así que sin esto los vértices heredan el
-            // 8 % del relleno y desaparecen justo donde hay que leer el valor.
-            dot={{ r: 2.5, fill: item.color, fillOpacity: 1, strokeWidth: 0 }}
-            isAnimationActive={false}
+    <div className={`${className} chart-radar-frame`} ref={ref}>
+      {geo ? (
+        <svg
+          width={box.width}
+          height={box.height}
+          role="img"
+          aria-label={`Perfil comparado sobre ${rows.length} ejes: ${rows
+            .map((row) => row.axis.toLowerCase())
+            .join(", ")}. Los valores están en «Ver los datos».`}
+          onMouseLeave={() => setHovered(null)}
+        >
+          {/* Rejilla: los anillos y los radios, del mismo filete que separa
+              bloques en el resto de la app. */}
+          {GRID_RINGS.map((ring) => (
+            <polygon
+              key={ring}
+              points={polygon(rows.map((_, index) => pointAt(geo, index, ring)))}
+              fill="none"
+              stroke="var(--border)"
+            />
+          ))}
+          {rows.map((row, index) => {
+            const [x, y] = pointAt(geo, index, 100);
+            return (
+              <line
+                key={row.axis}
+                x1={geo.cx}
+                y1={geo.cy}
+                x2={x}
+                y2={y}
+                stroke="var(--border)"
+              />
+            );
+          })}
+
+          {/* El anillo de referencia va antes que las series: es el fondo contra
+              el que se leen, no una serie más. */}
+          <polygon
+            points={polygon(rows.map((_, index) => pointAt(geo, index, RADAR_MID)))}
+            fill="none"
+            stroke="var(--text-tertiary)"
+            strokeDasharray="4 4"
           />
-        ))}
-        {/* Sin leyenda dentro del gráfico: la lista que va al lado ya lleva el
-            color de cada serie y además su lectura, y una leyenda de cuatro
-            nombres largos se parte en tres líneas que le quitan al polígono el
-            alto del que sale su radio. */}
-      </RadarChart>
-    </ChartContainer>
+
+          {series.map((item) => {
+            const points = rows.map((row, index) =>
+              pointAt(geo, index, Number(row[item.key] ?? RADAR_MID)),
+            );
+            return (
+              <g key={item.key}>
+                <polygon
+                  points={polygon(points)}
+                  fill={item.color}
+                  fillOpacity={fillOpacity}
+                  stroke={item.color}
+                  strokeWidth={2}
+                />
+                {points.map(([x, y], index) => (
+                  <circle key={index} cx={x} cy={y} r={2.5} fill={item.color} />
+                ))}
+              </g>
+            );
+          })}
+
+          {/* Rótulos. El ancla sigue al coseno: a la derecha del dibujo el texto
+              arranca en el vértice, a la izquierda termina en él. */}
+          {geo.axes.map((axis, index) => {
+            const [x, y] = pointAt(geo, index, 100);
+            const anchor = axis.cos > 0.2 ? "start" : axis.cos < -0.2 ? "end" : "middle";
+            const dx = axis.cos > 0.2 ? 4 : axis.cos < -0.2 ? -4 : 0;
+            const dy = axis.sin < -0.5 ? -5 : axis.sin > 0.5 ? 11 : 4;
+            return (
+              <text
+                key={axis.label}
+                x={x + dx}
+                y={y + dy}
+                textAnchor={anchor}
+                fontSize={LABEL_SIZE}
+                fill="var(--text-secondary)"
+              >
+                {axis.label}
+              </text>
+            );
+          })}
+
+          {/* Zonas de escucha del puntero: un sector por eje, transparente, para
+              que el tooltip de escritorio siga saliendo donde salía. Con un dedo
+              no hacen nada, y por eso los valores están además en la tabla. */}
+          {rows.map((row, index) => {
+            const half = Math.PI / rows.length;
+            const from = geo.axes[index].angle - half;
+            const to = geo.axes[index].angle + half;
+            const r = geo.radius;
+            const x1 = geo.cx + Math.cos(from) * r;
+            const y1 = geo.cy + Math.sin(from) * r;
+            const x2 = geo.cx + Math.cos(to) * r;
+            const y2 = geo.cy + Math.sin(to) * r;
+            return (
+              <path
+                key={`hit-${row.axis}`}
+                d={`M${geo.cx},${geo.cy} L${x1},${y1} A${r},${r} 0 0 1 ${x2},${y2} Z`}
+                fill="transparent"
+                onMouseEnter={() => setHovered(index)}
+              />
+            );
+          })}
+        </svg>
+      ) : null}
+
+      {active && activePoint ? (
+        <div
+          className="chart-radar-tip"
+          style={{
+            left: Math.max(0, Math.min(activePoint[0], box.width - 172)),
+            top: Math.max(0, Math.min(activePoint[1], box.height - 96)),
+          }}
+        >
+          <RadarTip row={active} series={series} referenceLabel={referenceLabel} />
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -193,19 +457,14 @@ export function RadarReading({ rows, seriesKey }: { rows: RadarRow[]; seriesKey:
  * decidir es la cifra.
  */
 function RadarTip({
-  active,
-  payload,
+  row,
   series,
   referenceLabel,
 }: {
-  active?: boolean;
-  payload?: { payload: RadarRow }[];
+  row: RadarRow;
   series: RadarSeries[];
   referenceLabel: string;
 }) {
-  if (!active || !payload?.length) return null;
-  const row = payload[0].payload;
-
   return (
     <div className="chart-tip">
       <div className="chart-tip-title">

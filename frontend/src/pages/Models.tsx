@@ -2,7 +2,8 @@ import { Fragment, useEffect, useRef, useState, type FormEvent } from "react";
 
 import { PageHeader } from "../components/Layout";
 import { ScrapingConfigDrawer } from "../components/ScrapingConfigDrawer";
-import { Banner, Chip, Drawer, Empty, Loading, Score } from "../components/ui";
+import { useTouchLayout } from "../components/SwipeRow";
+import { Banner, Chip, Drawer, Empty, Loading, Score, Toggle } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import {
   formatDateTime,
@@ -32,8 +33,138 @@ type TrackTarget =
   | { kind: "variant"; model: CarModelWithStats }
   | { kind: "group"; group: CarModelGroup };
 
+/** Identidad de lo que se está editando, para remontar el panel al cambiarla. */
+const trackingKey = (target: TrackTarget): string =>
+  target.kind === "group"
+    ? `group:${target.group.key}`
+    : target.kind === "variant"
+      ? `variant:${target.model.id}`
+      : "pick";
+
 /** «las 23 versiones» / «la versión»: los botones hablan de todas a la vez. */
 const theVersions = (count: number) => (count === 1 ? "la versión" : `las ${count} versiones`);
+
+const offersOf = (count: number) => `${formatNumber(count)} ${count === 1 ? "oferta" : "ofertas"}`;
+
+const versionsOf = (count: number) =>
+  `${formatNumber(count)} ${count === 1 ? "versión" : "versiones"}`;
+
+const dealersOf = (count: number) => `${formatNumber(count)} ${count === 1 ? "dealer" : "dealers"}`;
+
+/**
+ * Qué dice y qué hace el botón de seguimiento del binomio.
+ *
+ * Vive aquí y no en la fila porque lo usan las dos: la tabla del escritorio, que
+ * cuelga la explicación de un `title`, y la ficha táctil, donde no hay `title`
+ * que consultar y el mismo texto tiene que llegar por el nombre accesible.
+ */
+function followState(group: CarModelGroup): { label: string; hint: string } {
+  if (group.tracked_variants === 0) {
+    return { label: "Seguir", hint: `Seguir ${theVersions(group.variant_count)}` };
+  }
+  if (group.tracked_variants === group.variant_count) {
+    return { label: "Siguiendo", hint: `Dejar de seguir ${theVersions(group.variant_count)}` };
+  }
+  return {
+    label: `${group.tracked_variants}/${group.variant_count}`,
+    hint: `Sigues ${group.tracked_variants} de ${group.variant_count} versiones. Dejarás de seguirlas.`,
+  };
+}
+
+/** Mínimo y máximo en una sola ranura: «18.900–34.500 €». */
+function priceRange(min: number | null, max: number | null): string | null {
+  if (min === null && max === null) return null;
+  if (min === null || max === null || min === max) return formatPrice(min ?? max);
+  return `${formatNumber(min)}–${formatPrice(max)}`;
+}
+
+/** El objetivo, con la marca de alcanzado que en la tabla es el color del chip. */
+function targetText(target: number | null, minPrice: number | null): string | null {
+  if (target === null) return null;
+  const reached = minPrice !== null && minPrice <= target;
+  return `objetivo ${formatPrice(target)}${reached ? " ✓" : ""}`;
+}
+
+/** Si el objetivo se ha alcanzado, dicho con palabras. En la tabla es un `title`. */
+function targetStatus(target: number | null, minPrice: number | null): string | undefined {
+  if (target === null) return undefined;
+  return minPrice !== null && minPrice <= target
+    ? `Ya hay una oferta desde ${formatPrice(minPrice)}`
+    : "Ninguna oferta baja todavía del objetivo";
+}
+
+/**
+ * La segunda línea de la ficha del binomio, ya escrita, con ranuras fijas: lo
+ * que hay para mirar, cuántas versiones son, entre qué precios se mueve y —si lo
+ * hay— el objetivo. Lo que falta no deja hueco ni pone «—».
+ *
+ * El resto de columnas de la tabla (dealers, PVP de referencia, último ranking)
+ * no cabe en una línea y vive en el panel que abre la ficha, no se pierde.
+ */
+function groupMeta(group: CarModelGroup): string {
+  return [
+    offersOf(group.active_offers),
+    versionsOf(group.variant_count),
+    priceRange(group.min_price, group.max_price),
+    targetText(group.target_price, group.min_price),
+  ]
+    .filter((part): part is string => part !== null)
+    .join(" · ");
+}
+
+/** Lo mismo para una versión, con su estado de seguimiento delante. */
+function variantMeta(variant: CarModelWithStats): string {
+  return [
+    variant.is_tracked ? "Siguiendo" : null,
+    offersOf(variant.active_offers),
+    dealersOf(variant.dealers_count),
+    priceRange(variant.min_price, variant.max_price),
+    targetText(variant.tracking?.target_price ?? null, variant.min_price),
+  ]
+    .filter((part): part is string => part !== null)
+    .join(" · ");
+}
+
+/**
+ * Las columnas del binomio que no caben en la ficha, en el panel que la ficha
+ * abre. Las dos notas —de qué se compone el PVP de referencia y si el objetivo
+ * está alcanzado— son texto visible aquí y `title` en la tabla: en un móvil no
+ * hay puntero que las invoque.
+ */
+function groupFigures(group: CarModelGroup): { label: string; value: string; note?: string }[] {
+  return [
+    { label: "Ofertas activas", value: formatNumber(group.active_offers) },
+    { label: "Dealers", value: formatNumber(group.dealers_count) },
+    { label: "Mínimo", value: formatPrice(group.min_price) },
+    { label: "Mediana", value: formatPrice(group.median_price) },
+    { label: "Máximo", value: formatPrice(group.max_price) },
+    {
+      label: "PVP de referencia",
+      value: formatPrice(group.reference_price),
+      note:
+        group.reference_variants > 0
+          ? `Mediana del PVP de ${group.reference_variants} de ${group.variant_count} versiones. El PVP se pone por versión.`
+          : "Ninguna versión tiene PVP puesto.",
+    },
+    {
+      label: "Objetivo",
+      value:
+        group.target_price === null
+          ? "—"
+          : (targetText(group.target_price, group.min_price)?.replace("objetivo ", "") ?? "—"),
+      note: [
+        group.tracked_variants > 1 ? "El objetivo más bajo de las versiones que sigues" : null,
+        targetStatus(group.target_price, group.min_price) ?? null,
+      ]
+        .filter((part): part is string => part !== null)
+        .join(". "),
+    },
+    {
+      label: "Último ranking",
+      value: group.last_ranked_at ? formatDateTime(group.last_ranked_at) : "—",
+    },
+  ];
+}
 
 /**
  * Pliega el mismo criterio de varias versiones: el valor si todas coinciden y,
@@ -103,6 +234,7 @@ export function ModelsPage() {
   const [ranking, setRanking] = useState<CarModelGroup | null>(null);
   const [tracking, setTracking] = useState<TrackTarget | null>(null);
   const [scrapingConfig, setScrapingConfig] = useState(false);
+  const touch = useTouchLayout();
 
   const debouncedSearch = useDebounced(search);
   const groups = useAsync<CarModelGroup[]>(
@@ -192,33 +324,98 @@ export function ModelsPage() {
             <input
               id="q"
               className="input"
+              type="search"
+              inputMode="search"
+              enterKeyHint="search"
+              autoComplete="off"
               placeholder="Marca, modelo o versión…"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
             />
           </div>
-          <label className="row tiny muted" style={{ height: 28 }}>
-            <input
-              type="checkbox"
-              checked={trackedOnly}
-              onChange={(event) => setTrackedOnly(event.target.checked)}
-            />
-            Solo los que sigo
-          </label>
+          {/* La casilla nativa mide 13 px de tinta dentro de una etiqueta de 28:
+              por debajo del suelo táctil por partida doble. El interruptor dice
+              lo mismo, con estado leído por `aria-pressed`, y ya vale 44 pt. */}
+          {touch ? (
+            <Toggle on={trackedOnly} onChange={setTrackedOnly}>
+              Solo los que sigo
+            </Toggle>
+          ) : (
+            <label className="row tiny muted" style={{ height: 28 }}>
+              <input
+                type="checkbox"
+                checked={trackedOnly}
+                onChange={(event) => setTrackedOnly(event.target.checked)}
+              />
+              Solo los que sigo
+            </label>
+          )}
         </div>
 
         {error ? <Banner kind="error">{error}</Banner> : null}
         {groups.error ? <Banner kind="error">{groups.error}</Banner> : null}
 
-        <div className="table-wrap">
-          {groups.loading ? (
-            <Loading />
-          ) : rows.length === 0 ? (
-            <Empty
-              title="Todavía no hay modelos"
-              hint="Se crean automáticamente al ingestar ofertas, o a mano con «Seguir un modelo»."
-            />
-          ) : (
+        {groups.loading || rows.length === 0 ? (
+          <div className="table-wrap">
+            {groups.loading ? (
+              <Loading />
+            ) : (
+              <Empty
+                title="Todavía no hay modelos"
+                hint="Se crean automáticamente al ingestar ofertas, o a mano con «Seguir un modelo»."
+              />
+            )}
+          </div>
+        ) : touch ? (
+          /* Una `<ul>` de `<li>` y no la tabla con `display: block`: una tabla
+             desmontada con CSS pierde su semántica sin avisar, y lo que hay aquí
+             ya no son once columnas sino un registro por fila.
+
+             La ficha abre el panel del binomio, que en táctil lleva además sus
+             cifras, sus versiones y el acceso al ranking: el desplegable de
+             versiones de la tabla no cabe dentro de una lista sin volver a
+             inventar una jerarquía que en 390 pt no se lee. Al lado, y solo al
+             lado, el botón de seguir: es el gesto de un toque de esta pantalla y
+             el único que compite con el de la ficha. */
+          <ul className="record-list">
+            {rows.map((group) => {
+              const follow = followState(group);
+              return (
+                <li key={group.key} className="record-item">
+                  <button
+                    type="button"
+                    className="record-link"
+                    onClick={() => setTracking({ kind: "group", group })}
+                  >
+                    <span className="sr-only">Ver el detalle de </span>
+                    <span className="record-head">
+                      <span className="record-title">{group.label}</span>
+                      {/* La cifra sola se leería como «el precio»: para quien no
+                          ve la columna, la palabra que la califica va detrás. */}
+                      <span className="record-value">
+                        {formatPrice(group.median_price)}
+                        <span className="sr-only"> de mediana</span>
+                      </span>
+                    </span>
+                    <span className="record-meta">{groupMeta(group)}</span>
+                  </button>
+                  <div className="record-actions">
+                    <button
+                      type="button"
+                      className={`btn btn-sm${group.tracked_variants > 0 ? " btn-primary" : ""}`}
+                      disabled={busy === group.key}
+                      aria-label={`${follow.label}. ${follow.hint}`}
+                      onClick={() => toggleGroup(group)}
+                    >
+                      {follow.label}
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <div className="table-wrap">
             <table className="records">
               <thead>
                 <tr>
@@ -238,7 +435,7 @@ export function ModelsPage() {
               <tbody>
                 {rows.map((group) => {
                   const open = expanded.includes(group.key);
-                  const all = group.tracked_variants === group.variant_count;
+                  const follow = followState(group);
                   return (
                     <Fragment key={group.key}>
                       <tr className="group-row">
@@ -247,19 +444,9 @@ export function ModelsPage() {
                             className={`btn btn-sm${group.tracked_variants > 0 ? " btn-primary" : ""}`}
                             disabled={busy === group.key}
                             onClick={() => toggleGroup(group)}
-                            title={
-                              group.tracked_variants === 0
-                                ? `Seguir ${theVersions(group.variant_count)}`
-                                : all
-                                  ? `Dejar de seguir ${theVersions(group.variant_count)}`
-                                  : `Sigues ${group.tracked_variants} de ${group.variant_count} versiones. Dejarás de seguirlas.`
-                            }
+                            title={follow.hint}
                           >
-                            {group.tracked_variants === 0
-                              ? "Seguir"
-                              : all
-                                ? "Siguiendo"
-                                : `${group.tracked_variants}/${group.variant_count}`}
+                            {follow.label}
                           </button>
                         </td>
                         <td className="cell-primary">
@@ -394,8 +581,8 @@ export function ModelsPage() {
                 })}
               </tbody>
             </table>
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
       {ranking ? (
@@ -409,8 +596,27 @@ export function ModelsPage() {
       ) : null}
 
       {tracking ? (
+        /* La `key` remonta el panel al cambiar de objetivo: el formulario nace
+           relleno con los criterios de lo que se le pasa, así que saltar del
+           binomio a una de sus versiones sin remontar dejaría los valores del
+           anterior dentro de los campos del siguiente. */
         <TrackModelDrawer
+          key={trackingKey(tracking)}
           target={tracking}
+          touch={touch}
+          onPickVariant={(model) => setTracking({ kind: "variant", model })}
+          onRanking={
+            // Solo en táctil: en escritorio el ranking se abre desde su botón de
+            // la fila, y ponerlo también aquí sería una salida nueva en una
+            // pantalla que no ha pedido ninguna.
+            touch && tracking.kind === "group"
+              ? () => {
+                  const group = tracking.group;
+                  setTracking(null);
+                  setRanking(group);
+                }
+              : undefined
+          }
           onClose={() => setTracking(null)}
           onSaved={() => {
             setTracking(null);
@@ -741,10 +947,20 @@ function RankingDrawer({
  */
 function TrackModelDrawer({
   target,
+  touch = false,
+  onPickVariant,
+  onRanking,
   onClose,
   onSaved,
 }: {
   target: TrackTarget;
+  /** Por debajo de 860 px el panel es además el detalle del binomio: recoge las
+   *  columnas de la tabla que no caben en la ficha y el acceso a sus versiones y
+   *  a su ranking. En escritorio esas tres cosas están en la fila y el panel se
+   *  queda exactamente como estaba. */
+  touch?: boolean;
+  onPickVariant?: (model: CarModelWithStats) => void;
+  onRanking?: () => void;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -873,6 +1089,21 @@ function TrackModelDrawer({
             : "Elige un modelo del catálogo o créalo al vuelo"
       }
       onClose={onClose}
+      actions={
+        // En táctil la fila no tiene sitio para tres botones: el ranking se
+        // alcanza desde aquí. Deshabilitado dice lo mismo que decía el `title`
+        // de la tabla, porque debajo está «Ofertas activas 0» en letra.
+        onRanking && group ? (
+          <button
+            type="button"
+            className="btn btn-sm"
+            disabled={group.active_offers === 0}
+            onClick={onRanking}
+          >
+            Ranking IA
+          </button>
+        ) : undefined
+      }
     >
       {error ? <Banner kind="error">{error}</Banner> : null}
       {current.mixed ? (
@@ -1105,6 +1336,60 @@ function TrackModelDrawer({
           ) : null}
         </div>
       </form>
+
+      {/* Lo que en la tabla son ocho columnas más y un desplegable de versiones.
+          Solo en táctil: en escritorio siguen en su fila, y repetirlas aquí
+          sería contar dos veces lo mismo en la misma pantalla. */}
+      {touch && group ? (
+        <>
+          <section>
+            <h3 className="section-title">Cifras del modelo</h3>
+            <ul className="record-list">
+              {groupFigures(group).map((figure) => (
+                <li key={figure.label} className="record-item">
+                  <div className="record-head">
+                    <span className="record-title">{figure.label}</span>
+                    <span className="record-value">{figure.value}</span>
+                  </div>
+                  {figure.note ? <div className="record-meta">{figure.note}</div> : null}
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          {onPickVariant ? (
+            <section>
+              <h3 className="section-title">Versiones ({group.variant_count})</h3>
+              <ul className="record-list">
+                {group.variants.map((variant) => (
+                  <li key={variant.id} className="record-item">
+                    <button
+                      type="button"
+                      className="record-link"
+                      onClick={() => onPickVariant(variant)}
+                    >
+                      <span className="sr-only">Criterios de </span>
+                      <span className="record-head">
+                        <span className="record-title">
+                          {variant.trim || variant.display_name}
+                        </span>
+                        <span className="record-value">
+                          {formatPrice(variant.median_price)}
+                          <span className="sr-only"> de mediana</span>
+                        </span>
+                      </span>
+                      <span className="record-meta">{variantMeta(variant)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <p className="tiny muted" style={{ margin: "10px 0 0" }}>
+                Cada versión se sigue, se deja de seguir y se afina desde su propia ficha.
+              </p>
+            </section>
+          ) : null}
+        </>
+      ) : null}
     </Drawer>
   );
 }

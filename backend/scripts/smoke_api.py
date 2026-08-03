@@ -360,6 +360,90 @@ check("el scraper no resucita una descartada", offer["status"] == "dismissed", o
 status, restored = call("POST", f"/offers/{offer_id}/restore", token=token)
 check("restaurar", status == 200 and restored["status"] == "active", f"HTTP {status}")
 
+print("\n== corrección manual ==")
+status, before_edit = call("GET", f"/offers/{offer_id}", token=token)
+km_per_year_before = before_edit["metrics"]["km_per_year"]
+
+status, edited = call(
+    "PATCH", f"/offers/{offer_id}", {"year": 2018, "mileage_km": 61000}, token=token
+)
+check(
+    "PATCH corrige año y km",
+    status == 200 and edited["year"] == 2018 and edited["mileage_km"] == 61000,
+    f"HTTP {status}",
+)
+check(
+    "los campos tocados quedan anclados",
+    set(edited["manual_fields"]) == {"year", "mileage_km"},
+    str(edited["manual_fields"]),
+)
+check("la edición va firmada", edited["edited_at"] is not None)
+# El cuerpo lleva el diff, no el formulario: lo que no viaja no se toca.
+check("lo no enviado se queda como estaba", edited["title"] == batch["offers"][0]["title"])
+check(
+    "las métricas se rehacen al leer",
+    edited["metrics"]["km_per_year"] != km_per_year_before,
+    f"{km_per_year_before} -> {edited['metrics']['km_per_year']}",
+)
+
+# El scraper vuelve a pasar con sus datos de siempre: lo anclado sobrevive, el
+# resto de la oferta se sigue actualizando. Es la mitad que hace útil corregir.
+batch3 = {
+    "offers": [
+        dict(
+            batch["offers"][0],
+            price=21490,
+            title="Toyota Corolla 1.8 Hybrid Active (2023) reacondicionado",
+        )
+    ]
+}
+status, _ = call("POST", "/offers/bulk", batch3, api_key=raw_key)
+status, rescraped = call("GET", f"/offers/{offer_id}", token=token)
+check(
+    "el scraper no pisa lo corregido a mano",
+    rescraped["year"] == 2018 and rescraped["mileage_km"] == 61000,
+    f"año {rescraped['year']} · {rescraped['mileage_km']} km",
+)
+check(
+    "y sí actualiza lo que no está anclado",
+    rescraped["title"].endswith("reacondicionado"),
+    rescraped["title"][-24:],
+)
+
+status, history_before = call("GET", f"/offers/{offer_id}/price-history", token=token)
+status, repriced = call("PATCH", f"/offers/{offer_id}", {"price": 20990}, token=token)
+check("PATCH corrige el precio", status == 200 and repriced["price"] == 20990, f"HTTP {status}")
+status, history_after = call("GET", f"/offers/{offer_id}/price-history", token=token)
+check(
+    "corregir el precio se anota en el historial",
+    len(history_after) == len(history_before) + 1 and history_after[-1]["price"] == 20990,
+    f"{len(history_before)} -> {len(history_after)} puntos",
+)
+
+status, _ = call("PATCH", f"/offers/{offer_id}", {"title": None}, token=token)
+check("vaciar un campo obligatorio -> 422", status == 422, f"HTTP {status}")
+
+status, _ = call("PATCH", f"/offers/{offer_id}", {"price": 0}, token=token)
+check("precio no positivo -> 422", status == 422, f"HTTP {status}")
+
+status, _ = call("PATCH", f"/offers/{offer_id}", {"car_model_id": 10_000_000}, token=token)
+check("reatribuir a un modelo inexistente -> 404", status == 404, f"HTTP {status}")
+
+status, released = call("PATCH", f"/offers/{offer_id}", {"clear_manual": True}, token=token)
+check(
+    "soltar los anclajes",
+    status == 200 and released["manual_fields"] == [],
+    f"HTTP {status}: {released.get('manual_fields')}",
+)
+check("soltar no borra lo corregido", released["year"] == 2018, str(released["year"]))
+status, _ = call("POST", "/offers/bulk", batch3, api_key=raw_key)
+status, back = call("GET", f"/offers/{offer_id}", token=token)
+check(
+    "suelto, el scraper vuelve a mandar",
+    back["year"] == 2023 and back["mileage_km"] == 11000,
+    f"año {back['year']} · {back['mileage_km']} km",
+)
+
 print("\n== favoritos ==")
 status, before = call("GET", "/stats/overview", token=token)
 favorites_before = before["favorite_offers"]

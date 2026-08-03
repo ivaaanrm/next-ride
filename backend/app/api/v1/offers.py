@@ -14,6 +14,7 @@ from app.api.deps import CurrentUser, IngestDep, SessionDep
 from app.core.config import settings
 from app.models import (
     CarModel,
+    Dealer,
     FuelType,
     Offer,
     OfferFavorite,
@@ -36,9 +37,15 @@ from app.schemas.offer import (
     OfferRankSummary,
     OfferRawRead,
     OfferRead,
+    OfferUpdate,
 )
 from app.services.metrics import enrich_offers, make_model_key
-from app.services.offers import favorite_offer_ids, ingest_offers, upsert_offer
+from app.services.offers import (
+    apply_manual_edit,
+    favorite_offer_ids,
+    ingest_offers,
+    upsert_offer,
+)
 
 router = APIRouter(prefix="/offers", tags=["offers"])
 
@@ -434,6 +441,49 @@ async def create_offers_bulk(
 ) -> IngestResult:
     """Ingesta en lote. Las ofertas con error se reportan sin abortar el resto."""
     return await ingest_offers(session, payload.offers)
+
+
+# --------------------------------------------------------------------------- #
+# Corrección manual
+#
+# El scraper acierta casi siempre y falla en lo de siempre: el año que viene en
+# el título y no en la ficha, los kilómetros con un punto de más, la versión mal
+# resuelta. Esto es la salida para eso, y no un CRUD de ofertas: solo se tocan
+# las columnas de `EDITABLE_FIELDS`, y cada una que se toca queda anclada para
+# que el siguiente pase del scraper no la deshaga (ver `apply_manual_edit`).
+# --------------------------------------------------------------------------- #
+@router.patch("/{offer_id}", response_model=OfferRead)
+async def update_offer(
+    session: SessionDep, user: CurrentUser, offer_id: int, payload: OfferUpdate
+) -> OfferRead:
+    """Corrige o completa a mano los datos de una oferta.
+
+    Solo se escriben los campos presentes en el cuerpo: mandar `year: null`
+    borra el año, no mandarlo lo deja como está. Es la diferencia entre corregir
+    y arrasar, y por eso el formulario del frontend manda únicamente el diff.
+    """
+    offer = await _get_offer_or_404(session, offer_id)
+
+    # Reatribuir a otra versión o a otro dealer se comprueba antes de escribir:
+    # el error de la restricción de clave ajena sería un 500 con un mensaje de
+    # Postgres dentro, y esto es un 404 con el nombre de lo que no existe.
+    if (
+        payload.car_model_id is not None
+        and payload.car_model_id != offer.car_model_id
+        and await session.get(CarModel, payload.car_model_id) is None
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Modelo no encontrado")
+    if (
+        payload.dealer_id is not None
+        and payload.dealer_id != offer.dealer_id
+        and await session.get(Dealer, payload.dealer_id) is None
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dealer no encontrado")
+
+    await apply_manual_edit(session, offer, payload, user.id)
+    await session.commit()
+    await session.refresh(offer)
+    return (await _serialize(session, [offer], user.id))[0]
 
 
 # --------------------------------------------------------------------------- #

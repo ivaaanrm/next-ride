@@ -252,7 +252,31 @@ export interface Offer {
   metrics: OfferMetrics;
   ai: OfferRankSummary | null;
   is_favorite: boolean;
+  /**
+   * Campos corregidos a mano. El scraper ya no los escribe: son los que ganó la
+   * persona. Se enseñan marcados en el editor porque un dato escrito a mano y
+   * uno traído del anuncio no valen lo mismo cuando algo no cuadra.
+   */
+  manual_fields: OfferEditableField[];
+  edited_at: string | null;
 }
+
+/** Las columnas que `PATCH /offers/{id}` deja escribir. Espejo de `EDITABLE_FIELDS`. */
+export type OfferEditableField =
+  | "title"
+  | "price"
+  | "original_price"
+  | "currency"
+  | "year"
+  | "mileage_km"
+  | "power_hp"
+  | "condition"
+  | "fuel_type"
+  | "transmission"
+  | "location"
+  | "image_url"
+  | "car_model_id"
+  | "dealer_id";
 
 /** Payload crudo del scraper. Se pide aparte, no viene en el listado. */
 export interface OfferRaw {

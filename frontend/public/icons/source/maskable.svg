@@ -1,0 +1,23 @@
+<!--
+  Variante enmascarable: el mismo monograma dentro del 80 % central, que es la
+  zona segura del recorte. Android y algunos lanzadores recortan el icono a la
+  forma que les da la gana (círculo, escudo, cuadrado redondeado) y todo lo que
+  quede fuera de ese 80 % puede desaparecer.
+
+  El fondo sí llega a sangre: lo que se recorta es color, no dibujo.
+
+  Se rasteriza con `sips` igual que `icon.svg`; el comando está en el blueprint
+  (§8.3).
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#1961ed" />
+  <g fill="#ffffff" transform="translate(256 256) scale(0.8) translate(-256 -256)">
+    <path d="M104 180h36v152h-36z M204 180h36v152h-36z M104 180h36l100 152h-36z" />
+    <path d="M272 180h36v152h-36z" />
+    <path
+      fill-rule="evenodd"
+      d="M272 180H342A48 48 0 0 1 342 276H272ZM308 216H342A12 12 0 0 1 342 240H308Z"
+    />
+    <path d="M324 276h46l38 56h-46z" />
+  </g>
+</svg>
