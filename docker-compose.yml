@@ -36,6 +36,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nextride}
       POSTGRES_DB: ${POSTGRES_DB:-nextride}
       AUTO_CREATE_TABLES: ${AUTO_CREATE_TABLES:-true}
+      # El entrypoint migra antes de arrancar; igual que en producción, para
+      # que el desarrollo no vaya por un camino distinto al del servidor.
+      RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}
       SECRET_KEY: ${SECRET_KEY:-dev-secret-change-me}
       ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
       FIRST_SUPERUSER_EMAIL: ${FIRST_SUPERUSER_EMAIL:-admin@next-ride.dev}

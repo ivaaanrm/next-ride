@@ -15,17 +15,25 @@ RUN apt-get update \
 COPY requirements.txt ./
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
-COPY pyproject.toml alembic.ini ./
+COPY pyproject.toml alembic.ini entrypoint.sh ./
 COPY alembic ./alembic
 COPY scripts ./scripts
 COPY app ./app
 
-RUN useradd --create-home --uid 1000 appuser && chown -R appuser:appuser /app
+# El bit de ejecución viaja en git, pero se fuerza aquí por si el checkout se
+# hace en un sistema de ficheros que no lo conserva.
+RUN chmod +x entrypoint.sh \
+    && useradd --create-home --uid 1000 appuser && chown -R appuser:appuser /app
 USER appuser
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=5 \
+# `start-period` holgado: antes de uvicorn corre `alembic upgrade head`, y una
+# migración sobre una tabla grande puede tardar. Los fallos dentro de esa
+# ventana no cuentan como reintentos.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=90s --retries=5 \
     CMD curl -fsS http://localhost:8000/health || exit 1
 
+# El entrypoint migra y cede el proceso al CMD.
+ENTRYPOINT ["./entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

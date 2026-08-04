@@ -77,17 +77,30 @@ añadir un valor no requiera migrar un tipo de Postgres.
 
 ### Esquema y migraciones
 
-En la v1 el esquema se crea al arrancar (`AUTO_CREATE_TABLES=true`), lo que
-garantiza que coincide con los modelos. Eso vale para crear tablas, pero no para
-**cambiar** una que ya existe, así que los cambios sobre tablas vivas llevan su
-revisión de Alembic:
+El esquema lo llevan **dos** mecanismos, y los dos hacen falta:
+
+- `Base.metadata.create_all` al arrancar la app (`AUTO_CREATE_TABLES=true`) crea
+  las **tablas** que falten. No toca una tabla que ya exista.
+- **Alembic** lleva los **ALTER**: columnas nuevas sobre tablas vivas, que es
+  justo lo que `create_all` no sabe hacer.
+
+Las migraciones no construyen la base desde cero —dan por hecho que `create_all`
+ya creó las tablas—, así que `AUTO_CREATE_TABLES` no puede ponerse a `false`
+mientras no exista una revisión inicial completa.
+
+`alembic upgrade head` lo lanza el `entrypoint.sh` de la imagen del backend
+antes de arrancar uvicorn, así que **no hay que ejecutarlo a mano**: migra igual
+el despliegue continuo que un `docker compose up` en el servidor. Si una
+migración falla, el contenedor no arranca y el despliegue revierte.
+
+Para lanzarlo suelto (una base que se quedó atrás, un `uvicorn` local):
 
 ```bash
 docker compose exec backend alembic upgrade head
 ```
 
-Hay cuatro, y todas se saltan a sí mismas si el esquema ya tiene la forma nueva,
-para que una base recién creada por `create_all` no falle al aplicarlas:
+Todas las revisiones se saltan a sí mismas si el esquema ya tiene la forma
+nueva, así que aplicarlas sobre una base recién creada por `create_all` no falla:
 
 | Revisión | Qué cambia |
 |---|---|
@@ -95,22 +108,25 @@ para que una base recién creada por `create_all` no falle al aplicarlas:
 | `0002_scraping_config_api` | `scrape_sources` y `scrape_targets` |
 | `0003_score_config` | `score_config`: pesos y parámetros editables de la puntuación |
 | `0004_offer_manual_edit` | `offers.manual_fields`, `edited_at` y `edited_by_id`: la corrección manual |
+| `0005_offer_manual_ratings` | `offers.equipment_rating` y `apparent_condition_rating`: las notas manuales |
+| `0006_power_score_curve` | La ventana de potencia de la puntuación pasa a 100-200 CV con curva cuadrática |
 
-`0004` es la única que toca una tabla viva y con datos, así que **es obligatoria**
-para que el editor de ofertas funcione: `create_all` crea tablas que faltan, no
-columnas que faltan.
+De la `0004` en adelante todas tocan tablas vivas y con datos, así que son
+**obligatorias**: sin ellas la app arranca y revienta en la primera consulta que
+seleccione la columna que falta.
+
+Por eso `/health` compara la revisión aplicada con la última escrita y devuelve
+**503** si no coinciden: un esquema desfasado deja el contenedor en `unhealthy`
+en vez de dar verde sobre una app rota. La respuesta lleva el detalle:
+
+```json
+{"status": "stale_schema", "schema": {"current": "0004_offer_manual_edit", "head": "0006_power_score_curve", "up_to_date": false}}
+```
 
 Para regenerar el esquema desde cero (borra los datos):
 
 ```bash
 make clean && make up
-```
-
-Cuando el esquema pase a gestionarse solo con Alembic, genera la revisión base y
-pon `AUTO_CREATE_TABLES=false`:
-
-```bash
-docker compose exec backend alembic revision --autogenerate -m "init"
 ```
 
 ---

@@ -49,9 +49,15 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-nextride}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?define POSTGRES_PASSWORD en .env.prod}
       POSTGRES_DB: ${POSTGRES_DB:-nextride}
-      # v1: el esquema se crea al arrancar. Cuando el proyecto pase a Alembic,
-      # esto va a false y las migraciones se lanzan a mano en el despliegue.
+      # El esquema lo llevan las dos cosas, y las dos hacen falta: `create_all`
+      # crea las tablas que falten (las migraciones no construyen la base desde
+      # cero, dan por hecho que existe) y Alembic lleva los ALTER, que
+      # `create_all` no sabe hacer sobre una tabla que ya está.
       AUTO_CREATE_TABLES: ${AUTO_CREATE_TABLES:-true}
+      # El entrypoint corre `alembic upgrade head` antes de uvicorn. A false
+      # solo como escape: si una migración se atasca y hace falta la app en
+      # pie, con la contrapartida de que /health devolverá 503.
+      RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}
       SECRET_KEY: ${SECRET_KEY:?define SECRET_KEY en .env.prod (openssl rand -hex 32)}
       ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-false}
       FIRST_SUPERUSER_EMAIL: ${FIRST_SUPERUSER_EMAIL:-}
