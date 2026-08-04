@@ -110,6 +110,7 @@ nueva, así que aplicarlas sobre una base recién creada por `create_all` no fal
 | `0004_offer_manual_edit` | `offers.manual_fields`, `edited_at` y `edited_by_id`: la corrección manual |
 | `0005_offer_manual_ratings` | `offers.equipment_rating` y `apparent_condition_rating`: las notas manuales |
 | `0006_power_score_curve` | La ventana de potencia de la puntuación pasa a 100-200 CV con curva cuadrática |
+| `0007_power_score_s_curve` | Esa curva pasa de parábola a S: 150 CV puntúan 73 en vez de 25 |
 
 De la `0004` en adelante todas tocan tablas vivas y con datos, así que son
 **obligatorias**: sin ellas la app arranca y revienta en la primera consulta que

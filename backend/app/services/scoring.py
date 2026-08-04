@@ -19,6 +19,7 @@ siempre: los mismos datos y la misma fecha dan la misma cifra.
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -48,6 +49,29 @@ _SINGLETON_ID = 1
 
 def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
+
+
+def _sigmoid(z: float) -> float:
+    """Logística estable: la forma ingenua desborda con exponentes grandes."""
+    if z >= 0:
+        return 1 / (1 + math.exp(-z))
+    exponential = math.exp(z)
+    return exponential / (1 + exponential)
+
+
+def _s_curve(value: float, low: float, high: float, mid: float, steepness: float) -> float:
+    """S de 0 a 100: plana en los extremos, empinada alrededor de `mid`.
+
+    La logística cruda no llega nunca a 0 ni a 100, así que se renormaliza sobre
+    lo que vale en los bordes de la ventana: sin eso los topes serían aproximados
+    y el componente no podría dar un 100 limpio.
+    """
+    floor, ceiling = _sigmoid(steepness * (low - mid)), _sigmoid(steepness * (high - mid))
+    span = ceiling - floor
+    if span <= 0:  # solo alcanzable con parámetros degenerados; recta y a correr
+        return _clamp((value - low) / (high - low) * 100, 0, 100)
+    position = _sigmoid(steepness * (_clamp(value, low, high) - mid))
+    return _clamp((position - floor) / span * 100, 0, 100)
 
 
 # --------------------------------------------------------------------------- #
@@ -212,9 +236,16 @@ MANUAL_RATINGS: tuple[tuple[str, str], ...] = (
 def component_descriptions(params: ScoreParams) -> dict[str, str]:
     """Explicaciones generadas de los propios parámetros: no pueden quedar viejas."""
     km_year = f"{params.expected_km_per_year:,.0f}".replace(",", ".")
-    # La mitad de la rampa de potencia, para enseñar cuánto la hunde la curva.
-    power_mid_hp = (params.power_zero_score_hp + params.power_full_score_hp) / 2
-    power_mid_score = 0.5**params.power_curve_exponent * 100
+    # El centro geométrico de la ventana de potencia y lo que puntúa: es donde
+    # se ve de un vistazo lo asimétrica que es la S.
+    power_window_mid = (params.power_zero_score_hp + params.power_full_score_hp) / 2
+    power_window_mid_score = _s_curve(
+        power_window_mid,
+        params.power_zero_score_hp,
+        params.power_full_score_hp,
+        params.power_mid_hp,
+        params.power_curve_steepness,
+    )
     return {
         "price_vs_market": (
             "Desviación del precio frente a la mediana de las ofertas activas del mismo "
@@ -240,9 +271,10 @@ def component_descriptions(params: ScoreParams) -> dict[str, str]:
             f"Más potencia puntúa más alto: {params.power_zero_score_hp:.0f} CV o menos es "
             f"un 0 y {params.power_full_score_hp:.0f} CV o más un 100. Fuera de esa ventana "
             "la señal se agota: ni un utilitario pierde más por ser aún menos potente ni un "
-            "deportivo gana más por serlo aún más. Dentro, la rampa va curvada "
-            f"(exponente {params.power_curve_exponent:g}) para premiar más los CV altos: "
-            f"{power_mid_hp:.0f} CV, la mitad de la rampa, puntúa {power_mid_score:.0f}."
+            "deportivo gana más por serlo aún más. Dentro va una curva en S: dura abajo, "
+            f"empinada al pasar de {params.power_mid_hp:.0f} CV —el despegue, donde más sube "
+            f"por cada CV— y saturada arriba, así que {power_window_mid:.0f} CV ya puntúan "
+            f"{power_window_mid_score:.0f}."
         ),
         "transmission": "Cambio automático puntúa 100 y manual 0; otros tipos, 50.",
         "equipment": (
@@ -370,19 +402,23 @@ def _components(
     else:
         out.append(_Component("age", None, "años", None))
 
-    # Potencia: rampa acotada entre el CV que puntúa 0 y el que puntúa 100,
-    # curvada por el exponente. La posición en la rampa se acota *antes* de
-    # elevarla, así que fuera de la ventana la curva no dispara ni se hunde:
-    # todo lo que baja del suelo es un 0 y todo lo que pasa del techo, un 100.
+    # Potencia: S entre el CV que puntúa 0 y el que puntúa 100, con el despegue
+    # en `power_mid_hp`. Fuera de la ventana la señal se agota por los dos
+    # lados: un utilitario no pierde más por ser aún menos potente ni un
+    # deportivo gana más por serlo aún más.
     if offer.power_hp:
-        ramp = params.power_full_score_hp - params.power_zero_score_hp
-        position = _clamp((offer.power_hp - params.power_zero_score_hp) / ramp, 0, 1)
         out.append(
             _Component(
                 "power",
                 float(offer.power_hp),
                 "CV",
-                position**params.power_curve_exponent * 100,
+                _s_curve(
+                    offer.power_hp,
+                    params.power_zero_score_hp,
+                    params.power_full_score_hp,
+                    params.power_mid_hp,
+                    params.power_curve_steepness,
+                ),
             )
         )
     else:

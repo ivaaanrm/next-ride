@@ -206,7 +206,8 @@ export interface ScoreParams {
   min_market_comparables: number;
   power_zero_score_hp: number;
   power_full_score_hp: number;
-  power_curve_exponent: number;
+  power_mid_hp: number;
+  power_curve_steepness: number;
 }
 
 export interface ScoreConfig {

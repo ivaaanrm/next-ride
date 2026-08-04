@@ -87,18 +87,34 @@ class ScoreParams(BaseModel):
     freshness_zero_score_days: float = Field(default=60, gt=0, le=365)
     min_market_comparables: int = Field(default=3, ge=2, le=50)
 
-    # Potencia: rampa entre el CV que puntúa 0 y el que puntúa 100, curvada por
-    # el exponente. Con 1 la rampa es lineal; por encima, la curva es plana abajo
-    # y empinada arriba, así que los CV ganados cerca del tope valen más que los
-    # ganados cerca del suelo (con 2, la mitad de la rampa puntúa 25 y no 50).
+    # Potencia: curva en S entre el CV que puntúa 0 y el que puntúa 100.
+    #
+    # No es una potencia de la posición (`t**γ`) porque esa familia no puede dar
+    # a la vez las dos cosas que se le piden: con γ>1 el centro de la ventana
+    # queda hundido —150 CV valía 25— y con γ<1 sube el centro pero también el
+    # suelo, y un motor flojo dejaría de puntuar poco. La S separa ambos
+    # extremos: dura abajo, empinada en el centro, saturada arriba.
+    #
+    # `power_mid_hp` es el punto de inflexión: los CV donde la curva sube más
+    # por cada CV ganado. No puntúa exactamente 50 —la renormalización que fija
+    # los topes en 0 y 100 lo desplaza—, pero sí marca dónde despega la señal.
+    # `power_curve_steepness` es lo brusca que es la transición; hacia 0 la
+    # curva tiende a la recta.
     power_zero_score_hp: float = Field(default=100, ge=0, le=500)
     power_full_score_hp: float = Field(default=200, gt=0, le=1000)
-    power_curve_exponent: float = Field(default=2.0, ge=1, le=5)
+    power_mid_hp: float = Field(default=135, ge=0, le=1000)
+    power_curve_steepness: float = Field(default=0.07, ge=0.01, le=0.5)
 
     @model_validator(mode="after")
     def _power_ramp_ordered(self) -> ScoreParams:
         if self.power_full_score_hp <= self.power_zero_score_hp:
             raise ValueError("power_full_score_hp debe ser mayor que power_zero_score_hp")
+        # La inflexión estrictamente dentro de la ventana: fuera, la S degenera
+        # en un tramo casi recto y el parámetro deja de significar lo que dice.
+        if not self.power_zero_score_hp < self.power_mid_hp < self.power_full_score_hp:
+            raise ValueError(
+                "power_mid_hp debe estar entre power_zero_score_hp y power_full_score_hp"
+            )
         return self
 
     @field_validator("residual_curve")
