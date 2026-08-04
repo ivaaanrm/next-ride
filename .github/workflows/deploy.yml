@@ -1,0 +1,237 @@
+# Despliegue continuo a producción.
+#
+# Al hacer push a `main`, el workflow primero reproduce el build de producción
+# en el runner y, solo si sale limpio, entra por SSH al servidor y levanta el
+# stack de `compose.prod.yml`. El servidor construye las imágenes desde el
+# código (igual que el despliegue a mano documentado en `.env.prod.example`),
+# así que aquí no se publica nada a un registro.
+#
+# Configuración necesaria en el repositorio (Settings → Secrets and variables):
+#
+#   Secrets                Qué es
+#   ---------------------  ------------------------------------------------
+#   SSH_HOST               IP o dominio del servidor
+#   SSH_USER               usuario con permiso para usar docker
+#   SSH_PRIVATE_KEY        clave privada de despliegue, entera, sin passphrase
+#   SSH_KNOWN_HOSTS        salida de `ssh-keyscan -H <host>`, para no
+#                          conectarse a ciegas
+#
+#   Variables              Qué es
+#   ---------------------  ------------------------------------------------
+#   DEPLOY_PATH            ruta del repositorio en el servidor
+#                          (p. ej. /srv/next-ride)
+#   DOMAIN                 dominio público, para el health check final
+#                          (p. ej. nextride.romerolabs.es)
+#   SSH_PORT               opcional, por defecto 22
+#
+# En el servidor, una única vez: clonar el repositorio en DEPLOY_PATH y dejar
+# ahí el fichero `.env.prod` con los secretos. El repositorio es público, así
+# que el `git fetch` no necesita credenciales.
+
+name: Desplegar a producción
+
+on:
+  push:
+    branches: [main]
+    # La documentación no se despliega: no tiene sentido reconstruir las
+    # imágenes por un cambio en el README.
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+  workflow_dispatch:
+
+# Un despliegue a la vez. `cancel-in-progress: false` a propósito: cancelar a
+# mitad dejaría el servidor con el `git reset` hecho y los contenedores viejos.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verificar
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # La misma major que el `node:22-alpine` del Dockerfile del frontend.
+          node-version: 22
+
+      # pnpm sale de corepack, que resuelve la versión del campo
+      # `packageManager` del package.json: runner, imagen y portátil instalan
+      # con la misma.
+      - name: Habilitar pnpm
+        run: corepack enable
+
+      - name: Localizar el store de pnpm
+        id: pnpm-store
+        working-directory: frontend
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
+      - name: Instalar dependencias del frontend
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      # `validate:mobile` = build (tsc incluido) + auditoría PWA + presupuestos
+      # de peso. Es la puerta que ya define el propio proyecto.
+      - name: Build, auditoría PWA y presupuestos
+        working-directory: frontend
+        run: pnpm validate:mobile
+
+      # Informativo: hoy `ruff` marca hallazgos previos en `app/` y en
+      # `scripts/`. Cuando esos queden a cero, quitar `continue-on-error` para
+      # que el lint bloquee el despliegue.
+      - name: Lint del backend (informativo)
+        continue-on-error: true
+        working-directory: backend
+        run: pipx run ruff check app alembic scripts
+
+      # Construye las dos imágenes tal y como lo hará el servidor. Cubre el
+      # agujero que ni el build del frontend ni el lint ven: un Dockerfile que
+      # no copia un fichero nuevo, una dependencia que no resuelve o una
+      # variable que falta en `compose.prod.yml`. Los valores son de pega, la
+      # imagen se descarta: aquí solo interesa que construya.
+      - name: Construir las imágenes de producción
+        env:
+          DOMAIN: ci.invalid
+          POSTGRES_PASSWORD: ci
+          SECRET_KEY: ci
+        run: docker compose -f compose.prod.yml build
+
+  deploy:
+    name: Desplegar
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production
+      url: https://${{ vars.DOMAIN }}
+    steps:
+      # Falla pronto y con un mensaje claro: sin esto, un secreto sin poner se
+      # manifiesta como un `ssh` que se cuelga o un health check contra
+      # `https:///health`.
+      - name: Comprobar la configuración
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+          DOMAIN: ${{ vars.DOMAIN }}
+        run: |
+          missing=""
+          for name in SSH_HOST SSH_USER SSH_PRIVATE_KEY SSH_KNOWN_HOSTS DEPLOY_PATH DOMAIN; do
+            [ -n "${!name:-}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Falta configurar:$missing (Settings → Secrets and variables → Actions)"
+            exit 1
+          fi
+
+      - name: Preparar la clave SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_deploy
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_deploy ~/.ssh/known_hosts
+
+      - name: Levantar la versión nueva
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ vars.SSH_PORT || '22' }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+          DOMAIN: ${{ vars.DOMAIN }}
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          ssh -i ~/.ssh/id_deploy -p "$SSH_PORT" \
+              -o BatchMode=yes -o StrictHostKeyChecking=yes \
+              "$SSH_USER@$SSH_HOST" \
+              "DEPLOY_PATH='$DEPLOY_PATH' DOMAIN='$DOMAIN' TARGET_SHA='$TARGET_SHA' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          cd "$DEPLOY_PATH"
+
+          if [ ! -f .env.prod ]; then
+            echo "Falta $DEPLOY_PATH/.env.prod: sin él el compose arrancaría sin secretos." >&2
+            exit 1
+          fi
+
+          PREV_SHA="$(git rev-parse HEAD)"
+          echo "Versión desplegada ahora: $PREV_SHA"
+          echo "Versión a desplegar:      $TARGET_SHA"
+
+          git fetch --prune origin main
+          # `reset --hard` solo revierte ficheros versionados; `.env.prod` está
+          # sin versionar y sobrevive. No añadir nunca un `git clean` aquí: se
+          # llevaría por delante justo ese fichero.
+          git reset --hard "$TARGET_SHA"
+
+          # `--wait` devuelve error si algún contenedor no llega a healthy: los
+          # tres servicios declaran healthcheck (db en el compose, backend y
+          # frontend en sus Dockerfile).
+          levantar() {
+            docker compose --env-file .env.prod -f compose.prod.yml \
+              up -d --build --remove-orphans --wait --wait-timeout 300
+          }
+
+          revertir() {
+            echo "Revirtiendo a $PREV_SHA" >&2
+            git reset --hard "$PREV_SHA"
+            levantar
+          }
+
+          if ! levantar; then
+            echo "Los contenedores no llegaron a healthy." >&2
+            revertir
+            exit 1
+          fi
+
+          # Comprobación extremo a extremo: por el dominio público, así que
+          # cubre también el camino por Traefik y el certificado, no solo el
+          # contenedor. Traefik puede tardar un poco en ver el contenedor nuevo.
+          ok=0
+          for _ in $(seq 1 12); do
+            if curl -fsS --max-time 10 "https://$DOMAIN/health" >/dev/null; then
+              ok=1
+              break
+            fi
+            sleep 5
+          done
+
+          if [ "$ok" -ne 1 ]; then
+            echo "https://$DOMAIN/health no responde." >&2
+            revertir
+            exit 1
+          fi
+
+          # Solo las imágenes huérfanas del build. Sin `-a`: el servidor es
+          # compartido y se llevaría imágenes de otras apps.
+          docker image prune -f
+
+          echo "Desplegado $TARGET_SHA"
+          docker compose --env-file .env.prod -f compose.prod.yml ps
+          REMOTE
+
+      - name: Resumen
+        if: always()
+        env:
+          DOMAIN: ${{ vars.DOMAIN }}
+        run: |
+          {
+            echo "### Despliegue ${{ job.status }}"
+            echo ""
+            echo "- Commit: \`${{ github.sha }}\`"
+            echo "- URL: https://$DOMAIN"
+          } >> "$GITHUB_STEP_SUMMARY"

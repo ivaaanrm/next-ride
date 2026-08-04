@@ -1,6 +1,9 @@
 # Entorno
 .env
 .env.local
+# El fichero de secretos reales de producción, el que vive en el servidor.
+# `.env.prod.*` (la línea de abajo) NO lo cubre: no hay punto tras `prod`.
+.env.prod
 .env.prod.*
 *.local
 
