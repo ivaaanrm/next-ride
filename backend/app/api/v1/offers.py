@@ -35,6 +35,7 @@ from app.schemas.offer import (
     OfferIngest,
     OfferPricePoint,
     OfferRankSummary,
+    OfferRatingUpdate,
     OfferRawRead,
     OfferRead,
     OfferUpdate,
@@ -552,6 +553,33 @@ async def expire_offer(
 async def restore_offer(session: SessionDep, user: CurrentUser, offer_id: int) -> OfferRead:
     """Devuelve la oferta a la lista activa, venga de un descarte o de una expiración."""
     return await _move_to(session, user, offer_id, OfferStatus.ACTIVE)
+
+
+# --------------------------------------------------------------------------- #
+# Valoración manual — las dos señales que no están en el anuncio
+#
+# Endpoint propio y no un campo más de `PATCH /offers/{id}`: aquello corrige
+# datos del origen y por eso ancla cada campo que toca contra el scraper. Estas
+# notas no las trae ningún origen, así que no hay nada contra lo que anclarlas, y
+# meterlas en `manual_fields` habría hecho que valorar un coche se contara como
+# «corregido a mano» en su procedencia, que es justo lo contrario de lo que pasó.
+# --------------------------------------------------------------------------- #
+@router.put("/{offer_id}/rating", response_model=OfferRead)
+async def rate_offer(
+    session: SessionDep, user: CurrentUser, offer_id: int, payload: OfferRatingUpdate
+) -> OfferRead:
+    """Pone o quita las notas de equipamiento y estado aparente (1-5 ★).
+
+    Solo se escriben las que vienen en el cuerpo: mandar una deja la otra como
+    estaba, y mandarla a `null` la borra —lo que devuelve la señal a «sin dato»
+    y reparte su peso, en vez de dejarla puntuando 0—.
+    """
+    offer = await _get_offer_or_404(session, offer_id)
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(offer, field, value)
+    await session.commit()
+    await session.refresh(offer)
+    return (await _serialize(session, [offer], user.id))[0]
 
 
 # --------------------------------------------------------------------------- #

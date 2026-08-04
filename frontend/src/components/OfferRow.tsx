@@ -22,17 +22,23 @@ import type { Offer, OfferStatus } from "../types";
  * es: un registro por fila.
  *
  * La gramática no cambia nunca de fila a fila, que es lo único que hace legible
- * un barrido vertical rápido:
+ * un barrido vertical rápido. Son dos columnas —quién es a la izquierda, cuánto
+ * vale a la derecha— repartidas en tres líneas:
  *
- *   1. **Identidad** — qué coche es. `{marca} {modelo}` con cuerpo y peso, la
- *      versión detrás en gris y recortada.
- *   2. **El juicio** — la cifra por la que existe el producto, a 18 px, con
- *      `tabular-nums` y anclada a una x fija para que la columna se lea de
- *      arriba abajo sin que el ojo la busque. Al lado, y solo al lado, lo que
- *      califica esa cifra: la desviación contra la mediana en pantalla, la
- *      puntuación de valor y el puesto de la IA **si lo hay**.
+ *   1. **Identidad y precio** — `{marca} {modelo}` con cuerpo y peso a la
+ *      izquierda; a la derecha la cifra por la que existe el producto, a 18 px,
+ *      con `tabular-nums` y alineada al mismo borde en todas las filas, que es lo
+ *      que la hace columna de verdad.
+ *   2. **Versión y juicio** — la versión en gris y recortada a la izquierda;
+ *      debajo del precio, lo que lo califica: la desviación contra la mediana en
+ *      pantalla, la puntuación de valor y el puesto de la IA **si lo hay**.
  *   3. **La evidencia** — año, kilómetros, uso, combustible y sitio. Una línea,
  *      recortada, en el gris de tercer nivel.
+ *
+ * Es la misma gramática de `.record-head` —la cifra que decide, arriba a la
+ * derecha— que ya usan Modelos, Dealers y API keys. Antes no: el precio vivía en
+ * mitad de la segunda línea y la versión se comía la primera, así que la única
+ * pantalla que se barre a diario era la única que no se leía como las demás.
  *
  * El combustible va con su palabra entera («Diésel»), no con la inicial: la
  * letra funcionaba en la tabla porque el `title` la explicaba, y en táctil no
@@ -84,35 +90,44 @@ export function OfferRow({
             disabled={leaving}
             onClick={() => onOpen(offer)}
           >
-            <span className="offer-line offer-identity">
+            <span className="offer-line offer-head">
               <span className="offer-name">
                 {offer.car_model.make} {offer.car_model.model}
               </span>
+              <span className="offer-price">{formatPrice(offer.price)}</span>
+            </span>
+
+            <span className="offer-line offer-qualifiers">
               {offer.car_model.trim ? (
                 <span className="offer-trim">{offer.car_model.trim}</span>
               ) : null}
-            </span>
-
-            <span className="offer-line offer-judgement">
-              <span className="offer-price">{formatPrice(offer.price)}</span>
-              <VsMedian price={offer.price} median={median} />
-              <Score value={offer.metrics.value_score} />
-              {/* Solo si la IA ha rankeado esta oferta: una insignia vacía en
-                  cada fila enseñaría el hueco y no el dato. */}
-              {offer.ai ? (
-                /* La explicación va en texto y no en `aria-label`: el nombre de
-                   la fila lo componen sus contenidos, y ARIA no permite nombrar
-                   un `span` sin rol. Sin esto la fila se leía «24.590 € −8,2 %
-                   72 3», cuatro cifras seguidas sin una sola palabra que dijera
-                   de qué son —o «723», si el lector no mete separación entre dos
-                   cajas flex contiguas. */
-                <span className={`rank-badge${offer.ai.rank <= 3 ? " top" : ""}`}>
-                  {offer.ai.rank}
-                  <span className="sr-only">
-                    {` de puesto para la IA, ${VERDICT_LABELS[offer.ai.verdict]}`}
+              {/* El grupo va pegado al borde derecho, así que lo último que
+                  lleve es lo que cae siempre en la misma x. Ahí va la puntuación
+                  —la señal de la casa, y la que se lee como columna al barrer—, y
+                  el puesto de la IA se pone delante, que además es el orden que
+                  ya tienen las columnas en la tabla del escritorio. Al revés, una
+                  fila rankeada empujaba la puntuación y la columna se rompía cada
+                  pocas filas. */}
+              <span className="offer-marks">
+                {/* Solo si la IA ha rankeado esta oferta: una insignia vacía en
+                    cada fila enseñaría el hueco y no el dato. */}
+                {offer.ai ? (
+                  /* La explicación va en texto y no en `aria-label`: el nombre de
+                     la fila lo componen sus contenidos, y ARIA no permite nombrar
+                     un `span` sin rol. Sin esto la fila se leía «24.590 € −8,2 %
+                     72 3», cuatro cifras seguidas sin una sola palabra que dijera
+                     de qué son —o «723», si el lector no mete separación entre dos
+                     cajas flex contiguas. */
+                  <span className={`rank-badge${offer.ai.rank <= 3 ? " top" : ""}`}>
+                    {offer.ai.rank}
+                    <span className="sr-only">
+                      {` de puesto para la IA, ${VERDICT_LABELS[offer.ai.verdict]}`}
+                    </span>
                   </span>
-                </span>
-              ) : null}
+                ) : null}
+                <VsMedian price={offer.price} median={median} />
+                <Score value={offer.metrics.value_score} bar={false} />
+              </span>
             </span>
 
             <span className="offer-line offer-evidence-line">{evidenceOf(offer)}</span>

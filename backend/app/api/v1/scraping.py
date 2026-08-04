@@ -181,8 +181,17 @@ async def replace_targets(
         selected_ids.add(identity)
 
     for target in existing:
-        if (target.source_id, target.make_model_key) not in selected_ids:
-            target.is_active = False
+        if (target.source_id, target.make_model_key) in selected_ids:
+            continue
+        # La selección que llega describe únicamente fuentes activas: son las
+        # que la UI puede marcar y las únicas que este endpoint acepta. Apagar
+        # por omisión los targets de una fuente inactiva borraría lo que tenía
+        # configurado, y volver a activarla la dejaría vacía. Mientras esté
+        # inactiva no se rastrea nada suyo —`/scraping/config` filtra por fuente
+        # activa—, así que conservarlos no cuela ninguna búsqueda de más.
+        if not target.source.is_active:
+            continue
+        target.is_active = False
 
     await session.commit()
     for target in selected:

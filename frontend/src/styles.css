@@ -82,14 +82,26 @@
   --safe-right: env(safe-area-inset-right, 0px);
 
   /* ---- Geometría táctil ----------------------------------------------------
-     Suelo de Apple HIG. Es **área de impacto, no tinta**: la estrella sigue
-     dibujando 20px dentro de una caja de 44. */
+     `--tap-target` es **área de impacto, no tinta**: la estrella sigue dibujando
+     20 px dentro de una caja de 44, y ahí se queda el suelo de Apple HIG, porque
+     un botón de icono no paga nada por ser grande —no dibuja caja—.
+
+     Un botón con rótulo sí la dibuja, y ahí 44 px no era un suelo sino un peso:
+     en una cabecera con tres acciones o en un riel de cinco chips, la mitad del
+     pliegue se iba en cromo. Los controles con rótulo bajan a una escala de dos
+     alturas —36 el normal, 32 el compacto—, que sigue muy por encima de los
+     24 × 24 que pide WCAG 2.5.8 AA y deja el alto para lo que se lee.
+
+     La excepción es `--control-height-touch-lg`: la acción única de una pantalla
+     —«Entrar» en el login— se queda en 44. */
   --tap-target: 44px;
-  --control-height-touch: 44px; /* .btn/.input/.select por debajo de 860px */
+  --control-height-touch: 36px; /* .btn/.input/.select por debajo de 860px */
+  --control-height-touch-sm: 32px; /* .btn-sm y los chips con rótulo */
+  --control-height-touch-lg: 44px; /* .btn-lg: la acción única de una pantalla */
   --row-height-touch: 76px; /* la fila de oferta de tres líneas */
   --topbar-height-touch: 44px;
   --tabbar-height: 56px;
-  --rail-height: 56px; /* riel de chips de filtro */
+  --rail-height: 48px; /* riel de chips de filtro: 36 de chip y su aire */
   /* dvh y no vh: en iOS la unidad `vh` mide contra el viewport grande, así que
      una hoja medida en vh se sale por debajo de la barra de herramientas. */
   --sheet-max-height: 92dvh;
@@ -736,6 +748,42 @@ summary,
   border-color: var(--accent-hover);
 }
 
+/* ---- El estado «puesto» de un control --------------------------------------
+ *
+ * Un solo vocabulario para «esto está encendido» o «esto tiene un valor puesto»:
+ * filete y tinta de acento sobre su relleno suave. Lo comparten el botón con
+ * estado, el interruptor de ámbito, el desplegable fuera de su valor por
+ * defecto, el panel anclado con filtro y los chips del riel.
+ *
+ * **No es `btn-primary`.** El relleno sólido dice «la acción de esta pantalla», y
+ * en la lista de modelos había cuatro seguidos diciendo «ya lo sigues», que no es
+ * una acción sino un estado. Un estado no grita: se reconoce.
+ *
+ * El `:not(:disabled)` no es defensivo, es de cascada: sin él, `.btn:hover` y
+ * `.btn:active` —que están escritos más arriba con esa misma especificidad— le
+ * ganaban por orden y un control encendido se apagaba al pasar el ratón.
+ * --------------------------------------------------------------------------- */
+.btn.on:not(:disabled),
+.toggle[aria-pressed="true"]:not(:disabled),
+.popover-trigger.on:not(:disabled),
+.rail-chip.on:not(:disabled),
+.rail-chip.applied:not(:disabled),
+.select.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* Pulsado, el relleno se retira: con el dedo encima, un cambio de figura se ve
+   donde un cambio de luminosidad no. */
+.btn.on:active:not(:disabled),
+.toggle[aria-pressed="true"]:active:not(:disabled),
+.rail-chip.on:active:not(:disabled),
+.rail-chip.applied:active:not(:disabled) {
+  background: var(--surface-hover);
+}
+
 .btn-ghost {
   border-color: transparent;
   background: transparent;
@@ -783,9 +831,9 @@ summary,
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
-/* Desplegable que no está en su valor por defecto. Mismo acento que `.toggle`
-   encendido y que `.popover-trigger.on`: lo que acota la tabla se reconoce de un
-   vistazo, sin leer cada control. */
+/* Desplegable que no está en su valor por defecto. El acento lo pone el bloque
+   de «estado puesto», que es el mismo para todos los controles; aquí solo queda
+   lo que es suyo. */
 .select.on {
   border-color: var(--accent);
   background: var(--accent-soft);
@@ -873,12 +921,6 @@ summary,
   font-size: 12px;
 }
 
-.toggle[aria-pressed="true"] {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
 .toggle-mark {
   font-size: 11px;
   line-height: 1;
@@ -893,12 +935,6 @@ summary,
 .popover-trigger {
   gap: var(--space-xs);
   font-variant-numeric: tabular-nums;
-}
-
-.popover-trigger.on {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent);
 }
 
 .popover-caret {
@@ -1581,6 +1617,54 @@ table.records tbody tr.row-leaving {
   cursor: not-allowed;
 }
 
+/* Nota de 1 a 5 estrellas (`StarRating`).
+
+   En una línea y sin partirse: la cruz que borra la nota pertenece a las
+   estrellas que tiene al lado, y bajada a un renglón propio se leía como otra
+   cosa —un botón suelto debajo de la fila— además de doblar su alto. Si el
+   ancho no da, quien se mueve es el bloque entero (lo decide quien lo coloca),
+   nunca la cruz sola. */
+.star-rating {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-wrap: nowrap;
+}
+
+/* Las cinco van pegadas y con su propio suelo táctil: son una escala, y hay que
+   poder apuntar a la tercera con el pulgar sin darle a la segunda. El grupo
+   entero es una parada de tabulador, así que el anillo de foco se dibuja sobre
+   la estrella que lo tiene, no sobre la caja. */
+.star-rating-stars {
+  display: flex;
+  gap: 2px;
+}
+
+.star-rating-stars .star {
+  width: var(--tap-target);
+  height: var(--tap-target);
+  font-size: 18px;
+}
+
+/* Quitar la nota solo existe cuando hay nota que quitar; sin ella el mismo hueco
+   se queda vacío, para que poner la primera estrella no corra las cinco.
+
+   La cruz va con el gris de `.icon-btn` y no con el de las estrellas vacías, que
+   la dejaría en 2,98:1 y por debajo del 3:1 que pide un control: queda apagada
+   —un escalón por debajo de las estrellas, que son lo que se viene a pulsar— sin
+   perder el suelo de contraste. Es el mismo botón que descarta una fila porque
+   es la misma clase de gesto. */
+.star-rating-clear {
+  flex: none;
+}
+
+/* El hueco vacío mide exactamente lo que el botón que sustituye, aquí y en el
+   punto de corte táctil de más abajo, donde `.icon-btn` sube al suelo de 44 pt. */
+.star-rating-clear-slot {
+  flex: none;
+  width: 24px;
+}
+
 /* Etiqueta solo para lectores de pantalla. */
 .sr-only {
   position: absolute;
@@ -1664,6 +1748,32 @@ table.records tbody tr.row-leaving {
 }
 .score.negative .score-bar span {
   background: var(--negative);
+}
+
+/* La puntuación sin carril, para la fila de oferta del móvil.
+ *
+ * Ahí la barra no informaba: 34 × 4 px al lado de un chip de porcentaje y de un
+ * precio de 18 px se leía como un guion suelto entre dos cifras, y de la
+ * proporción de relleno no se juzgaba nada. Queda la cifra, teñida por su tono y
+ * con ancho reservado para que las puntuaciones formen columna al barrer.
+ *
+ * El carril se queda donde sí trabaja: la tabla del escritorio, que tiene su
+ * cabecera «Valor» para decir de qué es el número, y la ficha de detalle. */
+.score-bare {
+  justify-content: flex-end;
+  min-width: 20px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.score-bare.positive {
+  color: var(--positive);
+}
+.score-bare.warm {
+  color: var(--warm);
+}
+.score-bare.negative {
+  color: var(--negative);
 }
 
 /* ------------------------------------------------------------------------- *
@@ -2022,6 +2132,44 @@ table.records tbody tr.row-leaving {
   padding-top: var(--space-md);
 }
 
+/* Las dos notas manuales, justo debajo del desglose que las echa en falta.
+   Misma regla de arriba —filete y aire— porque es el mismo escalón de lectura:
+   el desglose dice qué señales faltan y esto es donde se ponen. */
+.offer-ratings {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-md);
+}
+
+/* Cada nota es una fila de ajuste, no un par de datos: el rótulo a la izquierda,
+   las estrellas al final de la fila con su cruz detrás. La columna fija de
+   152 px que traen los pares `kv` sobraba por los dos lados —dejaba aire muerto
+   detrás de «Equipamiento» y le robaba a las estrellas los píxeles que
+   necesitan para caber en una línea con su cruz—, pero el reparto sigue siendo
+   por los extremos y no por el contenido: así las dos filas alinean sus
+   estrellas entre sí aunque «Estado aparente» sea quince píxeles más largo.
+
+   De ahí el tope de ancho: en un panel de 880 px, «a los extremos» mandaba el
+   control medio metro a la derecha y las dos cosas dejaban de leerse como una
+   fila. 380 px es lo que ocupa la fila llena en un móvil, así que en la mano el
+   tope no existe (se levanta en el punto de corte) y en el escritorio deja el
+   rótulo y las estrellas a un palmo.
+
+   Las etiquetas van a media altura de las estrellas y no sobre su línea base: la
+   fila es un control, no una línea de texto. Y si aun así no cabe —un móvil
+   estrecho—, lo que baja es el control entero, no la cruz sola. */
+.offer-ratings .kv > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0 var(--space-sm);
+  max-width: 380px;
+}
+
+.offer-ratings .kv dd {
+  margin-left: auto;
+}
+
 /* La variante plegable, que solo se monta en táctil (`useTouchLayout` en
    `Offers.tsx`): por eso el suelo de 44 pt del rótulo va aquí y no dentro del
    punto de corte —esta regla no existe en escritorio.
@@ -2118,6 +2266,35 @@ table.records tbody tr.row-leaving {
 }
 
 /* ---- Editor de pesos (Ajustes) ---- */
+
+/* El rótulo del bloque y, solo en la mano, el interruptor que despliega lo que
+   mide cada señal. Con el botón escondido queda un `<p>` con su margen: en
+   escritorio esta fila no se nota. */
+.scoring-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+}
+
+.scoring-head > .card-title {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Con un puntero no hay nada que desplegar: las descripciones caben al lado del
+   control y se quedan puestas. La capa móvil lo devuelve a la vida. */
+.score-help-toggle {
+  display: none;
+}
+
+.score-intro {
+  margin-top: -4px;
+}
+
+.score-actions {
+  margin-top: 14px;
+}
+
 .score-weights {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 76px 56px;
@@ -2443,6 +2620,60 @@ table.records tbody tr.row-leaving {
   container-type: inline-size;
 }
 
+/* ---- Píldora de acciones --------------------------------------------------
+ *
+ * Las acciones de una ficha larga, flotando al pie del cuerpo que hace scroll.
+ * El porqué está en `ui.tsx`; aquí está el cómo.
+ *
+ * `sticky` y no `fixed`: se queda dentro del panel, así que un segundo panel
+ * abierto encima la tapa sin que nadie tenga que ajustar un `z-index`. El 1 de
+ * aquí es solo contra sus hermanos del cuerpo, para que el contenido pase por
+ * debajo y no por encima.
+ *
+ * `bottom: 0` y no una separación escrita: el desplazamiento de un pegajoso se
+ * mide contra la **caja de contenido** del carril, no contra su borde —es la
+ * misma cuenta que el pie de captación resuelve al revés, restando el relleno
+ * con un desplazamiento negativo para llegar a pegarse al canto—, así que el
+ * cero deja la píldora justo sobre el relleno inferior del cuerpo. Es la
+ * separación que ya tiene el resto de la ficha, y **es también el sitio donde
+ * la píldora acaba posada** al llegar al final del scroll: flotando y en
+ * reposo está en el mismo punto, sin el saltito que delataría dos cosas
+ * distintas. En la mano, además, ese relleno ya lleva sumada el área segura,
+ * así que la píldora esquiva el indicador de inicio sin decir nada.
+ * --------------------------------------------------------------------------- */
+.action-pill {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  align-self: center;
+  /* Envuelve, y por eso `justify-content`: por debajo de unos 360 px los tres
+     rótulos escritos no caben en una línea, y una acción que sale por el borde
+     es peor que una píldora de dos renglones. */
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  max-width: 100%;
+  padding: var(--space-xs);
+  border: 1px solid var(--border-strong);
+  /* Radio mayor que el alto del grupo: los extremos salen semicirculares midan
+     lo que midan los botones de dentro. */
+  border-radius: 999px;
+  /* Translúcida y desenfocada. Que se intuya lo que pasa por debajo es lo que
+     distingue una capa que flota de una franja que corta la ficha en dos. */
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  backdrop-filter: blur(12px);
+  box-shadow: var(--shadow);
+}
+
+/* Los botones toman la figura del contenedor. El filete no se toca: sigue
+   siendo `--border-control`, que es quien delimita un control, y aquí dos de
+   los tres retiran la oferta de la lista. */
+.action-pill .btn {
+  border-radius: 999px;
+}
+
 /* Selector de modelo dentro del panel de seguimiento */
 .picker {
   display: flex;
@@ -2516,6 +2747,85 @@ table.records tbody tr.row-leaving {
   font-variant-numeric: tabular-nums;
 }
 
+/* Los dealers son las columnas de la matriz, y esta tira es el único sitio
+ * desde el que se dan de alta y se corrigen. Va arriba y no en las cabeceras de
+ * la tabla porque en táctil no hay tabla: allí las fuentes solo aparecen como
+ * interruptores dentro de cada modelo, y sin esta tira no habría dónde tocarlas.
+ * Las inactivas siguen listadas —sin columna, pero con su ficha— para que
+ * apagar una por error no sea un callejón sin salida fuera de la API. */
+.scrape-sources {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.scrape-sources-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.scrape-sources-head .card-title {
+  margin: 0;
+}
+
+.scrape-source-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.scrape-source-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border-control);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.scrape-source-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.scrape-source-chip small {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.scrape-source-chip.off {
+  border-style: dashed;
+  color: var(--text-secondary);
+}
+
+.scrape-source-chip.off .scrape-source-name {
+  text-decoration: line-through;
+}
+
+/* Alta de un modelo: dos campos y el botón en la misma línea, alineados por
+ * abajo porque la etiqueta solo la llevan los campos. */
+.scrape-add {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-sm);
+}
+
+.scrape-add-hint {
+  max-width: 72ch;
+  margin: calc(var(--space-sm) * -1) 0 0;
+}
+
 .scrape-matrix-wrap {
   min-height: 220px;
   max-height: min(54vh, 580px);
@@ -2585,6 +2895,46 @@ table.records tbody tr.row-leaving {
 
 .scrape-matrix tbody tr:hover > * {
   background: var(--surface-hover);
+}
+
+.scrape-model-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Una fila escrita a mano que todavía no está en el servidor. Es lo único que
+ * la matriz distingue del resto: de dónde venga una fila ya guardada —del
+ * catálogo o de la captación— da igual para marcarla. */
+.scrape-model-new {
+  flex: none;
+  padding: 0 6px;
+  border-radius: var(--radius);
+  background: var(--warm-soft);
+  color: var(--warm);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.scrape-model-drop {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--text-tertiary);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.scrape-model-drop:hover {
+  background: var(--negative-soft);
+  color: var(--negative);
 }
 
 .scrape-model-toggle {
@@ -2662,6 +3012,24 @@ table.records tbody tr.row-leaving {
 
   .scrape-limit {
     width: 100%;
+  }
+
+  /* Marca y modelo se reparten la línea y el botón baja entero: en 390 pt, tres
+     controles en una fila dejan los dos campos en dos palabras de ancho. */
+  .scrape-add {
+    flex-wrap: wrap;
+  }
+
+  .scrape-add .field {
+    flex: 1 1 45%;
+    /* Sin esto no se reparten nada: el mínimo automático de un campo es el
+       ancho intrínseco de su `input` (~20 caracteres), que en 390 pt ya no cabe
+       dos veces, y cada uno se lleva su propia línea. */
+    min-width: 0;
+  }
+
+  .scrape-add .btn {
+    flex: 1 0 100%;
   }
 }
 
@@ -2963,6 +3331,14 @@ table.records tbody tr.row-leaving {
   font-size: 12px;
 }
 
+/* El par de acotadores del selector, como un bloque. En escritorio va a la
+   derecha del rótulo y no cambia nada; lo que gana es la capa táctil, donde
+   baja de línea entero en vez de partirse por la mitad. */
+.analytics-picker-filters {
+  display: flex;
+  gap: var(--space-sm);
+}
+
 /* Un binomio es una opción con color: el punto de la izquierda es la misma
    tinta que su serie en los seis gráficos, así que esta fila es la leyenda
    común y no hace falta repetirla dentro de cada tarjeta. */
@@ -2979,7 +3355,9 @@ table.records tbody tr.row-leaving {
   height: 26px;
   padding: 0 10px;
   border: 1px solid var(--border-control);
-  border-radius: 999px;
+  /* El mismo radio que el resto de controles: era la última forma redonda que
+     quedaba, junto a los chips del riel, en una app de rectángulos. */
+  border-radius: var(--radius);
   background: var(--surface);
   color: var(--text-secondary);
   font-size: 12px;
@@ -4139,10 +4517,14 @@ table.records tbody tr.row-leaving {
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);
-  height: var(--tap-target);
+  height: var(--control-height-touch);
   padding: 0 var(--space-md);
   border: 1px solid var(--border-control);
-  border-radius: 999px;
+  /* El mismo radio que `.btn`, no una píldora. Era la única forma redonda de la
+     app: dos vocabularios de botón en una pantalla que solo tiene botones, y el
+     control que más se toca —«Filtros»— era justo el que no se parecía a nada.
+     El estado puesto lo pone el bloque común de «estado puesto». */
+  border-radius: var(--radius);
   background: var(--surface);
   color: var(--text);
   font: inherit;
@@ -4152,19 +4534,6 @@ table.records tbody tr.row-leaving {
 }
 
 .rail-chip:active {
-  background: var(--surface-hover);
-}
-
-/* El mismo acento que ya marca `.select.on`, el interruptor encendido y
-   `.popover-trigger.on`: un filtro puesto se reconoce igual en toda la app. */
-.rail-chip.on,
-.rail-chip.applied {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.rail-chip.applied:active {
   background: var(--surface-hover);
 }
 
@@ -4183,13 +4552,15 @@ table.records tbody tr.row-leaving {
   outline-offset: 2px;
 }
 
+/* Mismo radio que `.rank-badge` y `.fuel-mark`: una insignia numérica es una
+   insignia numérica en toda la app. */
 .rail-count {
   display: inline-grid;
   place-items: center;
   min-width: 18px;
   height: 18px;
   padding: 0 5px;
-  border-radius: 999px;
+  border-radius: var(--radius);
   background: var(--accent);
   color: var(--on-solid);
   font-size: var(--font-micro);
@@ -4412,17 +4783,48 @@ table.records tbody tr.row-leaving {
   line-height: 1.25;
 }
 
-.offer-identity {
-  gap: var(--space-xs);
-  white-space: nowrap;
-  overflow: hidden;
+/* Primera línea: quién es a la izquierda, cuánto cuesta a la derecha, alineados
+   por su línea base para que dos cuerpos distintos se lean como una sola línea.
+   Es la misma gramática de `.record-head` —«la cifra que decide, arriba a la
+   derecha»— y esa es la razón del cambio: la lista de ofertas era la única
+   pantalla de la app que la contradecía, con el precio anclado en mitad de la
+   segunda línea y la versión comiéndose la primera. */
+.offer-head {
+  align-items: baseline;
 }
 
 .offer-name {
-  flex: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 15px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text);
+}
+
+/* Alineado a la derecha y con cifras de ancho constante: el barrido vertical lee
+   los precios como una columna de verdad —misma x de fin en todas las filas—,
+   no como una columna aproximada. Es la razón de ser de la pantalla, y por eso
+   es lo único que se lee al entornar los ojos. */
+.offer-price {
+  flex: none;
+  margin-left: auto;
+  color: var(--text);
+  font-size: var(--font-amount);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* Segunda línea: la versión a la izquierda y, debajo del precio, lo que lo
+   califica. Las dos columnas de la primera línea se conservan, así que el juicio
+   —precio, desviación, puntuación— queda apilado contra el borde derecho en vez
+   de repartido por el centro de la fila. */
+.offer-qualifiers {
+  gap: var(--space-sm);
+  min-height: 16px;
 }
 
 /* La versión recortada y en gris: distingue una oferta de otra, pero no es lo
@@ -4432,30 +4834,17 @@ table.records tbody tr.row-leaving {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text-secondary);
   font-size: 13px;
 }
 
-/* La segunda línea es el juicio: la cifra y lo que la califica, en ese orden y
-   sin envolver. Lo más ancho que puede llegar a medir —precio, desviación,
-   puntuación con su barra y puesto de la IA— son ~252 px de los ~330 que deja la
-   columna de contenido en 390 pt, así que no hay caso en que se salga. */
-.offer-judgement {
-  gap: var(--space-sm);
-  flex-wrap: nowrap;
-}
-
-/* Anclado a una x fija y con cifras de ancho constante: el barrido vertical lee
-   los precios como una columna aunque no haya columna. Es la razón de ser de la
-   pantalla, y por eso es lo único que se lee al entornar los ojos. */
-.offer-price {
+.offer-marks {
   flex: none;
-  min-width: 92px;
-  color: var(--text);
-  font-size: var(--font-amount);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.01em;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
 }
 
 /* Año · km · km/año · combustible · sitio. Una línea, recortada, en el gris de
@@ -4463,6 +4852,11 @@ table.records tbody tr.row-leaving {
    entera, que es lo que hacía legible la inicial en la tabla. */
 .offer-evidence-line {
   display: block;
+  /* Las dos primeras líneas son una sola frase —quién es y cuánto vale— y van
+     pegadas; la evidencia apoya y se separa. Dos píxeles de diferencia, que es
+     todo lo que hace falta para que la fila se lea como dos grupos y no como
+     tres renglones sueltos. */
+  margin-top: var(--space-2xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4726,6 +5120,52 @@ table.records tbody tr.row-leaving {
   padding-bottom: var(--space-sm);
 }
 
+/* ---- El ítem con una acción al lado ----------------------------------------
+ *
+ * Cuando la acción del registro es **una** y cabe escrita, va en su propia
+ * columna a la derecha en vez de en una tercera línea debajo. La razón es de
+ * barrido: apilada, cada modelo pedía ~120 px y en la pantalla entraban cinco,
+ * con la mitad del alto en blanco a la derecha del botón; al lado, el ítem baja
+ * a ~72 y entran nueve. Es la misma estructura que la fila de oferta —contenido
+ * que abre la ficha, control al margen— y por eso se reconoce sin aprenderla.
+ *
+ * El ancho mínimo del botón no es estética: los rótulos del seguimiento van de
+ * «Seguir» a «Siguiendo» pasando por «11/26», y sin suelo el borde derecho de la
+ * lista bailaba veinte píxeles de fila a fila.
+ *
+ * Va después de las reglas de sangrado del ítem **a propósito**: son de la misma
+ * especificidad y la que gana es la última escrita.
+ * --------------------------------------------------------------------------- */
+.record-item.split {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.record-item.split > .record-link {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+  /* Sin sangrado por la derecha: quien separa del botón es el hueco del ítem, y
+     esos doce píxeles son doce caracteres más de nombre de modelo. */
+  padding-right: 0;
+}
+
+.record-item.split > .record-actions,
+.record-item.split > .record-actions:last-child {
+  flex: none;
+  padding: 0 var(--space-md) 0 0;
+}
+
+/* Todos del mismo ancho, y el ancho es el del rótulo más largo —«Siguiendo»—
+   con el sangrado justo. Sin suelo común, el borde derecho de la lista bailaba
+   ocho píxeles de fila a fila; con el sangrado de 12 px del botón corriente, el
+   suelo se iba a 88 y se los quitaba al nombre. */
+.record-item.split > .record-actions > * {
+  min-width: 80px;
+  padding: 0 var(--space-sm);
+}
+
 /* Toda la fila abre el registro. Es un `<a>` o un `<button>` de verdad, así que
    lo único que hace falta es quitarle el cromo y devolverle el suelo táctil. */
 .record-link {
@@ -4967,6 +5407,20 @@ table.records tbody tr.row-leaving {
     --font-body: 15px;
   }
 
+  /* Las notas manuales siguen en una línea en la mano: el rótulo se lleva lo que
+     ocupa y las estrellas el resto, pegadas al borde derecho con su cruz. Lo que
+     antes obligaba a bajarlas a un renglón propio era la columna fija de 152 px
+     de `.kv-1` —dejaba 183 pt para cinco cajas de 44, y la quinta se salía de la
+     pantalla—; sin esa columna, las 228 caben con el rótulo delante.
+
+     Por debajo de unos 390 pt deja de dar de sí y el `wrap` de la regla de
+     arriba baja el control entero, que es la salida que ya está prevista: el
+     ancho se lo quedan las estrellas, que es lo que hay que poder tocar. */
+  .offer-ratings .kv > div {
+    gap: 2px var(--space-sm);
+    max-width: none;
+  }
+
   .sidebar {
     display: none;
   }
@@ -5003,7 +5457,39 @@ table.records tbody tr.row-leaving {
   }
 
   .topbar h1 {
+    flex: none;
     font-size: 15px;
+  }
+
+  /* La línea de contexto cede antes que la acción.
+     En /analítica —«326 ofertas · 5 binomios marca-modelo»— medía más que el
+     hueco que quedaba, así que empujaba «Actualizar» a una segunda línea y la
+     cabecera pedía cien píxeles para decir dos cosas. Encogiendo y recortando,
+     todo cabe en una: el titular no se toca, la acción se queda a la derecha y
+     lo único que se pierde es la cola de un dato secundario que además está
+     escrito otra vez debajo. */
+  .topbar-meta {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Encoger no basta: un contenedor que envuelve reparte **antes** de encoger,
+     así que la acción se bajaba de línea con la barra medio vacía y la línea de
+     contexto entera. Con una sola acción la barra no envuelve, y entonces sí
+     manda el reparto de arriba: el titular fijo, la acción fija, y lo que cede
+     es la línea de contexto.
+
+     La envoltura se conserva donde hace falta —Modelos, con tres acciones—,
+     que es justo el caso que la trajo. */
+  .topbar:not(:has(.topbar-actions > :nth-child(2))) {
+    flex-wrap: nowrap;
+  }
+
+  .topbar:not(:has(.topbar-actions > :nth-child(2))) > .topbar-actions {
+    flex: none;
   }
 
   /* El grupo de acciones también envuelve, no solo la barra: en /modelos son
@@ -5015,9 +5501,51 @@ table.records tbody tr.row-leaving {
     row-gap: var(--space-xs);
   }
 
+  /* Con más de una acción, el grupo baja a su propia línea y los botones se
+     reparten el ancho entero. Antes envolvía en escalera —«Actualizar» y
+     «Configurar captación» arriba, «Seguir un modelo» solo y descolgado abajo—,
+     con el borde izquierdo distinto en cada línea: tres botones y ningún margen
+     en común. Repartidos, las dos líneas empiezan y acaban donde empieza y acaba
+     el contenido de la página.
+
+     El `:has()` es la condición «hay más de uno»: con una sola acción —Ofertas y
+     su «Actualizar»— el botón se queda a la derecha del titular, que es donde una
+     acción menor tiene que estar, y no ocupando una línea a lo ancho. */
+  .topbar-actions:has(> :nth-child(2)) {
+    flex: 1 1 100%;
+  }
+
+  .topbar-actions:has(> :nth-child(2)) > * {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
   .content {
     padding: var(--space-lg) max(var(--space-md), var(--safe-right)) var(--space-lg)
       max(var(--space-md), var(--safe-left));
+  }
+
+  /* ---- Barra de filtros ----
+     El campo de búsqueda se queda con todo el ancho que sobre, en vez de con los
+     ~170 px que mide un `input` por defecto. Con la etiqueta apilada fuera —la
+     esconde la página, porque el marcador de posición dice más que ella— campo e
+     interruptor vuelven a la misma línea y a la misma altura; cuando no caben,
+     el interruptor baja solo y el campo se queda con la línea entera.
+
+     La base de 180 px es la condición de ese reparto: por debajo, el campo se
+     encoge hasta dejar sitio a lo que tenga al lado; por encima, empuja y lo
+     baja de línea. */
+  .filters {
+    row-gap: var(--space-sm);
+  }
+
+  .filters > .field {
+    flex: 1 1 180px;
+  }
+
+  .filters > .field > .input,
+  .filters > .field > .select {
+    width: 100%;
   }
 
   /* ---- Campos ----
@@ -5032,28 +5560,67 @@ table.records tbody tr.row-leaving {
     font-size: var(--font-field);
   }
 
+  /* `.mono` es una clase y le ganaría a la regla de elemento de aquí arriba: un
+     campo monoespaciado se quedaría en 12 px y Safari ampliaría al enfocarlo.
+     La tipografía se mantiene; el tamaño vuelve al suelo. */
+  .input.mono {
+    font-size: 16px;
+    font-size: var(--font-field);
+  }
+
   /* ---- Geometría táctil ----
-     44 pt de caja. La tinta no crece: lo que crece es lo que recibe el dedo. */
+     Dos alturas y una excepción, y nada más en toda la capa táctil.
+
+     36 es el control corriente: botón, campo, desplegable. 32 es el compacto:
+     lo que va en fila con otros —chips, interruptores, acciones de una lista— y
+     lo que acompaña a un rótulo de sección. La excepción es `.btn-lg`, que es la
+     acción única de su pantalla y se queda en 44.
+
+     Los botones de icono no entran aquí: siguen midiendo 44 de caja unos
+     párrafos más abajo, porque su caja no se dibuja y no cuesta nada. */
   .btn,
-  .btn-sm,
-  .btn-lg,
   .input,
-  .select {
+  .select,
+  /* La ficha de un portal se abre desde su chip: en la mano es un botón como
+     los demás, aunque se dibuje del tamaño de una etiqueta. */
+  .scrape-source-chip {
     height: var(--control-height-touch);
   }
 
-  .btn-sm {
-    /* El rótulo baja de tamaño en vez de subir la caja: 12 px en un botón de 44
-       se lee como un botón a medio hacer. */
+  .btn-lg {
+    height: var(--control-height-touch-lg);
+  }
+
+  .btn-sm,
+  /* El interruptor de ámbito va con ellos: es del mismo peso —compacto, con
+     estado— y a 12 px era el único rótulo de la barra de filtros con cuerpo
+     propio. Tres tamaños de texto en tres botones de la misma fila. */
+  .toggle,
+  .select-sm,
+  .segmented button,
+  .binomio {
+    height: var(--control-height-touch-sm);
+  }
+
+  .btn-sm,
+  .toggle {
+    /* El rótulo no baja con la caja: 12 px dentro de 32 se lee peor que 13, y es
+       el cuerpo que ya usan los chips del riel y la fila de oferta. */
     font-size: 13px;
     padding: 0 var(--space-md);
   }
 
+  /* El cromo de los gráficos se queda en 12: aquí el cuerpo no es holgura, es
+     ancho. A 13 px, «Todos los combustibles» y «Todos los estados» dejaban de
+     caber en una línea y el selector pedía dos filas más de las que tenía. */
   .select-sm,
   .segmented button,
   .binomio {
-    height: var(--control-height-touch);
     font-size: var(--font-meta);
+  }
+
+  .binomio {
+    padding: 0 var(--space-sm);
   }
 
   /* El formulario de login sube su propio alto de campo (34px) por encima del
@@ -5067,6 +5634,11 @@ table.records tbody tr.row-leaving {
   .star {
     width: var(--tap-target);
     height: var(--tap-target);
+  }
+
+  /* El hueco de la cruz sigue midiendo lo que la cruz. */
+  .star-rating-clear-slot {
+    width: var(--tap-target);
   }
 
   /* ---- Corregir una oferta ----
@@ -5112,14 +5684,18 @@ table.records tbody tr.row-leaving {
   }
 
   /* ---- Cabecera del panel: dos líneas, no una fila apretada ----
-     En 390 pt, «Descartar» y «No disponible» se llevan 230 px de los 390, y con
-     el cierre y los sangrados al titular le quedaban unos cien: el título salía
-     como «Merced…» y el subtítulo se partía en seis renglones de dos palabras.
-     Cabecera de 150 px para no decir nada.
+     En 390 pt, dos acciones con su nombre escrito se llevan 230 px de los 390, y
+     con el cierre y los sangrados al titular le quedaban unos cien: el título
+     salía como «Merced…» y el subtítulo se partía en seis renglones de dos
+     palabras. Cabecera de 150 px para no decir nada.
 
      El reparto es por líneas y no por columnas: arriba el cierre y el titular
      con todo el ancho, abajo las dos acciones a mitades. Lo que baja el grupo
-     es su propia base del 100 %, que no cabe junto a lo de arriba. */
+     es su propia base del 100 %, que no cabe junto a lo de arriba.
+
+     La ficha de una oferta ya no pasa por aquí —sus tres acciones flotan al pie
+     del cuerpo, en su píldora—, pero el editor, los avisos y el seguimiento de
+     un modelo sí, y con ellos el reparto sigue siendo este. */
   .drawer-header {
     flex-wrap: wrap;
     align-items: flex-start;
@@ -5187,6 +5763,55 @@ table.records tbody tr.row-leaving {
     padding-bottom: calc(var(--drawer-pad) + var(--safe-bottom));
   }
 
+  /* ---- La captación deja de encogerse y pasa a desplazarse ----
+     En escritorio la columna se aplasta contra el alto del panel a propósito:
+     lo que cede es la matriz, que tiene scroll propio y su suelo de 220 px, y
+     así el pie queda siempre a la vista sin desplazar nada. Aquí no hay matriz.
+     Hay una `.record-list`, que recorta lo que le sobra —`overflow: hidden`,
+     para que el radio no enseñe el filete por debajo de la curva— y por eso no
+     tiene mínimo automático: el flexbox la encogía a la altura que sobrara y la
+     lista se quedaba en dos modelos y medio cortados a media tarjeta. El cuerpo
+     del panel tampoco desplazaba, porque con todo encogido no sobresalía nada.
+
+     `1 0 auto`: crece para llenar el panel cuando hay pocos modelos —el pie se
+     queda abajo— y con muchos se queda alto de contenido sin encoger, que es lo
+     que devuelve el scroll al cuerpo. El alto honrado importa además para el
+     pie: es su bloque contenedor, y un pegajoso cuyo sitio natural cae fuera de
+     él queda a merced de cómo recorte cada motor. */
+  .scrape-config {
+    flex: 1 0 auto;
+    min-height: auto;
+  }
+
+  /* ---- Píldora de acciones ----
+     A lo ancho del panel y con las acciones repartiéndose la línea: en 390 pt
+     los tres rótulos suman casi todo lo que hay, y en fila natural quedaba un
+     botón de 80 px al lado de uno de 134 —tres acciones del mismo peso con tres
+     tamaños distintos—. El área segura no se toca aquí: la lleva el relleno del
+     cuerpo, contra el que ya se mide el pegajoso. */
+  .action-pill {
+    align-self: stretch;
+  }
+
+  .action-pill > * {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  /* La píldora es el sitio donde de verdad se pulsa, así que sus acciones suben
+     al control corriente de la capa táctil aunque conserven el cuerpo compacto:
+     36 de caja para el dedo, 13 px de rótulo para que «No disponible» siga
+     cabiendo al lado de las otras dos.
+
+     El relleno lateral baja al compacto y no aprieta nada: repartiéndose la
+     línea, los botones recuperan de ancho lo que dejan de relleno. Lo único que
+     mueve es el punto en el que los tres rótulos dejan de caber en una línea
+     —de 375 pt a unos 340—, que es donde empieza a envolver. */
+  .action-pill .btn-sm {
+    height: var(--control-height-touch);
+    padding: 0 var(--space-sm);
+  }
+
   /* ---- Avisos con vuelta atrás ----
      Por encima de la barra de pestañas y del área segura, a lo ancho, y con
      permiso para ocupar dos líneas: «Deshacer» a 44 pt no cabe en 36 px de alto
@@ -5222,10 +5847,51 @@ table.records tbody tr.row-leaving {
   }
 
   /* ---- La pantalla de ofertas ----
-     El aire de arriba lo pone el riel, que ya mide 56: dieciséis píxeles más
-     antes del primer chip son media fila de oferta menos en el pliegue. */
+     El aire de arriba lo pone el riel, que ya mide 48: dieciséis píxeles más
+     antes del primer chip son media fila de oferta menos en el pliegue.
+
+     Abajo, ninguno: la lista muere contra la barra de pestañas. Los dieciséis
+     de `.content` —que aquí ganan al `--space-sm` de `.content-fill` por venir
+     después en la hoja— dejaban una franja de fondo entre la última fila y la
+     barra que no separa nada, porque la barra ya es un plano aparte con su
+     filete. Sin ella, el carril de la lista se lleva esos píxeles y la lista se
+     lee como lo que es: la pantalla entera hasta la navegación.
+
+     La condición es la misma que saca la lista de borde a borde: solo cuando
+     hay `.offer-scroll`. Con un puntero en una ventana estrecha el cuerpo sigue
+     siendo la tabla de escritorio —marco con radio y filete por los cuatro
+     lados—, y una tarjeta pegada a la barra sí necesita su aire. */
   .content.offer-view {
     padding-top: var(--space-xs);
+  }
+
+  .content.offer-view:has(> .offer-scroll) {
+    padding-bottom: 0;
+  }
+
+  /* ---- Analítica ----
+     El selector de binomios separaba de los gráficos con 24 de relleno y 24 de
+     margen: cuarenta y ocho píxeles de nada entre lo que se elige y lo que se
+     mira. El filete ya separa; el aire solo tiene que dejarlo respirar. */
+  .analytics-picker {
+    padding-bottom: var(--space-md);
+    margin-bottom: var(--space-md);
+  }
+
+  .analytics-picker-head {
+    margin-bottom: var(--space-sm);
+  }
+
+  /* Los dos desplegables se reparten una línea a mitades en vez de bajar uno
+     debajo del otro: juntos miden unos 358 px y la pantalla da 351, así que por
+     siete píxeles el selector se llevaba una fila entera de más. */
+  .analytics-picker-filters {
+    flex: 1 1 100%;
+  }
+
+  .analytics-picker-filters > .select-sm {
+    flex: 1 1 0;
+    min-width: 0;
   }
 
   /* De borde a borde: en 390 pt, el marco de la lista son dos filetes y dos
@@ -5235,6 +5901,10 @@ table.records tbody tr.row-leaving {
     margin-right: calc(-1 * max(var(--space-md), var(--safe-right)));
     border-left: none;
     border-right: none;
+    /* El de abajo tampoco: pegada a la barra de pestañas, este filete y el
+       `border-top` de la barra son dos rayas de un píxel una encima de otra. La
+       que separa la lista de la navegación es la de la barra. */
+    border-bottom: none;
     border-radius: 0;
     /* El `max-width: 100%` de `.table-wrap` se mide contra la caja de contenido
        del padre y anularía los márgenes negativos: la lista se quedaría en 366
@@ -5270,7 +5940,203 @@ table.records tbody tr.row-leaving {
      encima de 860 px manda `.btn` con sus 28 px, que es lo correcto con un
      puntero. */
   .record-actions > * {
+    min-height: var(--control-height-touch-sm);
+  }
+
+  /* De borde a borde, por el mismo motivo que la lista de ofertas: en 375 px el
+     marco son dos filetes y dos radios que se cobran 24 px de la línea que más
+     los necesita —el nombre del modelo y su precio en la misma línea—. Sin él,
+     «Audi A4 Allroad Quattro · 22.990 €» cabe entero y la línea de apoyo llega
+     hasta el final del rango de precios en vez de cortarse a un carácter.
+
+     Es opcional (`flush`) y no la regla de `.record-list`: la misma lista se usa
+     dentro de paneles y hojas, que tienen su propio sangrado y donde salirse de
+     él no sangra la pantalla, la rompe. */
+  .record-list.flush {
+    margin-left: calc(-1 * max(var(--space-md), var(--safe-left)));
+    margin-right: calc(-1 * max(var(--space-md), var(--safe-right)));
+    border-left: none;
+    border-right: none;
+    border-radius: 0;
+  }
+
+  /* ---- Ajustes y API keys: la página es la tarjeta -------------------------
+   *
+   * Una tarjeta de página existe para decir «esto es un objeto y aquello es
+   * otro» dentro de un ancho que da para varios. En 375 pt no da para ninguno:
+   * la caja ocupa la línea entera, así que no separa de nada, y a cambio cobra
+   * dos filetes y 32 px de sangrado sobre los 16 que ya pone `.content`. En el
+   * editor de pesos ese peaje salía de la única columna que no lo podía pagar
+   * —la de la señal, que se quedaba en 161 px para un párrafo de 40 palabras—.
+   *
+   * Así que se disuelve, y lo que separa un bloque de otro pasa a ser el aire
+   * entre ellos, que es lo que ya hacen «Más» y la lista de registros. Solo cae
+   * la tarjeta de página: `.content > .card`. Las que viven dentro de un panel o
+   * de una hoja no se tocan, porque ahí sí hay una superficie de la que
+   * distinguirse.
+   * ------------------------------------------------------------------------- */
+  .content > .card {
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: none;
+  }
+
+  /* Sin caja, el aire es lo único que agrupa: 24 pt entre bloques, los mismos
+     que reparte «Más» entre sus grupos. */
+  .content.stack {
+    gap: var(--space-xl);
+  }
+
+  /* El rótulo deja de ser el título de una caja y pasa a ser el de un grupo de
+     la página: mismo registro que `.more-section-title`, que es lo que hay dos
+     pestañas más allá haciendo este mismo trabajo. */
+  .content > .card > .card-title,
+  .content > .card > .scoring-head > .card-title {
+    margin-bottom: var(--space-sm);
+    color: var(--text-tertiary);
+    font-size: var(--font-micro);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  /* ---- Editor de pesos ------------------------------------------------------
+   *
+   * La rejilla de tres columnas es de escritorio: reparte 1fr / 76 / 56 sobre
+   * 800 px y ahí las tres caben. Aquí el nombre de la señal, su explicación, el
+   * campo y el porcentaje no caben en una línea de 343, y el reparto por
+   * columnas se lo cobraba todo al texto.
+   *
+   * En su lugar, el primitivo táctil que la app ya usa para esto: una lista
+   * agrupada. Una fila por señal —nombre a la izquierda, campo y porcentaje a la
+   * derecha—, filete entre filas y la explicación, cuando se pide, en una
+   * segunda línea a ancho completo en vez de en una columna de 161 px.
+   * --------------------------------------------------------------------------- */
+  .score-weights {
+    display: block;
+    margin: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    /* El radio recorta el primer y el último filete: sin esto, la esquina enseña
+       la línea recta por debajo de la curva. */
+    overflow: hidden;
+  }
+
+  /* Dos filas y tres columnas: arriba el nombre con sus dos cifras, abajo la
+     explicación a lo ancho. El `subgrid` de la regla base no vale sin la rejilla
+     del padre, así que se reemplaza aquí entero. */
+  .score-weight-row {
+    grid-template-columns: minmax(0, 1fr) 64px 44px;
+    grid-template-areas:
+      "name weight pct"
+      "help help help";
+    align-items: center;
+    gap: var(--space-2xs) var(--space-sm);
     min-height: var(--tap-target);
+    padding: var(--space-xs) var(--space-md);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .score-weight-row:last-child {
+    border-bottom: none;
+  }
+
+  /* La cabecera de la lista no lleva `.score-weight-info`: sus tres celdas se
+     colocan solas en la primera fila de la rejilla, en orden. Va sobre fondo
+     hundido para leerse como el encabezado que es y no como una señal más. */
+  .score-weight-row.head {
+    min-height: 0;
+    padding-top: var(--space-xs);
+    padding-bottom: var(--space-xs);
+    background: var(--surface-sunken);
+  }
+
+  /* El envoltorio del nombre y su explicación desaparece como caja: sus dos
+     hijos suben a la rejilla de la fila y ya no comparten columna. */
+  .score-weight-info {
+    display: contents;
+  }
+
+  .score-weight-info > span:first-child {
+    grid-area: name;
+  }
+
+  /* La explicación, cuando está desplegada: ancho completo, cuerpo de apoyo y
+     su propio interlineado. Es prosa, no un rótulo. */
+  .score-weight-info > .tiny {
+    grid-area: help;
+    padding-bottom: var(--space-2xs);
+    font-size: var(--font-meta);
+    line-height: 1.45;
+  }
+
+  .score-weight-row > .input.num {
+    grid-area: weight;
+  }
+
+  .score-weight-row > .score-weight-pct {
+    grid-area: pct;
+    font-size: var(--font-meta);
+  }
+
+  /* El campo baja a la altura compacta: en fila con su rótulo y su porcentaje,
+     36 px hacían una fila de 52 por señal y diez señales de lista. Los 32 siguen
+     por encima del suelo de WCAG 2.5.8, y quien recibe el dedo es la fila. */
+  .score-weights .input.num {
+    height: var(--control-height-touch-sm);
+    padding: 0 var(--space-sm);
+  }
+
+  /* Plegada la prosa de referencia, la lista entera cabe de una pasada. */
+  .scoring[data-help="off"] .score-intro,
+  .scoring[data-help="off"] .score-weight-info > .tiny {
+    display: none;
+  }
+
+  .score-help-toggle {
+    display: inline-flex;
+    flex: none;
+  }
+
+  /* ---- Parámetros y acciones ----
+     Una columna: los dos parámetros son un campo con su rótulo y una tira de
+     once chips, y lado a lado ninguno de los dos cabía. El filete de arriba se
+     queda: separa los parámetros del modelo de los pesos, que es la única
+     división que aquí sigue significando algo. */
+  .score-params {
+    flex-direction: column;
+    gap: var(--space-md);
+  }
+
+  .score-param {
+    min-width: 0;
+  }
+
+  /* El campo mide lo que mide su dato: cinco cifras. Estirado a los 343 px de la
+     columna, la caja prometía que ahí cabía algo más que un número. */
+  .score-param > .input {
+    width: 120px;
+  }
+
+  /* Las dos acciones a mitades y en su propia línea. En una sola fila con la
+     fecha de edición sumaban más de 375 y el documento se iba a lo ancho. */
+  .score-actions {
+    flex-wrap: wrap;
+    row-gap: var(--space-sm);
+  }
+
+  .score-actions > .spacer {
+    display: none;
+  }
+
+  .score-actions > .tiny {
+    flex: 1 1 100%;
+  }
+
+  .score-actions > .btn {
+    flex: 1 1 0;
   }
 
   /* ---- Login ----

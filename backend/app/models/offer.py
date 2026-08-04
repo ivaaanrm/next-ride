@@ -137,6 +137,24 @@ class Offer(Base, TimestampMixin):
     edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     edited_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
 
+    # Valoración manual del coche: de 1 a 5, o NULL mientras nadie la haya puesto.
+    #
+    # Son las dos señales que ningún anuncio trae y ningún scraper puede sacar:
+    # cuánto equipamiento lleva de verdad y qué pinta tiene en las fotos. Como las
+    # correcciones —y al contrario que los favoritos— pertenecen a la oferta y no
+    # a quien la miró: afirman algo del coche, no de la persona.
+    #
+    # NULL no es un cero: sin nota la señal no puntúa y su peso se reparte entre
+    # las demás (ver `score_offer`), que es lo que debe pasar con un coche que
+    # nadie ha mirado todavía. Un 0 diría que está mal equipado, y eso no lo sabe
+    # nadie aún.
+    #
+    # No hacen falta en `manual_fields`: eso ancla columnas que el scraper pisaría
+    # en el siguiente pase, y estas no están en `OfferIngest`, así que no las
+    # escribe nadie más que una persona. El rango 1-5 lo valida el borde de la API.
+    equipment_rating: Mapped[int | None] = mapped_column()
+    apparent_condition_rating: Mapped[int | None] = mapped_column()
+
     # Payload crudo del scraper, para depurar y para re-procesar sin re-scrapear.
     raw: Mapped[dict[str, Any] | None] = mapped_column(JSON)
 
