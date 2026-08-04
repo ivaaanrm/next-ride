@@ -24,6 +24,7 @@ import { OfferProfile, PriceHistory } from "../components/OfferProfile";
 import { locationOf, OfferRow, VsMedian } from "../components/OfferRow";
 import { useSwipeHint, useTouchLayout } from "../components/SwipeRow";
 import {
+  ActionPill,
   Banner,
   Chip,
   Drawer,
@@ -32,6 +33,7 @@ import {
   Popover,
   RangeSlider,
   Score,
+  StarRating,
   ToastStack,
   Toggle,
   useToasts,
@@ -83,6 +85,7 @@ import type {
   OfferAggregateStats,
   OfferMetrics,
   OfferPricePoint,
+  OfferRatingField,
   OfferRaw,
   OfferStatus,
   Page,
@@ -1494,6 +1497,70 @@ function metricText(item: ScoreBreakdownItem): string {
 }
 
 /**
+ * Las dos notas que no salen de ningún anuncio: cuánto equipamiento trae el
+ * coche y qué pinta tiene.
+ *
+ * Va pegado al desglose y no en la ficha del vehículo por lo que dice el propio
+ * desglose justo encima: «sin dato: equipamiento, estado aparente — su peso se
+ * reparte». Ahí es donde se descubre que faltan, así que ahí es donde tiene que
+ * estar el control que las pone; en la ficha de datos, doscientos píxeles más
+ * abajo, ese aviso no lleva a ninguna parte.
+ *
+ * Cada estrella guarda sola —no hay botón de guardar— y solo manda la nota que
+ * se ha tocado: son dos señales independientes, y un cuerpo con las dos haría
+ * que corregir el equipamiento reescribiera un estado que nadie tocó. La oferta
+ * que devuelve el servidor sube por `onSaved`, que es lo que repinta la
+ * puntuación y el desglose con la nota ya dentro.
+ */
+function OfferRatings({
+  offer,
+  onSaved,
+}: {
+  offer: Offer;
+  onSaved: (offer: Offer) => void;
+}) {
+  const [busy, setBusy] = useState<OfferRatingField | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function rate(field: OfferRatingField, value: number | null) {
+    setError(null);
+    setBusy(field);
+    try {
+      onSaved(await api.put<Offer>(`/offers/${offer.id}/rating`, { [field]: value }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo guardar la nota");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="offer-ratings">
+      <p className="fact-label">Valoración manual</p>
+      {error ? <Banner kind="error">{error}</Banner> : null}
+      <dl className="kv kv-1">
+        <Row label="Equipamiento">
+          <StarRating
+            label="Equipamiento"
+            value={offer.equipment_rating}
+            disabled={busy !== null}
+            onChange={(value) => rate("equipment_rating", value)}
+          />
+        </Row>
+        <Row label="Estado aparente">
+          <StarRating
+            label="Estado aparente"
+            value={offer.apparent_condition_rating}
+            disabled={busy !== null}
+            onChange={(value) => rate("apparent_condition_rating", value)}
+          />
+        </Row>
+      </dl>
+    </div>
+  );
+}
+
+/**
  * El desglose auditable de la puntuación: cada señal con su valor, su subscore
  * 0-100, el **peso final** que se usó (ya renormalizado sobre las señales con
  * dato) y los puntos que aporta. La suma de la última columna ES la
@@ -1679,27 +1746,6 @@ function OfferSheet({
       title={offer.title}
       subtitle={`${offer.car_model.display_name} · ${offer.dealer.name}`}
       onClose={onClose}
-      /* Con su nombre escrito y no como iconos: aquí se llega después de leer la
-         ficha y de abrir el anuncio, que es justo cuando se descubre que el
-         coche ya no está. Es el sitio donde más se va a pulsar «No disponible»,
-         así que no puede depender de reconocer un dibujo. */
-      actions={
-        <>
-          {/* Corregir vive aquí y no en la fila: los datos malos se descubren
-              leyendo la ficha —o el anuncio, que se abre desde ella—, nunca
-              barriendo la lista. En la tabla habría sido un tercer icono de 24 px
-              compitiendo con los dos que sacan la oferta de la lista. */}
-          <button
-            type="button"
-            className="btn btn-sm"
-            title="Corregir o completar los datos de esta oferta"
-            onClick={() => setEditing(true)}
-          >
-            Corregir
-          </button>
-          <OfferActions offer={offer} variant="wide" onMove={onMove} />
-        </>
-      }
     >
       <div className="offer-detail">
         {/* ---- 1. Veredicto ---- */}
@@ -1773,6 +1819,8 @@ function OfferSheet({
           </div>
 
           <ScoreBreakdown metrics={m} />
+
+          <OfferRatings offer={offer} onSaved={onSaved} />
 
           {offer.ai ? (
             <div className="verdict-ai">
@@ -1916,6 +1964,32 @@ function OfferSheet({
             {rawOpen ? <RawPayload offerId={offer.id} /> : null}
           </div>
         </details>
+
+        {/* ---- Acciones, flotando al pie ----
+            Con su nombre escrito y no como iconos: aquí se llega después de leer
+            la ficha y de abrir el anuncio, que es justo cuando se descubre que el
+            coche ya no está. Es el sitio donde más se va a pulsar «No disponible»,
+            así que no puede depender de reconocer un dibujo.
+
+            Van al final del documento y no en la cabecera porque es al final
+            donde se decide: la píldora flota sobre lo que se está leyendo, así
+            que están a la vista desde el primer píxel de scroll sin robarle la
+            cabecera al titular. */}
+        <ActionPill label={`Acciones sobre ${offer.title}`}>
+          {/* Corregir vive aquí y no en la fila: los datos malos se descubren
+              leyendo la ficha —o el anuncio, que se abre desde ella—, nunca
+              barriendo la lista. En la tabla habría sido un tercer icono de 24 px
+              compitiendo con los dos que sacan la oferta de la lista. */}
+          <button
+            type="button"
+            className="btn btn-sm"
+            title="Corregir o completar los datos de esta oferta"
+            onClick={() => setEditing(true)}
+          >
+            Corregir
+          </button>
+          <OfferActions offer={offer} variant="wide" onMove={onMove} />
+        </ActionPill>
       </div>
 
       {/* El editor se abre **encima** de la ficha y no en su lugar: lo que se

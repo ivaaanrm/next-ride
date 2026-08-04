@@ -29,9 +29,9 @@ export function OfferActions({
   busy?: boolean;
   /** `row` son dos iconos que aparecen al pasar por encima —idioma de puntero, y
    *  por eso solo se usa en la tabla de escritorio—; `wide`, dos botones con su
-   *  nombre escrito, para la cabecera del panel de detalle; `swipe`, los dos
-   *  botones a todo el alto que quedan a la vista al deslizar la fila en un
-   *  móvil, donde no hay `:hover` que revele nada. */
+   *  nombre escrito, para la píldora que flota al pie del panel de detalle;
+   *  `swipe`, los dos botones a todo el alto que quedan a la vista al deslizar la
+   *  fila en un móvil, donde no hay `:hover` que revele nada. */
   variant?: "row" | "wide" | "swipe";
   onMove: (offer: Offer, target: OfferStatus) => void;
 }) {

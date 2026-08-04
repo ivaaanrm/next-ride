@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
 from app.models.offer import FuelType, OfferStatus, Transmission, VehicleCondition
 from app.schemas.catalog import CarModelRead, DealerRead
@@ -74,6 +74,11 @@ class OfferRead(ORMModel):
     # escrito por una persona, y eso hay que poder verlo antes de fiarse de él.
     manual_fields: list[str] = Field(default_factory=list)
     edited_at: datetime | None = None
+    # Las dos notas manuales (1-5 ★), o null mientras nadie las haya puesto.
+    # Viajan en el listado como los campos corregidos y por lo mismo: son lo que
+    # una persona añadió sobre el coche, no lo que dijo el anuncio.
+    equipment_rating: int | None = None
+    apparent_condition_rating: int | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -227,6 +232,25 @@ class OfferUpdate(BaseModel):
         if empty:
             raise ValueError(f"Estos campos no pueden quedarse vacíos: {', '.join(empty)}")
         return self
+
+
+class OfferRatingUpdate(BaseModel):
+    """Las dos notas manuales de una oferta, de 1 a 5 estrellas.
+
+    Mismo contrato que `OfferUpdate`: el cuerpo se lee con `exclude_unset`, así
+    que no mandar una nota la deja como está y mandarla a `null` la borra. Y
+    borrarla no es ponerle un 1: la señal vuelve a «sin dato» y su peso se
+    reparte entre las demás, en lugar de castigar al coche con un 0.
+
+    No pasa por `manual_fields` ni por `EDITABLE_FIELDS`: aquello ancla columnas
+    que el scraper volvería a pisar, y estas no las escribe nadie más que una
+    persona.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    equipment_rating: int | None = Field(default=None, ge=1, le=5)
+    apparent_condition_rating: int | None = Field(default=None, ge=1, le=5)
 
 
 class OfferDismiss(BaseModel):

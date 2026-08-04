@@ -10,9 +10,10 @@ la heurística anterior (50 ± sumandos acotados) no daba:
 - Cada punto del resultado es rastreable: `sum(points)` del desglose **es** la
   puntuación, y los pesos finales viajan con cada oferta.
 
-Todos los subscores son lineales con topes: 50 es neutro, la «escala completa»
-de cada uno dice qué desviación lo lleva al extremo. Determinista siempre: los
-mismos datos y la misma fecha dan la misma cifra.
+Casi todos los subscores son lineales con topes: 50 es neutro, la «escala
+completa» de cada uno dice qué desviación lo lleva al extremo. La potencia es la
+excepción: su rampa va curvada para premiar más los CV altos. Determinista
+siempre: los mismos datos y la misma fecha dan la misma cifra.
 """
 
 from __future__ import annotations
@@ -194,14 +195,26 @@ COMPONENT_LABELS: tuple[tuple[str, str], ...] = (
     ("age", "Antigüedad"),
     ("power", "Potencia"),
     ("transmission", "Cambio"),
+    ("equipment", "Equipamiento"),
+    ("apparent_condition", "Estado aparente"),
     ("price_drop", "Bajada de precio"),
     ("freshness", "Frescura del anuncio"),
+)
+
+#: Las señales que no salen del anuncio: las pone una persona, de 1 a 5 estrellas.
+#: `(clave del componente, columna de `Offer`)`.
+MANUAL_RATINGS: tuple[tuple[str, str], ...] = (
+    ("equipment", "equipment_rating"),
+    ("apparent_condition", "apparent_condition_rating"),
 )
 
 
 def component_descriptions(params: ScoreParams) -> dict[str, str]:
     """Explicaciones generadas de los propios parámetros: no pueden quedar viejas."""
     km_year = f"{params.expected_km_per_year:,.0f}".replace(",", ".")
+    # La mitad de la rampa de potencia, para enseñar cuánto la hunde la curva.
+    power_mid_hp = (params.power_zero_score_hp + params.power_full_score_hp) / 2
+    power_mid_score = 0.5**params.power_curve_exponent * 100
     return {
         "price_vs_market": (
             "Desviación del precio frente a la mediana de las ofertas activas del mismo "
@@ -224,11 +237,24 @@ def component_descriptions(params: ScoreParams) -> dict[str, str]:
             f"{params.age_zero_score_years:.0f} años un 0."
         ),
         "power": (
-            "Más potencia puntúa más alto, linealmente: "
-            f"{params.power_zero_score_hp:.0f} CV o menos es un 0 y "
-            f"{params.power_full_score_hp:.0f} CV o más un 100."
+            f"Más potencia puntúa más alto: {params.power_zero_score_hp:.0f} CV o menos es "
+            f"un 0 y {params.power_full_score_hp:.0f} CV o más un 100. Fuera de esa ventana "
+            "la señal se agota: ni un utilitario pierde más por ser aún menos potente ni un "
+            "deportivo gana más por serlo aún más. Dentro, la rampa va curvada "
+            f"(exponente {params.power_curve_exponent:g}) para premiar más los CV altos: "
+            f"{power_mid_hp:.0f} CV, la mitad de la rampa, puntúa {power_mid_score:.0f}."
         ),
         "transmission": "Cambio automático puntúa 100 y manual 0; otros tipos, 50.",
+        "equipment": (
+            "Nota manual del equipamiento que trae el coche, de 1 a 5 estrellas: "
+            "3 ★ es un 50 neutro, 5 ★ un 100 y 1 ★ un 0. No sale del anuncio, la pone "
+            "una persona en la ficha de la oferta; sin nota, su peso se reparte."
+        ),
+        "apparent_condition": (
+            "Nota manual del estado en que aparenta estar el coche —fotos, descripción, "
+            "lo que se vio al verlo—, de 1 a 5 estrellas: 3 ★ es un 50 neutro, 5 ★ un 100 "
+            "y 1 ★ un 0. Sin nota, su peso se reparte entre las demás señales."
+        ),
         "price_drop": (
             "Descenso del precio desde que la plataforma vio la oferta por primera vez. "
             f"Una bajada del {params.price_drop_full_scale_pct:.0f} % es un 100; sin cambios, 50."
@@ -344,15 +370,19 @@ def _components(
     else:
         out.append(_Component("age", None, "años", None))
 
-    # Potencia: rampa lineal entre el CV que puntúa 0 y el que puntúa 100.
+    # Potencia: rampa acotada entre el CV que puntúa 0 y el que puntúa 100,
+    # curvada por el exponente. La posición en la rampa se acota *antes* de
+    # elevarla, así que fuera de la ventana la curva no dispara ni se hunde:
+    # todo lo que baja del suelo es un 0 y todo lo que pasa del techo, un 100.
     if offer.power_hp:
         ramp = params.power_full_score_hp - params.power_zero_score_hp
+        position = _clamp((offer.power_hp - params.power_zero_score_hp) / ramp, 0, 1)
         out.append(
             _Component(
                 "power",
                 float(offer.power_hp),
                 "CV",
-                _clamp((offer.power_hp - params.power_zero_score_hp) / ramp * 100, 0, 100),
+                position**params.power_curve_exponent * 100,
             )
         )
     else:
@@ -367,6 +397,23 @@ def _components(
         out.append(_Component("transmission", None, "", subscore, text=label))
     else:
         out.append(_Component("transmission", None, "", None))
+
+    # Las dos notas manuales. La escala 1-5 se estira a 0-100 dejando el 3 ★ en el
+    # 50 neutro, que es lo que hace comparable una nota a mano con las señales
+    # calculadas: quien pone tres estrellas está diciendo «normal», no «regular».
+    #
+    # Sin nota el componente no existe —no puntúa 0—: un coche que nadie ha mirado
+    # no puede perder puntos por no haberlo mirado.
+    for key, column in MANUAL_RATINGS:
+        rating = getattr(offer, column)
+        out.append(
+            _Component(
+                key,
+                float(rating) if rating is not None else None,
+                "★",
+                _clamp((rating - 1) / 4 * 100, 0, 100) if rating is not None else None,
+            )
+        )
 
     # Bajada de precio. Con primer precio conocido y sin cambios, es un 50
     # legítimo (sabemos que no ha bajado); sin historial, no hay dato.

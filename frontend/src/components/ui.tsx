@@ -6,6 +6,10 @@ import {
   type CSSProperties,
   type PointerEvent,
   type ReactNode,
+  // Con alias: este módulo también escucha teclas en `window`, y ahí el evento
+  // es el `KeyboardEvent` del DOM. Importarlo sin alias taparía el global y
+  // rompería esos dos manejadores sin decir por qué.
+  type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { createPortal } from "react-dom";
 
@@ -30,17 +34,31 @@ export function Chip({
   );
 }
 
-export function Score({ value }: { value: number | null | undefined }) {
+export function Score({
+  value,
+  bar = true,
+}: {
+  value: number | null | undefined;
+  /** El carril de proporción. Se apaga donde no cabe informando: en la fila de
+   *  oferta del móvil son 34 × 4 px entre un chip y un precio de 18, y ahí se
+   *  lee como un guion suelto en vez de como una escala. */
+  bar?: boolean;
+}) {
   if (value === null || value === undefined) return <span className="muted">—</span>;
   const tone = scoreTone(value);
   return (
     // El `title` se queda para el puntero, pero la unidad va también en texto:
     // en un móvil no hay dónde consultar un `title`, y dentro de la fila —que es
     // un botón nombrado por su contenido— un número suelto no dice de qué es.
-    <span className={`score ${tone}`} title={`Puntuación ${value}/100`}>
-      <span className="score-bar" aria-hidden="true">
-        <span style={{ width: `${Math.max(2, Math.min(100, value))}%` }} />
-      </span>
+    <span
+      className={`score ${tone}${bar ? "" : " score-bare"}`}
+      title={`Puntuación ${value}/100`}
+    >
+      {bar ? (
+        <span className="score-bar" aria-hidden="true">
+          <span style={{ width: `${Math.max(2, Math.min(100, value))}%` }} />
+        </span>
+      ) : null}
       {Math.round(value)}
       <span className="sr-only"> de puntuación sobre 100</span>
     </span>
@@ -105,6 +123,161 @@ export function Toggle({
     >
       {children}
     </button>
+  );
+}
+
+/** Las cinco notas posibles, de peor a mejor. */
+const STARS = [1, 2, 3, 4, 5] as const;
+
+/**
+ * Selector de 1 a 5 estrellas para una nota que se pone a mano.
+ *
+ * Es un `radiogroup` y no cinco interruptores sueltos porque eso es lo que es:
+ * una nota de cinco, mutuamente excluyentes. De ahí sale el contrato de teclado
+ * que el lector de pantalla ya anuncia —una sola parada de tabulador para el
+ * grupo, flechas para moverse dentro— y que aquí se implementa entero, con
+ * `tabIndex` itinerante y foco que sigue a la selección; un grupo que anuncia
+ * flechas y no las tiene es peor que uno que no las anuncia.
+ *
+ * **Sin nota no es un uno.** Es el estado inicial de todas las ofertas y
+ * significa que nadie ha mirado el coche, así que hay que poder volver a él:
+ * pulsar la estrella que ya está puesta la quita, `Retroceso` también, y con
+ * nota puesta aparece al lado una cruz que la borra, porque «vuelve a pulsar
+ * para quitarlo» no lo descubre nadie.
+ *
+ * Cada estrella se llama «N de 5» y no «estrella N»: lo que se elige es la nota
+ * entera, y cinco botones llamados «estrella» obligan a contar para saber cuál
+ * está puesta.
+ */
+export function StarRating({
+  value: raw,
+  label,
+  disabled = false,
+  onChange,
+}: {
+  value: number | null | undefined;
+  /** Nombre del grupo para el lector de pantalla: «Equipamiento», «Estado…». */
+  label: string;
+  disabled?: boolean;
+  onChange: (value: number | null) => void;
+}) {
+  // «Sin nota» tiene dos formas de llegar y las dos significan lo mismo: `null`
+  // cuando el servidor manda la nota vacía, y `undefined` cuando manda una
+  // oferta que todavía no tiene el campo —una respuesta cacheada de antes, o un
+  // backend por detrás del frontend en mitad de un despliegue—. Sin unificarlas
+  // aquí, `undefined !== null` sacaba el botón de «quitar la nota» encima de
+  // cinco estrellas vacías, ofreciendo borrar lo que no había.
+  const value = raw ?? null;
+  const group = useRef<HTMLDivElement>(null);
+  /** La estrella a la que hay que devolver el foco cuando termine el guardado. */
+  const pending = useRef<number | null>(null);
+
+  function focusStar(star: number) {
+    group.current?.querySelectorAll("button")[star - 1]?.focus();
+  }
+
+  /** Cambia la nota y lleva el foco a donde ha quedado. */
+  function select(next: number | null) {
+    // Sin nota el foco va a la primera estrella: la nota se ha ido, pero el
+    // grupo sigue ahí y el foco tiene que quedarse dentro.
+    const target = next ?? 1;
+    pending.current = target;
+    onChange(next);
+    // El botón que tenía el foco se queda con `tabIndex={-1}` tras el cambio,
+    // pero el foco no se mueve solo: sin esto, las flechas cambiarían la nota
+    // dejando el foco tres estrellas atrás.
+    focusStar(target);
+  }
+
+  // Guardar deshabilita las cinco estrellas, y el navegador no deja el foco en
+  // un control deshabilitado: lo suelta al `<body>`. Sin esto, pulsar una flecha
+  // cambiaba la nota y dejaba a quien navega con teclado en la nada, teniendo
+  // que tabular desde el principio del documento para volver.
+  useEffect(() => {
+    if (!disabled && pending.current !== null) {
+      focusStar(pending.current);
+      pending.current = null;
+    }
+  }, [disabled]);
+
+  function onKeyDown(event: ReactKeyboardEvent) {
+    if (disabled) return;
+    const step = { ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1 }[event.key];
+    if (step) {
+      event.preventDefault();
+      select(clamp((value ?? 0) + step, 1, 5));
+    } else if (event.key === "Backspace" || event.key === "Delete") {
+      event.preventDefault();
+      select(null);
+    }
+  }
+
+  return (
+    <div className="star-rating">
+      <div
+        ref={group}
+        className="star-rating-stars"
+        role="radiogroup"
+        aria-label={label}
+        onKeyDown={onKeyDown}
+      >
+        {STARS.map((star) => {
+          const filled = value !== null && star <= value;
+          return (
+            <button
+              key={star}
+              type="button"
+              role="radio"
+              className={`star${filled ? " on" : ""}`}
+              disabled={disabled}
+              aria-checked={value === star}
+              // Sin nota la parada del tabulador es la primera estrella: un
+              // grupo sin nada elegido tiene que poder recibir el foco igual.
+              tabIndex={star === (value ?? 1) ? 0 : -1}
+              aria-label={`${star} de 5`}
+              onClick={() => select(star === value ? null : star)}
+            >
+              {filled ? "★" : "☆"}
+            </button>
+          );
+        })}
+      </div>
+      {value !== null ? (
+        <button
+          type="button"
+          className="icon-btn star-rating-clear"
+          disabled={disabled}
+          // El icono no se explica solo: el nombre lleva el estado al que
+          // devuelve —«sin nota»— y no el gesto, que es lo que hay que poder
+          // elegir. Sin el `title`, un puntero solo ve una cruz.
+          title="Quitar la nota"
+          aria-label="Sin nota"
+          // Por `select` y no por `onChange` a secas: este botón desaparece al
+          // quitar la nota, así que el foco tiene que ir a algún sitio y ese
+          // sitio son las estrellas que deja detrás.
+          onClick={() => select(null)}
+        >
+          <svg
+            viewBox="0 0 16 16"
+            width="14"
+            height="14"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path d="M4.4 4.4 11.6 11.6M11.6 4.4 4.4 11.6" />
+          </svg>
+        </button>
+      ) : (
+        // El hueco del botón se queda reservado y vacío: sin nota no hay nada
+        // que quitar, pero si el sitio no estuviera, poner la primera estrella
+        // correría las cinco a la izquierda.
+        <span className="star-rating-clear-slot" aria-hidden="true" />
+      )}
+    </div>
   );
 }
 
@@ -497,6 +670,43 @@ export function Drawer({
       </aside>
     </>,
     document.body,
+  );
+}
+
+/* -------------------------------------------------------------------------- *
+ * Píldora de acciones
+ *
+ * Lo que se hace con lo que se está leyendo, flotando al pie del panel en vez de
+ * clavado en su cabecera.
+ *
+ * La cabecera era el peor sitio posible para estas acciones, y por dos motivos
+ * que apuntan a lo mismo: se deciden **al final** —después del veredicto, de la
+ * ficha y muchas veces del propio anuncio—, y en la mano el final está a varias
+ * pantallas de scroll de la cabecera y fuera del alcance del pulgar. Además,
+ * tres rótulos escritos ahí arriba dejaban al titular del coche unos cien
+ * píxeles. Flotando abajo, las acciones están donde acaba la lectura y donde ya
+ * está el dedo, y el titular recupera la cabecera entera.
+ *
+ * `position: sticky` dentro del cuerpo que hace scroll, y no `fixed`: es el
+ * mismo primitivo que ya usa el pie de la configuración de captación, y al vivir
+ * dentro del panel hereda su escalón de apilado. Un segundo panel abierto encima
+ * —el editor sobre la ficha— la tapa como tapa a todo lo demás; con `fixed`
+ * habría que perseguirle el `z-index` a mano y acabaría flotando sobre un
+ * formulario al que no pertenece.
+ * -------------------------------------------------------------------------- */
+export function ActionPill({
+  label,
+  children,
+}: {
+  /** Qué se puede hacer aquí, para quien no ve la píldora. Es un grupo y no una
+   *  barra de herramientas: los botones no se recorren con las flechas. */
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="action-pill" role="group" aria-label={label}>
+      {children}
+    </div>
   );
 }
 

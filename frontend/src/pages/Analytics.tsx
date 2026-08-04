@@ -439,34 +439,41 @@ export function AnalyticsPage() {
                 : "el color acompaña al binomio en los seis gráficos"}
             </span>
             <div className="spacer" />
-            <select
-              className="input select-sm"
-              aria-label="Combustible"
-              value={fuel}
-              onChange={(event) => setFuel(event.target.value as FuelType | "")}
-            >
-              <option value="">Todos los combustibles</option>
-              {Object.entries(FUEL_LABELS).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
-            <select
-              className="input select-sm"
-              aria-label="Estado"
-              value={condition}
-              onChange={(event) =>
-                setCondition(event.target.value as VehicleCondition | "")
-              }
-            >
-              <option value="">Todos los estados</option>
-              {Object.entries(CONDITION_LABELS).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
+            {/* Los dos desplegables van juntos en su caja y no sueltos en la
+                cabecera: en la mano bajan de línea como un bloque y se reparten
+                el ancho a mitades. Sueltos, cada uno envolvía por su cuenta —una
+                línea por desplegable— o competía con el rótulo de sección por el
+                mismo hueco y se quedaba en «Todos⌄». */}
+            <div className="analytics-picker-filters">
+              <select
+                className="input select-sm"
+                aria-label="Combustible"
+                value={fuel}
+                onChange={(event) => setFuel(event.target.value as FuelType | "")}
+              >
+                <option value="">Todos los combustibles</option>
+                {Object.entries(FUEL_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+              <select
+                className="input select-sm"
+                aria-label="Estado"
+                value={condition}
+                onChange={(event) =>
+                  setCondition(event.target.value as VehicleCondition | "")
+                }
+              >
+                <option value="">Todos los estados</option>
+                {Object.entries(CONDITION_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           {catalog.length === 0 && !analytics.loading ? (

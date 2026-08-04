@@ -19,8 +19,15 @@ class ScoreWeights(BaseModel):
     """Peso relativo de cada componente.
 
     No tienen que sumar 100: el peso final de una oferta se renormaliza sobre
-    los componentes con dato (`weight_pct` en el desglose). Los defaults sí
-    suman 100 para que se lean como porcentajes.
+    los componentes con dato (`weight_pct` en el desglose). Los ocho automáticos
+    —los que salen del anuncio— sí suman 100 por defecto, para que se lean como
+    porcentajes; las dos notas manuales añaden 5 cada una **por encima** de ese
+    presupuesto.
+
+    Ese «por encima» es deliberado y no un descuadre: repartir los 100 de siempre
+    para hacerles sitio habría movido hoy la puntuación de todo el catálogo, y sin
+    una sola nota puesta. Así no se mueve nada hasta que alguien valore un coche,
+    que es cuando la nota tiene algo que decir.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -31,6 +38,8 @@ class ScoreWeights(BaseModel):
     age: float = Field(default=10, ge=0, le=100)
     power: float = Field(default=5, ge=0, le=100)
     transmission: float = Field(default=5, ge=0, le=100)
+    equipment: float = Field(default=5, ge=0, le=100)
+    apparent_condition: float = Field(default=5, ge=0, le=100)
     price_drop: float = Field(default=5, ge=0, le=100)
     freshness: float = Field(default=5, ge=0, le=100)
 
@@ -78,9 +87,13 @@ class ScoreParams(BaseModel):
     freshness_zero_score_days: float = Field(default=60, gt=0, le=365)
     min_market_comparables: int = Field(default=3, ge=2, le=50)
 
-    # Potencia: rampa lineal entre el CV que puntúa 0 y el que puntúa 100.
-    power_zero_score_hp: float = Field(default=50, ge=0, le=500)
-    power_full_score_hp: float = Field(default=250, gt=0, le=1000)
+    # Potencia: rampa entre el CV que puntúa 0 y el que puntúa 100, curvada por
+    # el exponente. Con 1 la rampa es lineal; por encima, la curva es plana abajo
+    # y empinada arriba, así que los CV ganados cerca del tope valen más que los
+    # ganados cerca del suelo (con 2, la mitad de la rampa puntúa 25 y no 50).
+    power_zero_score_hp: float = Field(default=100, ge=0, le=500)
+    power_full_score_hp: float = Field(default=200, gt=0, le=1000)
+    power_curve_exponent: float = Field(default=2.0, ge=1, le=5)
 
     @model_validator(mode="after")
     def _power_ramp_ordered(self) -> ScoreParams:

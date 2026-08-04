@@ -320,7 +320,13 @@ export function ModelsPage() {
       <div className="content">
         <div className="filters">
           <div className="field grow">
-            <label htmlFor="q">Buscar</label>
+            {/* En la mano el rótulo no informa: el marcador de posición dice
+                «Marca, modelo o versión…», que es más de lo que dice «Buscar», y
+                los 20 px de la etiqueta apilada eran lo que descuadraba el
+                interruptor de al lado. Sigue ahí para quien no ve el campo. */}
+            <label className={touch ? "sr-only" : undefined} htmlFor="q">
+              Buscar
+            </label>
             <input
               id="q"
               className="input"
@@ -377,11 +383,11 @@ export function ModelsPage() {
              inventar una jerarquía que en 390 pt no se lee. Al lado, y solo al
              lado, el botón de seguir: es el gesto de un toque de esta pantalla y
              el único que compite con el de la ficha. */
-          <ul className="record-list">
+          <ul className="record-list flush">
             {rows.map((group) => {
               const follow = followState(group);
               return (
-                <li key={group.key} className="record-item">
+                <li key={group.key} className="record-item split">
                   <button
                     type="button"
                     className="record-link"
@@ -400,10 +406,15 @@ export function ModelsPage() {
                     <span className="record-meta">{groupMeta(group)}</span>
                   </button>
                   <div className="record-actions">
+                    {/* `on` y no `btn-primary`: seguir un modelo es un estado, no
+                        la acción principal de la pantalla, y cuatro rellenos
+                        sólidos en fila decían lo contrario. `aria-pressed` es lo
+                        que hace que el estado también se anuncie. */}
                     <button
                       type="button"
-                      className={`btn btn-sm${group.tracked_variants > 0 ? " btn-primary" : ""}`}
+                      className={`btn btn-sm${group.tracked_variants > 0 ? " on" : ""}`}
                       disabled={busy === group.key}
+                      aria-pressed={group.tracked_variants > 0}
                       aria-label={`${follow.label}. ${follow.hint}`}
                       onClick={() => toggleGroup(group)}
                     >
@@ -441,8 +452,9 @@ export function ModelsPage() {
                       <tr className="group-row">
                         <td>
                           <button
-                            className={`btn btn-sm${group.tracked_variants > 0 ? " btn-primary" : ""}`}
+                            className={`btn btn-sm${group.tracked_variants > 0 ? " on" : ""}`}
                             disabled={busy === group.key}
+                            aria-pressed={group.tracked_variants > 0}
                             onClick={() => toggleGroup(group)}
                             title={follow.hint}
                           >
@@ -531,8 +543,9 @@ export function ModelsPage() {
                             <tr key={variant.id} className="variant-row">
                               <td>
                                 <button
-                                  className={`btn btn-sm${variant.is_tracked ? " btn-primary" : ""}`}
+                                  className={`btn btn-sm${variant.is_tracked ? " on" : ""}`}
                                   disabled={busy === `variant:${variant.id}`}
+                                  aria-pressed={variant.is_tracked}
                                   onClick={() => toggleVariant(variant)}
                                 >
                                   {variant.is_tracked ? "Siguiendo" : "Seguir"}
@@ -1116,17 +1129,22 @@ function TrackModelDrawer({
       <form className="stack" onSubmit={submit}>
         {picking ? (
           <>
-            <div className="row">
+            {/* Dos opciones excluyentes: el seleccionado se marca con el mismo
+                «estado puesto» que el resto de la app, no con el relleno sólido
+                de la acción principal —que en este panel es «Seguir modelo». */}
+            <div className="row" role="group" aria-label="Origen del modelo">
               <button
                 type="button"
-                className={`btn btn-sm${source === "existing" ? " btn-primary" : ""}`}
+                className={`btn btn-sm${source === "existing" ? " on" : ""}`}
+                aria-pressed={source === "existing"}
                 onClick={() => setSource("existing")}
               >
                 Del catálogo
               </button>
               <button
                 type="button"
-                className={`btn btn-sm${source === "new" ? " btn-primary" : ""}`}
+                className={`btn btn-sm${source === "new" ? " on" : ""}`}
+                aria-pressed={source === "new"}
                 onClick={() => {
                   setSource("new");
                   setPicked(null);

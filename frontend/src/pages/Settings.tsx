@@ -52,6 +52,13 @@ function ScoringCard() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  // Lo que explica cada señal es prosa de referencia: se lee la primera vez que
+  // se toca un peso y nunca más. En escritorio cabe al lado del control y se
+  // queda puesta; en 375 pt son diez párrafos de 40 palabras entre uno y otro,
+  // así que ahí se pliega y el interruptor la trae de vuelta. La capa móvil es
+  // la única que mira este estado: por encima de 860 px las descripciones se
+  // ven siempre, valga lo que valga.
+  const [help, setHelp] = useState(false);
 
   // El formulario se rellena con lo vigente cada vez que llega del backend.
   useEffect(() => {
@@ -116,9 +123,22 @@ function ScoringCard() {
   }
 
   return (
-    <div className="card">
-      <p className="card-title">Puntuación de valor</p>
-      <p className="tiny muted" style={{ marginTop: -4 }}>
+    <div className="card scoring" data-help={help ? "on" : "off"}>
+      <div className="scoring-head">
+        <p className="card-title">Puntuación de valor</p>
+        {/* Solo existe por debajo de 860 px: la hoja lo esconde en escritorio,
+            donde no hay nada que desplegar. El rótulo cambia con el estado
+            porque el botón es su propia etiqueta. */}
+        <button
+          type="button"
+          className="btn btn-sm score-help-toggle"
+          aria-expanded={help}
+          onClick={() => setHelp((value) => !value)}
+        >
+          {help ? "Ocultar" : "Qué mide cada señal"}
+        </button>
+      </div>
+      <p className="tiny muted score-intro">
         Cada oferta se puntúa de 0 a 100 como media ponderada de estas señales, y su panel
         enseña el desglose exacto. Los pesos son relativos: el porcentaje final es
         peso/total y, si a una oferta le falta una señal, su peso se reparte entre las
@@ -192,7 +212,7 @@ function ScoringCard() {
           </div>
         </div>
 
-        <div className="row" style={{ marginTop: 14 }}>
+        <div className="row score-actions">
           {data.updated_at ? (
             <span className="tiny muted">Editada el {formatDateTime(data.updated_at)}</span>
           ) : null}

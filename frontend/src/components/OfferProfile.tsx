@@ -199,12 +199,17 @@ export function OfferProfile({ offer }: { offer: Offer }) {
 
       {/* «Valor» es el único eje que no se lee en el propio anuncio; su cuenta
           completa —señal a señal, con los pesos finales— está en el desglose de
-          arriba de este mismo panel, así que aquí basta la definición. */}
+          arriba de este mismo panel, así que aquí basta la definición.
+
+          Sin lista de señales escrita a mano, y a propósito: la que había aquí
+          nombraba «descuento» y «dealer», que no son componentes de la
+          puntuación, y se dejaba fuera la potencia y el cambio. Una enumeración
+          en prosa de algo que vive en `COMPONENT_LABELS` se queda vieja en
+          cuanto se toca el modelo —y se quedó—, mientras que el desglose de
+          arriba las lista todas y siempre las de verdad. */}
       <p className="profile-note">
         <strong>Valor</strong> es la media ponderada de las señales del desglose de
-        arriba: precio frente al mercado y frente al valor esperado por depreciación,
-        kilometraje, antigüedad, bajada, descuento, dealer y frescura. Los pesos se ven y
-        se editan en Ajustes.
+        arriba, cada una con su peso. Los pesos se ven y se editan en Ajustes.
       </p>
 
       {dropped.length ? (

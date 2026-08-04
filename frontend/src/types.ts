@@ -201,10 +201,12 @@ export interface ScoreParams {
   expected_full_scale_pct: number;
   mileage_full_scale_pct: number;
   price_drop_full_scale_pct: number;
-  discount_full_scale_pct: number;
   age_zero_score_years: number;
   freshness_zero_score_days: number;
   min_market_comparables: number;
+  power_zero_score_hp: number;
+  power_full_score_hp: number;
+  power_curve_exponent: number;
 }
 
 export interface ScoreConfig {
@@ -259,7 +261,17 @@ export interface Offer {
    */
   manual_fields: OfferEditableField[];
   edited_at: string | null;
+  /**
+   * Las dos notas que no salen de ningún anuncio: cuánto equipamiento trae y qué
+   * pinta tiene. De 1 a 5, o `null` mientras nadie las haya puesto — y `null` no
+   * es un 1: sin nota la señal no puntúa y su peso se reparte entre las demás.
+   */
+  equipment_rating: number | null;
+  apparent_condition_rating: number | null;
 }
+
+/** Las notas que acepta `PUT /offers/{id}/rating`. */
+export type OfferRatingField = "equipment_rating" | "apparent_condition_rating";
 
 /** Las columnas que `PATCH /offers/{id}` deja escribir. Espejo de `EDITABLE_FIELDS`. */
 export type OfferEditableField =
