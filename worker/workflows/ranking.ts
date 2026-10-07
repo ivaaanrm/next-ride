@@ -59,13 +59,22 @@ export class RankingWorkflow extends WorkflowEntrypoint<Env, RankingParams> {
         const db = getDb(this.env);
         const [run] = await db.select().from(rankingRuns).where(eq(rankingRuns.id, runId));
         if (!run) throw new NonRetryableError(`RankingRun ${runId} no existe.`);
+        // Sin cuenta no hay ofertas que mirar: rankear «todas» sería mezclar cuentas.
+        if (!run.user_id) throw new NonRetryableError(`RankingRun ${runId} no tiene cuenta.`);
         await db
           .update(rankingRuns)
           .set({ status: "running", effort: settings.effort, model_used: settings.model })
           .where(eq(rankingRuns.id, runId));
         try {
           const request = RankingRequest.parse(run.request ?? null);
-          const ctx = await buildContext(db, run.make_model_key, run.label, request, settings.maxOffers);
+          const ctx = await buildContext(
+            db,
+            run.user_id,
+            run.make_model_key,
+            run.label,
+            request,
+            settings.maxOffers,
+          );
           return JSON.stringify(ctx);
         } catch (error) {
           throw fatal(error);

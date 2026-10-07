@@ -1,4 +1,7 @@
-/** Modelos que el usuario decide seguir en la plataforma. */
+/**
+ * Modelos que el usuario decide seguir en la plataforma. Solo se siguen
+ * versiones de la propia cuenta: un id de otra es un 404, como uno que no existe.
+ */
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 
@@ -109,6 +112,7 @@ async function readTracked(db: Db, userId: string, carModelIds?: number[]) {
     .where(
       and(
         eq(trackedModels.user_id, userId),
+        eq(carModels.user_id, userId),
         carModelIds ? inList(trackedModels.car_model_id, carModelIds) : undefined,
       ),
     )
@@ -126,23 +130,27 @@ trackingRoutes.get("/", async (c) => c.json(await readTracked(c.var.db, c.var.us
 trackingRoutes.post("/", async (c) => {
   const payload = await parseBody(c, TrackedModelCreate);
   const db = c.var.db;
+  const userId = c.var.user.id;
 
   let model: CarModel | undefined;
   if (payload.car_model_id !== null) {
-    [model] = await db.select().from(carModels).where(eq(carModels.id, payload.car_model_id));
+    [model] = await db
+      .select()
+      .from(carModels)
+      .where(and(eq(carModels.id, payload.car_model_id), eq(carModels.user_id, userId)));
     if (!model) throw notFound("Modelo no encontrado");
   } else {
-    model = await getOrCreateCarModel(db, payload.make!, payload.model!, payload.trim);
+    model = await getOrCreateCarModel(db, userId, payload.make!, payload.model!, payload.trim);
   }
 
   if (payload.reference_price !== null && model.reference_price === null) {
     await db
       .update(carModels)
       .set({ reference_price: payload.reference_price })
-      .where(eq(carModels.id, model.id));
+      .where(and(eq(carModels.id, model.id), eq(carModels.user_id, userId)));
   }
 
-  const [tracked] = await upsertTracking(db, c.var.user.id, [model.id], {
+  const [tracked] = await upsertTracking(db, userId, [model.id], {
     target_price: payload.target_price,
     max_mileage_km: payload.max_mileage_km,
     min_year: payload.min_year,
@@ -157,9 +165,12 @@ trackingRoutes.post("/bulk", async (c) => {
   const db = c.var.db;
   const ids = [...new Set(payload.car_model_ids)];
   const found = new Set(
-    (await db.select({ id: carModels.id }).from(carModels).where(inList(carModels.id, ids))).map(
-      (row) => row.id,
-    ),
+    (
+      await db
+        .select({ id: carModels.id })
+        .from(carModels)
+        .where(and(eq(carModels.user_id, c.var.user.id), inList(carModels.id, ids)))
+    ).map((row) => row.id),
   );
   const missing = ids.filter((id) => !found.has(id));
   if (missing.length) throw notFound(`Modelos no encontrados: ${missing.join(", ")}`);
@@ -204,6 +215,7 @@ trackingRoutes.delete("/bulk", async (c) => {
 trackingRoutes.put("/group", async (c) => {
   const payload = await parseBody(c, GroupFollow);
   const db = c.var.db;
+  const userId = c.var.user.id;
   const key = makeModelKey(payload.make, payload.model);
 
   // La captación va primero porque es la que valida (una fuente inactiva da
@@ -211,18 +223,24 @@ trackingRoutes.put("/group", async (c) => {
   const sourceIds =
     payload.source_ids === null
       ? null
-      : await setModelSources(db, payload.make, payload.model, payload.source_ids);
+      : await setModelSources(db, userId, payload.make, payload.model, payload.source_ids);
 
   let variants = await db
     .select({ id: carModels.id })
     .from(carModels)
-    .where(and(eq(carModels.make_model_key, key), eq(carModels.is_active, true)));
+    .where(
+      and(
+        eq(carModels.user_id, userId),
+        eq(carModels.make_model_key, key),
+        eq(carModels.is_active, true),
+      ),
+    );
   if (!variants.length) {
-    variants = [await getOrCreateCarModel(db, payload.make, payload.model)];
+    variants = [await getOrCreateCarModel(db, userId, payload.make, payload.model)];
   }
 
   const ids = variants.map((variant) => variant.id);
-  await upsertTracking(db, c.var.user.id, ids, {
+  await upsertTracking(db, userId, ids, {
     target_price: payload.target_price,
     max_mileage_km: payload.max_mileage_km,
     min_year: payload.min_year,
@@ -236,14 +254,15 @@ trackingRoutes.put("/group", async (c) => {
 trackingRoutes.delete("/group", async (c) => {
   const { key, stop_scraping } = parseQuery(c, GroupQuery);
   const db = c.var.db;
+  const userId = c.var.user.id;
   const variants = await db
     .select({ id: carModels.id })
     .from(carModels)
-    .where(eq(carModels.make_model_key, key));
+    .where(and(eq(carModels.user_id, userId), eq(carModels.make_model_key, key)));
   if (variants.length) {
     await db.delete(trackedModels).where(
       and(
-        eq(trackedModels.user_id, c.var.user.id),
+        eq(trackedModels.user_id, userId),
         inList(
           trackedModels.car_model_id,
           variants.map((variant) => variant.id),
@@ -251,7 +270,7 @@ trackingRoutes.delete("/group", async (c) => {
       ),
     );
   }
-  if (stop_scraping) await stopModelSources(db, key);
+  if (stop_scraping) await stopModelSources(db, userId, key);
   return c.body(null, 204);
 });
 

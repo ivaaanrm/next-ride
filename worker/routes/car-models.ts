@@ -18,7 +18,7 @@ async function withStats(db: Db, userId: string, models: CarModel[]) {
   if (!models.length) return [];
   const ids = models.map((model) => model.id);
   const [stats, tracked] = await Promise.all([
-    modelPriceStats(db, ids),
+    modelPriceStats(db, userId, ids),
     db
       .select()
       .from(trackedModels)
@@ -79,12 +79,17 @@ const CarModelUpdate = z
   })
   .partial();
 
+/** La versión `id`, solo si es de la cuenta `userId`. */
+const ownModel = (userId: string, id: number) =>
+  and(eq(carModels.id, id), eq(carModels.user_id, userId));
+
+/** El catálogo es de cada cuenta: lo forman sus ofertas y lo que ella sigue. */
 export const carModelsRoutes = router();
 carModelsRoutes.use(requireUser);
 
 carModelsRoutes.get("/", async (c) => {
   const query = parseQuery(c, ListQuery);
-  const conditions: SQL[] = [];
+  const conditions: SQL[] = [eq(carModels.user_id, c.var.user.id)];
   if (!query.include_inactive) conditions.push(eq(carModels.is_active, true));
   if (query.q) {
     const pattern = `%${query.q.toLowerCase()}%`;
@@ -119,7 +124,7 @@ carModelsRoutes.get("/groups", async (c) => {
   // Dos pasos: qué binomios casan con el filtro y luego *todas* sus versiones.
   // Buscar «sportback» encuentra el A3 entero, no tres de sus versiones: un
   // grupo recortado daría una mediana que no es la del mercado que describe.
-  const conditions: SQL[] = [];
+  const conditions: SQL[] = [eq(carModels.user_id, userId)];
   if (!query.include_inactive) conditions.push(eq(carModels.is_active, true));
   if (query.q) {
     const pattern = `%${query.q.toLowerCase()}%`;
@@ -141,6 +146,7 @@ carModelsRoutes.get("/groups", async (c) => {
     .from(carModels)
     .where(
       and(
+        eq(carModels.user_id, userId),
         inList(carModels.make_model_key, keys),
         query.include_inactive ? undefined : eq(carModels.is_active, true),
       ),
@@ -155,6 +161,7 @@ carModelsRoutes.get("/groups", async (c) => {
     withStats(db, userId, models),
     binomioMarket(
       db,
+      userId,
       keys,
       DEFAULT_PARAMS,
       new Date(),
@@ -163,7 +170,13 @@ carModelsRoutes.get("/groups", async (c) => {
     db
       .select({ key: rankingRuns.make_model_key, last: max(rankingRuns.created_at) })
       .from(rankingRuns)
-      .where(and(inList(rankingRuns.make_model_key, keys), eq(rankingRuns.status, "completed")))
+      .where(
+        and(
+          eq(rankingRuns.user_id, userId),
+          inList(rankingRuns.make_model_key, keys),
+          eq(rankingRuns.status, "completed"),
+        ),
+      )
       .groupBy(rankingRuns.make_model_key),
   ]);
   const lastRanked = new Map(ranked.map((row) => [row.key, row.last]));
@@ -218,29 +231,43 @@ carModelsRoutes.get("/groups", async (c) => {
 
 carModelsRoutes.post("/", async (c) => {
   const payload = await parseBody(c, CarModelCreate);
+  const userId = c.var.user.id;
   const slug = slugify(payload.make, payload.model, payload.trim);
-  const [existing] = await c.var.db.select({ id: carModels.id }).from(carModels).where(eq(carModels.slug, slug));
+  const [existing] = await c.var.db
+    .select({ id: carModels.id })
+    .from(carModels)
+    .where(and(eq(carModels.user_id, userId), eq(carModels.slug, slug)));
   if (existing) throw conflict(`Ya existe el modelo '${slug}'`);
   const [model] = await c.var.db
     .insert(carModels)
-    .values({ ...payload, slug, make_model_key: makeModelKey(payload.make, payload.model) })
+    .values({
+      ...payload,
+      user_id: userId,
+      slug,
+      make_model_key: makeModelKey(payload.make, payload.model),
+    })
     .returning();
   return c.json(carModelRead(model), 201);
 });
 
 carModelsRoutes.get("/:id", async (c) => {
-  const [model] = await c.var.db.select().from(carModels).where(eq(carModels.id, parseId(c, "id")));
+  const userId = c.var.user.id;
+  const [model] = await c.var.db
+    .select()
+    .from(carModels)
+    .where(ownModel(userId, parseId(c, "id")));
   if (!model) throw notFound("Modelo no encontrado");
-  return c.json((await withStats(c.var.db, c.var.user.id, [model]))[0]);
+  return c.json((await withStats(c.var.db, userId, [model]))[0]);
 });
 
 carModelsRoutes.patch("/:id", async (c) => {
   const id = parseId(c, "id");
   const payload = await parseBody(c, CarModelUpdate);
   const db = c.var.db;
+  const where = ownModel(c.var.user.id, id);
   const [model] = Object.keys(payload).length
-    ? await db.update(carModels).set(payload).where(eq(carModels.id, id)).returning()
-    : await db.select().from(carModels).where(eq(carModels.id, id));
+    ? await db.update(carModels).set(payload).where(where).returning()
+    : await db.select().from(carModels).where(where);
   if (!model) throw notFound("Modelo no encontrado");
   return c.json(carModelRead(model));
 });

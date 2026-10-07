@@ -5,7 +5,7 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 
-import { Client, offerPayload, signedUpClient, unique } from "./client";
+import { account, Client, offerPayload, signedUpClient, unique } from "./client";
 
 const BOOTSTRAP_KEY = "nr_boot0000_bootstrap-secret-for-tests";
 
@@ -17,7 +17,8 @@ describe("API keys", () => {
     expect(created.body.api_key).toMatch(/^nr_[0-9a-f]{8}_/);
 
     const listed = await user.get("/api/v1/api-keys");
-    expect(listed.body.some((k: { id: number }) => k.id === created.body.id)).toBe(true);
+    // Solo las suyas: la del bootstrap es del superusuario.
+    expect(listed.body.map((k: { id: number }) => k.id)).toEqual([created.body.id]);
     expect(listed.body.every((k: object) => !("hashed_key" in k) && !("api_key" in k))).toBe(true);
 
     const scraper = new Client(created.body.api_key);
@@ -40,9 +41,8 @@ describe("API keys", () => {
 });
 
 describe("ingesta en lote", () => {
-  const scraper = new Client(BOOTSTRAP_KEY);
-
   it("crea, actualiza, y reporta las ofertas mal formadas sin tumbar el lote", async () => {
+    const { scraper } = await account();
     const good = [offerPayload(), offerPayload({ price: "19990", year: 2019.0 })];
     const bad = { ...offerPayload(), price: -5 };
     const res = await scraper.post("/api/v1/offers/bulk", { offers: [...good, bad, { title: "sin url" }] });
@@ -60,7 +60,7 @@ describe("ingesta en lote", () => {
   });
 
   it("anota el historial solo cuando cambia el precio", async () => {
-    const user = await signedUpClient();
+    const { user, scraper } = await account();
     const payload = offerPayload();
     const [id] = (await scraper.post("/api/v1/offers/bulk", { offers: [payload] })).body.offer_ids;
     await scraper.post("/api/v1/offers/bulk", { offers: [payload] });
@@ -76,6 +76,7 @@ describe("ingesta en lote", () => {
   });
 
   it("la misma URL dos veces en un lote: la primera crea y la segunda actualiza", async () => {
+    const { scraper } = await account();
     const payload = offerPayload();
     const res = await scraper.post("/api/v1/offers/bulk", {
       offers: [payload, { ...payload, price: 20000 }],
@@ -85,6 +86,7 @@ describe("ingesta en lote", () => {
   });
 
   it("normaliza la URL como lo hacía Pydantic", async () => {
+    const { scraper } = await account();
     const id = unique("u");
     const first = await scraper.post("/api/v1/offers/bulk", {
       offers: [offerPayload({ url: `HTTPS://Dealer.Example/${id}` })],
@@ -97,7 +99,7 @@ describe("ingesta en lote", () => {
   });
 
   it("guarda el crudo en R2 y lo sirve aparte, no en el listado", async () => {
-    const user = await signedUpClient();
+    const { user, scraper } = await account();
     const payload = offerPayload({ raw: { marker: "r2-raw", nested: { a: 1 } } });
     const [id] = (await scraper.post("/api/v1/offers/bulk", { offers: [offerPayload(), payload] })).body
       .offer_ids.slice(1);
@@ -114,7 +116,7 @@ describe("ingesta en lote", () => {
   });
 
   it("completa los huecos del dealer sin pisar lo curado", async () => {
-    const user = await signedUpClient();
+    const { user, scraper } = await account();
     const name = unique("Dealer Huecos");
     await scraper.post("/api/v1/offers/bulk", { offers: [offerPayload({ dealer_name: name, dealer_city: null })] });
     const dealers = (await user.get(`/api/v1/dealers?q=${encodeURIComponent(name.toLowerCase())}`)).body;
@@ -130,6 +132,7 @@ describe("ingesta en lote", () => {
   });
 
   it("un lote de 500 cabe en una invocación", async () => {
+    const { scraper } = await account();
     const offers = Array.from({ length: 500 }, (_, i) =>
       offerPayload({ dealer_name: `Lote Dealer ${i % 40}`, trim: `Versión ${i % 25}` }),
     );
@@ -139,16 +142,17 @@ describe("ingesta en lote", () => {
   });
 
   it("un lote que ocupa varios trozos devuelve todos los ids, en el orden de entrada", async () => {
+    const { user, scraper } = await account();
     const offers = Array.from({ length: 250 }, (_, i) => offerPayload({ price: 10000 + i }));
     const res = await scraper.post("/api/v1/offers/bulk", { offers });
     expect(res.body).toMatchObject({ created: 250, skipped: 0 });
-    const user = await signedUpClient();
     const first = (await user.get(`/api/v1/offers/${res.body.offer_ids[0]}`)).body;
     const last = (await user.get(`/api/v1/offers/${res.body.offer_ids[249]}`)).body;
     expect([first.url, last.url]).toEqual([offers[0].url, offers[249].url]);
   });
 
   it("POST /offers ingesta una sola oferta y devuelve la ficha", async () => {
+    const { scraper } = await account();
     const res = await scraper.post("/api/v1/offers", offerPayload());
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({ status: "active", is_favorite: false });
@@ -157,10 +161,8 @@ describe("ingesta en lote", () => {
 });
 
 describe("estado frente al scraper", () => {
-  const scraper = new Client(BOOTSTRAP_KEY);
-
   it("el scraper no resucita una descartada, pero sí una expirada (y le quita la marca)", async () => {
-    const user = await signedUpClient();
+    const { user, scraper } = await account();
     const dismissedPayload = offerPayload();
     const expiredPayload = offerPayload();
     const [dismissedId, expiredId] = (
@@ -178,7 +180,7 @@ describe("estado frente al scraper", () => {
   });
 
   it("los campos corregidos a mano quedan anclados; soltar los devuelve al scraper", async () => {
-    const user = await signedUpClient();
+    const { user, scraper } = await account();
     const payload = offerPayload({ year: 2019 });
     const [id] = (await scraper.post("/api/v1/offers/bulk", { offers: [payload] })).body.offer_ids;
 

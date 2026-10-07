@@ -27,8 +27,6 @@ import {
 } from "../schemas/scoring";
 import type { OfferMetrics, PriceStats } from "./metrics";
 
-const SINGLETON_ID = 1;
-
 const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(high, value));
 const round = (value: number, digits: number) => Math.round(value * 10 ** digits) / 10 ** digits;
 
@@ -95,8 +93,9 @@ function validated<T>(
   return result.data as T;
 }
 
-export async function getScoringConfig(db: Db): Promise<ScoringConfig> {
-  const [row] = await db.select().from(scoreConfig).where(eq(scoreConfig.id, SINGLETON_ID));
+/** Los pesos y parámetros de la cuenta: cada una puntúa con los suyos. */
+export async function getScoringConfig(db: Db, userId: string): Promise<ScoringConfig> {
+  const [row] = await db.select().from(scoreConfig).where(eq(scoreConfig.user_id, userId));
   if (!row) return DEFAULT_CONFIG;
   return {
     weights: validated(ScoreWeights, row.weights, DEFAULT_WEIGHTS),
@@ -105,23 +104,24 @@ export async function getScoringConfig(db: Db): Promise<ScoringConfig> {
   };
 }
 
-/** Guarda lo que venga y conserva el resto. Crea la fila singleton si no existe. */
+/** Guarda lo que venga y conserva el resto. Crea la fila de la cuenta si no existe. */
 export async function saveScoringConfig(
   db: Db,
+  userId: string,
   weights: ScoreWeights | null | undefined,
   params: ScoreParams | null | undefined,
 ): Promise<ScoringConfig> {
-  const current = await getScoringConfig(db);
+  const current = await getScoringConfig(db, userId);
   const merged = { weights: weights ?? current.weights, params: params ?? current.params };
   const now = new Date().toISOString();
   await db
     .insert(scoreConfig)
-    .values({ id: SINGLETON_ID, ...merged, created_at: now, updated_at: now })
+    .values({ user_id: userId, ...merged, created_at: now, updated_at: now })
     .onConflictDoUpdate({
-      target: scoreConfig.id,
+      target: scoreConfig.user_id,
       set: { ...merged, updated_at: now },
     });
-  return getScoringConfig(db);
+  return getScoringConfig(db, userId);
 }
 
 // --------------------------------------------------------------------------- //

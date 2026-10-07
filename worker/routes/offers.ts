@@ -1,4 +1,10 @@
-/** Ofertas: lectura con métricas, ingesta, corrección manual, estado y favoritos. */
+/**
+ * Ofertas: lectura con métricas, ingesta, corrección manual, estado y favoritos.
+ *
+ * Cada cuenta ve y toca solo las suyas. Una oferta de otra cuenta es un 404 en
+ * todos los verbos, igual que una que no existe: ni siquiera se confirma que
+ * esté.
+ */
 import { and, asc, count, countDistinct, desc, eq, max, min, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 
@@ -55,8 +61,12 @@ export const OfferFilters = z.object({
 });
 export type OfferFilters = z.output<typeof OfferFilters>;
 
+/** Las condiciones del filtro, siempre dentro de las ofertas de la cuenta `userId`. */
 export function filterConditions(filters: OfferFilters, userId: string): SQL {
-  const conditions: (SQL | undefined)[] = [eq(offers.status, filters.status ?? "active")];
+  const conditions: (SQL | undefined)[] = [
+    eq(offers.user_id, userId),
+    eq(offers.status, filters.status ?? "active"),
+  ];
   if (filters.car_model_id) conditions.push(eq(offers.car_model_id, filters.car_model_id));
   if (filters.dealer_id) conditions.push(eq(offers.dealer_id, filters.dealer_id));
   if (filters.condition) conditions.push(eq(offers.condition, filters.condition));
@@ -155,32 +165,39 @@ export function bestByScore<T extends { id: number }>(
   return best;
 }
 
-async function getOfferOr404(db: Db, id: number): Promise<OfferWithRelations> {
-  const offer = await loadOffer(db, id);
+/** La oferta `id`, solo si es de la cuenta `userId`. */
+const ownOffer = (userId: string, id: number) =>
+  and(eq(offers.id, id), eq(offers.user_id, userId));
+
+async function getOfferOr404(db: Db, userId: string, id: number): Promise<OfferWithRelations> {
+  const offer = await loadOffer(db, userId, id);
   if (!offer) throw notFound("Oferta no encontrada");
   return offer;
 }
 
-async function respondOne(c: Context<AppEnv>, id: number, userId: string | null) {
-  const offer = await getOfferOr404(c.var.db, id);
-  return (await serializeOffers(c.var.db, [offer], userId))[0];
+async function respondOne(c: Context<AppEnv>, userId: string, id: number) {
+  const offer = await getOfferOr404(c.var.db, userId, id);
+  return (await serializeOffers(c.var.db, userId, [offer]))[0];
 }
 
 export const offersRoutes = router();
 
 // ---- Ingesta: la consume el skill (sesión o X-API-Key) ----------------------- //
+// Entra en la cuenta de quien ingesta: la de la sesión o la dueña de la clave.
 offersRoutes.post("/", requireIngest, async (c) => {
   // El cuerpo se valida entero antes de tocar nada: aquí un error es un 422.
   const payload = await parseBody(c, OfferIngest);
-  const result = await ingestOffers(c.env.DB, c.env.BUCKET, [payload]);
+  const { ownerId } = c.var.principal;
+  const result = await ingestOffers(c.env.DB, c.env.BUCKET, ownerId, [payload]);
   if (!result.offer_ids.length) throw new Error(result.errors[0] ?? "No se pudo guardar la oferta");
-  const user = c.var.principal.user;
-  return c.json(await respondOne(c, result.offer_ids[0], user?.id ?? null), 201);
+  return c.json(await respondOne(c, ownerId, result.offer_ids[0]), 201);
 });
 
 offersRoutes.post("/bulk", requireIngest, async (c) => {
   const payload = await parseBody(c, OfferBulkIngest);
-  return c.json(await ingestOffers(c.env.DB, c.env.BUCKET, payload.offers));
+  return c.json(
+    await ingestOffers(c.env.DB, c.env.BUCKET, c.var.principal.ownerId, payload.offers),
+  );
 });
 
 // ---- Lectura ------------------------------------------------------------------ //
@@ -194,22 +211,22 @@ offersRoutes.get("/", requireUser, async (c) => {
 
   const dbSort = DB_SORTS[sort];
   if (dbSort) {
-    const list = await loadOffers(db, {
+    const list = await loadOffers(db, user.id, {
       where,
       orderBy: [dbSort, asc(offers.id)],
       limit,
       offset,
     });
-    return c.json({ items: await serializeOffers(db, list, user.id), total, limit, offset });
+    return c.json({ items: await serializeOffers(db, user.id, list), total, limit, offset });
   }
 
   // Ordenación por puntuación: se calcula sobre un conjunto acotado.
-  const list = await loadOffers(db, {
+  const list = await loadOffers(db, user.id, {
     where,
     orderBy: [asc(offers.price), asc(offers.id)],
     limit: SCORE_SORT_CAP,
   });
-  const serialized = await serializeOffers(db, list, user.id);
+  const serialized = await serializeOffers(db, user.id, list);
   const valueOf = (offer: OfferRead) => offer.metrics.value_score ?? 0;
   if (sort === "ai_score") {
     serialized.sort(
@@ -262,7 +279,7 @@ offersRoutes.get("/stats", requireUser, async (c) => {
       .where(filterConditions({ ...filters, min_year: undefined, max_year: undefined }, user.id)),
     // El mejor chollo exige puntuar en TS: se acota igual que el orden por
     // puntuación del listado, así ambos coinciden en la fila de arriba.
-    loadOffers(db, {
+    loadOffers(db, user.id, {
       where: filterConditions(filters, user.id),
       orderBy: [asc(offers.price), asc(offers.id)],
       limit: SCORE_SORT_CAP,
@@ -271,9 +288,9 @@ offersRoutes.get("/stats", requireUser, async (c) => {
 
   let bestDeal: OfferRead | null = null;
   if (candidates.length) {
-    const metrics = await enrichOffers(db, candidates);
+    const metrics = await enrichOffers(db, user.id, candidates);
     const top = bestByScore(candidates, (offer) => metrics.get(offer.id)!.value_score)!;
-    bestDeal = (await serializeOffers(db, [top], user.id))[0];
+    bestDeal = (await serializeOffers(db, user.id, [top]))[0];
   }
 
   return c.json({
@@ -293,7 +310,7 @@ offersRoutes.get("/stats", requireUser, async (c) => {
 });
 
 offersRoutes.get("/:id", requireUser, async (c) => {
-  return c.json(await respondOne(c, parseId(c, "id"), c.var.user.id));
+  return c.json(await respondOne(c, c.var.user.id, parseId(c, "id")));
 });
 
 /** Payload crudo del scraper, desde R2. Se pide aparte: no va en el listado. */
@@ -301,7 +318,7 @@ offersRoutes.get("/:id/raw", requireUser, async (c) => {
   const [offer] = await c.var.db
     .select({ raw_ref: offers.raw_ref })
     .from(offers)
-    .where(eq(offers.id, parseId(c, "id")));
+    .where(ownOffer(c.var.user.id, parseId(c, "id")));
   if (!offer) throw notFound("Oferta no encontrada");
   return c.json({ raw: await getRaw(c.env.BUCKET, offer.raw_ref) });
 });
@@ -309,7 +326,10 @@ offersRoutes.get("/:id/raw", requireUser, async (c) => {
 offersRoutes.get("/:id/price-history", requireUser, async (c) => {
   const id = parseId(c, "id");
   const db = c.var.db;
-  const [exists] = await db.select({ id: offers.id }).from(offers).where(eq(offers.id, id));
+  const [exists] = await db
+    .select({ id: offers.id })
+    .from(offers)
+    .where(ownOffer(c.var.user.id, id));
   if (!exists) throw notFound("Oferta no encontrada");
   const points = await db
     .select({ price: offerPriceHistory.price, recorded_at: offerPriceHistory.recorded_at })
@@ -327,27 +347,39 @@ offersRoutes.patch("/:id", requireUser, async (c) => {
   const id = parseId(c, "id");
   const payload = await parseBody(c, OfferUpdate);
   const db = c.var.db;
-  const offer = await getOfferOr404(db, id);
+  const userId = c.var.user.id;
+  const offer = await getOfferOr404(db, userId, id);
 
   // Reatribuir se comprueba antes de escribir: un 404 con el nombre de lo que
-  // no existe, y no un error de clave ajena.
+  // no existe, y no un error de clave ajena. Una versión o un dealer de otra
+  // cuenta no existen para esta.
   if (
     payload.car_model_id != null &&
     payload.car_model_id !== offer.car_model_id &&
-    !(await db.select({ id: carModels.id }).from(carModels).where(eq(carModels.id, payload.car_model_id))).length
+    !(
+      await db
+        .select({ id: carModels.id })
+        .from(carModels)
+        .where(and(eq(carModels.id, payload.car_model_id), eq(carModels.user_id, userId)))
+    ).length
   ) {
     throw notFound("Modelo no encontrado");
   }
   if (
     payload.dealer_id != null &&
     payload.dealer_id !== offer.dealer_id &&
-    !(await db.select({ id: dealers.id }).from(dealers).where(eq(dealers.id, payload.dealer_id))).length
+    !(
+      await db
+        .select({ id: dealers.id })
+        .from(dealers)
+        .where(and(eq(dealers.id, payload.dealer_id), eq(dealers.user_id, userId)))
+    ).length
   ) {
     throw notFound("Dealer no encontrado");
   }
 
-  await applyManualEdit(db, offer, payload, c.var.user.id);
-  return c.json(await respondOne(c, id, c.var.user.id));
+  await applyManualEdit(db, offer, payload, userId);
+  return c.json(await respondOne(c, userId, id));
 });
 
 // ---- Estado: las tres transiciones que se hacen a mano ---------------------- //
@@ -356,18 +388,19 @@ offersRoutes.patch("/:id", requireUser, async (c) => {
 async function moveTo(c: Context<AppEnv>, target: OfferStatus, reason: string | null = null) {
   const id = parseId(c, "id");
   const db = c.var.db;
-  await getOfferOr404(db, id);
+  const userId = c.var.user.id;
+  await getOfferOr404(db, userId, id);
   const backToActive = target === "active";
   await db
     .update(offers)
     .set({
       status: target,
       dismissed_at: backToActive ? null : nowIso(),
-      dismissed_by_id: backToActive ? null : c.var.user.id,
+      dismissed_by_id: backToActive ? null : userId,
       dismiss_reason: backToActive ? null : reason,
     })
-    .where(eq(offers.id, id));
-  return c.json(await respondOne(c, id, c.var.user.id));
+    .where(ownOffer(userId, id));
+  return c.json(await respondOne(c, userId, id));
 }
 
 /** Descarta una oferta. Borrado lógico: el scraper no la revive. */
@@ -388,29 +421,32 @@ offersRoutes.post("/:id/restore", requireUser, async (c) => moveTo(c, "active"))
 offersRoutes.put("/:id/rating", requireUser, async (c) => {
   const id = parseId(c, "id");
   const payload = await parseBody(c, OfferRatingUpdate);
-  await getOfferOr404(c.var.db, id);
+  const userId = c.var.user.id;
+  await getOfferOr404(c.var.db, userId, id);
   if (Object.keys(payload).length) {
-    await c.var.db.update(offers).set(payload).where(eq(offers.id, id));
+    await c.var.db.update(offers).set(payload).where(ownOffer(userId, id));
   }
-  return c.json(await respondOne(c, id, c.var.user.id));
+  return c.json(await respondOne(c, userId, id));
 });
 
 // ---- Favoritos: marca personal, idempotente --------------------------------- //
 offersRoutes.post("/:id/favorite", requireUser, async (c) => {
   const id = parseId(c, "id");
-  await getOfferOr404(c.var.db, id);
+  const userId = c.var.user.id;
+  await getOfferOr404(c.var.db, userId, id);
   await c.var.db
     .insert(offerFavorites)
-    .values({ user_id: c.var.user.id, offer_id: id })
+    .values({ user_id: userId, offer_id: id })
     .onConflictDoNothing();
-  return c.json(await respondOne(c, id, c.var.user.id));
+  return c.json(await respondOne(c, userId, id));
 });
 
 offersRoutes.delete("/:id/favorite", requireUser, async (c) => {
   const id = parseId(c, "id");
-  await getOfferOr404(c.var.db, id);
+  const userId = c.var.user.id;
+  await getOfferOr404(c.var.db, userId, id);
   await c.var.db
     .delete(offerFavorites)
-    .where(and(eq(offerFavorites.user_id, c.var.user.id), eq(offerFavorites.offer_id, id)));
-  return c.json(await respondOne(c, id, c.var.user.id));
+    .where(and(eq(offerFavorites.user_id, userId), eq(offerFavorites.offer_id, id)));
+  return c.json(await respondOne(c, userId, id));
 });

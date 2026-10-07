@@ -79,7 +79,8 @@ export function ApiKeysPage() {
             <code className="mono">X-API-Key</code>. Toma la clave de{" "}
             <code className="mono">NR_API_KEY</code> y la URL base de{" "}
             <code className="mono">NR_API_BASE_URL</code>, que para esta instancia es{" "}
-            <code className="mono">{origin}</code>.
+            <code className="mono">{origin}</code>. Las claves son de tu cuenta: el scraper busca
+            lo que tú configuras y lo que ingesta solo lo ves tú.
           </p>
 
           {error ? <Banner kind="error">{error}</Banner> : null}

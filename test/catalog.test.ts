@@ -3,13 +3,14 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 
 import worker from "../worker/index";
-import { Client, offerPayload, signedUpClient, unique } from "./client";
+import { account, adminClient, Client, offerPayload, signedUpClient, unique } from "./client";
 
-const scraper = new Client("nr_boot0000_bootstrap-secret-for-tests");
+/** El scraper de la clave del bootstrap: el del superusuario, dueño de la semilla. */
+const adminScraper = new Client("nr_boot0000_bootstrap-secret-for-tests");
 
 describe("modelos y dealers", () => {
   it("lista modelos y grupos por binomio con sus agregados", async () => {
-    const user = await signedUpClient();
+    const { user, scraper } = await account();
     const make = unique("Grupo");
     await scraper.post("/api/v1/offers/bulk", {
       offers: [
@@ -50,7 +51,7 @@ describe("modelos y dealers", () => {
   });
 
   it("dealers con agregados, edición de notas y búsqueda", async () => {
-    const user = await signedUpClient();
+    const { user, scraper } = await account();
     const name = unique("Smoke Dealer");
     await scraper.post("/api/v1/offers/bulk", {
       offers: [offerPayload({ dealer_name: name, price: 20000, original_price: 25000 })],
@@ -66,7 +67,7 @@ describe("modelos y dealers", () => {
 
 describe("seguimiento de modelos", () => {
   it("seguir, re-seguir, en bloque y dejar de seguir", async () => {
-    const user = await signedUpClient();
+    const { user, scraper } = await account();
     const make = unique("Sigue");
     await scraper.post("/api/v1/offers/bulk", {
       offers: [offerPayload({ make, model: "M", trim: "1" }), offerPayload({ make, model: "M", trim: "2" })],
@@ -112,7 +113,7 @@ describe("seguimiento de modelos", () => {
   });
 
   it("seguir un binomio nuevo en un paso: catálogo, criterios y captación", async () => {
-    const user = await signedUpClient();
+    const { user, scraper } = await account();
     const make = unique("Paso");
     const key = `${make.toLowerCase()}|corolla`;
     const sources = (await user.get("/api/v1/scraping/sources")).body as { id: number; key: string }[];
@@ -182,7 +183,7 @@ describe("seguimiento de modelos", () => {
   });
 
   it("quien sigue solo algunas versiones no hereda las nuevas", async () => {
-    const user = await signedUpClient();
+    const { user, scraper } = await account();
     const make = unique("Parcial");
     await scraper.post("/api/v1/offers/bulk", {
       offers: [offerPayload({ make, model: "P", trim: "1" }), offerPayload({ make, model: "P", trim: "2" })],
@@ -198,8 +199,8 @@ describe("seguimiento de modelos", () => {
 });
 
 describe("configuración de rastreo", () => {
-  it("sirve la semilla al skill, con las URLs renderizadas", async () => {
-    const config = (await scraper.get("/api/v1/scraping/config")).body;
+  it("sirve la semilla al skill del superusuario, con las URLs renderizadas", async () => {
+    const config = (await adminScraper.get("/api/v1/scraping/config")).body;
     expect(config.max_per_target).toBe(15);
     const flexicar = config.targets.find(
       (t: { source: { key: string }; make_model_key: string }) =>
@@ -218,7 +219,8 @@ describe("configuración de rastreo", () => {
   });
 
   it("el skill persiste lo descubierto y la UI reemplaza la selección conservándolo", async () => {
-    const user = await signedUpClient();
+    const user = await adminClient();
+    const scraper = adminScraper;
     const sources = (await user.get("/api/v1/scraping/sources")).body;
     const ocasion = sources.find((s: { key: string }) => s.key === "ocasionplus");
     const targets = (await user.get("/api/v1/scraping/targets")).body;
@@ -264,17 +266,21 @@ describe("configuración de rastreo", () => {
     expect((await user.put("/api/v1/scraping/targets", { targets: [{ source_id: 9999, make: "a", model: "b" }] })).status).toBe(422);
   });
 
-  it("alta y edición de fuentes", async () => {
-    const user = await signedUpClient();
+  it("alta y edición de fuentes, solo por un superusuario", async () => {
+    const user = await adminClient();
     const key = unique("src").toLowerCase();
-    const created = await user.post("/api/v1/scraping/sources", {
-      key,
-      name: "Fuente",
-      base_url: "https://fuente.example",
-      access: "fetch",
-    });
+    const source = { key, name: "Fuente", base_url: "https://fuente.example", access: "fetch" };
+
+    // Las fuentes son de todas las cuentas: una persona cualquiera no las toca.
+    const member = await signedUpClient();
+    expect((await member.post("/api/v1/scraping/sources", source)).status).toBe(403);
+
+    const created = await user.post("/api/v1/scraping/sources", source);
     expect(created.status).toBe(201);
     expect((await user.post("/api/v1/scraping/sources", { ...created.body, key })).status).toBe(409);
+    expect(
+      (await member.patch(`/api/v1/scraping/sources/${created.body.id}`, { notes: "otra cosa" })).status,
+    ).toBe(403);
     const off = await user.patch(`/api/v1/scraping/sources/${created.body.id}`, { is_active: false });
     expect(off.body.is_active).toBe(false);
     expect((await user.post("/api/v1/scraping/sources", { key: "Mal Clave", name: "x", base_url: "x", access: "fetch" })).status).toBe(422);
@@ -292,7 +298,7 @@ describe("ranking con IA", () => {
   });
 
   it("el último veredicto de un run completado viaja con cada oferta del binomio", async () => {
-    const user = await signedUpClient();
+    const { user, scraper, id: userId } = await account();
     const make = unique("Rank");
     const { offer_ids: ids } = (
       await scraper.post("/api/v1/offers/bulk", {
@@ -304,9 +310,9 @@ describe("ranking con IA", () => {
     ).body;
     const key = `${make.toLowerCase()}|r`;
     const run = await env.DB.prepare(
-      `INSERT INTO ranking_runs (make_model_key, label, status, created_at) VALUES (?1, ?2, 'completed', ?3) RETURNING id`,
+      `INSERT INTO ranking_runs (user_id, make_model_key, label, status, created_at) VALUES (?4, ?1, ?2, 'completed', ?3) RETURNING id`,
     )
-      .bind(key, `${make} R`, new Date().toISOString())
+      .bind(key, `${make} R`, new Date().toISOString(), userId)
       .first<{ id: number }>();
     await env.DB.prepare(
       `INSERT INTO offer_rankings (run_id, offer_id, rank, score, verdict, reasoning, pros, cons) VALUES (?1, ?2, 1, 91, 'excellent', 'barato', '["km"]', '[]'), (?1, ?3, 2, 40, 'fair', NULL, '[]', '[]')`,

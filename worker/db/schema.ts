@@ -19,6 +19,12 @@
  *   depender de quién la calcule (ver `services/catalog.ts`).
  * - El payload crudo del scraper ya no vive aquí: está en R2 y la oferta guarda
  *   solo la referencia (`raw_ref`).
+ *
+ * Aislamiento por cuenta: todo el dominio —ofertas, dealers, versiones,
+ * rankings, captación, pesos de la puntuación y API keys— es de una cuenta
+ * (`user_id`), y ninguna consulta cruza de una a otra. Lo único compartido son
+ * los portales de `scrape_sources`, que mantiene un superusuario. Ver
+ * `migrations/0003_account_isolation.sql`.
  */
 import { sql } from "drizzle-orm";
 import {
@@ -45,6 +51,17 @@ const timestamps = {
 };
 
 const bool = (name: string) => integer(name, { mode: "boolean" });
+
+/**
+ * La cuenta dueña de la fila. Obligatoria para el tipo y para los disparadores
+ * de la migración 0003, aunque la columna de SQLite admita NULL: se añadió con
+ * `ADD COLUMN` porque reconstruir `offers` en D1 vaciaría por cascada su
+ * historial, sus favoritos y sus rankings.
+ */
+const ownerId = () =>
+  text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" });
 
 // --------------------------------------------------------------------------- //
 // Enumeraciones (TEXT + CHECK, como el `native_enum=False` de antes)
@@ -153,11 +170,15 @@ export const verifications = sqliteTable(
 //
 // Propias y no el plugin de Better Auth: el skill ya tiene claves con formato
 // `nr_<prefijo>_<secreto>` y hash SHA-256, y tienen que seguir valiendo.
+//
+// Una clave es de una cuenta, y lo que el scraper ingesta con ella entra en esa
+// cuenta y en ninguna otra.
 // --------------------------------------------------------------------------- //
 export const apiKeys = sqliteTable(
   "api_keys",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
+    user_id: ownerId(),
     name: text("name").notNull(),
     prefix: text("prefix").notNull(),
     hashed_key: text("hashed_key").notNull().unique(),
@@ -166,7 +187,7 @@ export const apiKeys = sqliteTable(
     created_by_id: text("created_by_id").references(() => users.id, { onDelete: "set null" }),
     ...timestamps,
   },
-  (table) => [index("ix_api_keys_prefix").on(table.prefix)],
+  (table) => [index("ix_api_keys_prefix").on(table.prefix), index("ix_api_keys_user").on(table.user_id)],
 );
 
 // --------------------------------------------------------------------------- //
@@ -196,26 +217,32 @@ export const invitations = sqliteTable(
 // --------------------------------------------------------------------------- //
 // Catálogo
 // --------------------------------------------------------------------------- //
-export const dealers = sqliteTable("dealers", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  slug: text("slug").notNull().unique(),
-  name: text("name").notNull(),
-  website: text("website"),
-  city: text("city"),
-  country: text("country"),
-  // Reputación del dealer (0-5), informada por el scraper o a mano.
-  rating: real("rating"),
-  is_active: bool("is_active").notNull().default(true),
-  notes: text("notes"),
-  ...timestamps,
-});
+export const dealers = sqliteTable(
+  "dealers",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    user_id: ownerId(),
+    slug: text("slug").notNull(),
+    name: text("name").notNull(),
+    website: text("website"),
+    city: text("city"),
+    country: text("country"),
+    // Reputación del dealer (0-5), informada por el scraper o a mano.
+    rating: real("rating"),
+    is_active: bool("is_active").notNull().default(true),
+    notes: text("notes"),
+    ...timestamps,
+  },
+  (table) => [uniqueIndex("uq_dealers_user_slug").on(table.user_id, table.slug)],
+);
 
 /** Un modelo concreto (marca + modelo, opcionalmente acabado). */
 export const carModels = sqliteTable(
   "car_models",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
-    slug: text("slug").notNull().unique(),
+    user_id: ownerId(),
+    slug: text("slug").notNull(),
     make: text("make").notNull(),
     model: text("model").notNull(),
     trim: text("trim").notNull().default(""),
@@ -228,8 +255,9 @@ export const carModels = sqliteTable(
     ...timestamps,
   },
   (table) => [
-    uniqueIndex("uq_car_model_identity").on(table.make, table.model, table.trim),
-    index("ix_car_models_make_model_key").on(table.make_model_key),
+    uniqueIndex("uq_car_models_user_slug").on(table.user_id, table.slug),
+    uniqueIndex("uq_car_model_identity").on(table.user_id, table.make, table.model, table.trim),
+    index("ix_car_models_user_key").on(table.user_id, table.make_model_key),
   ],
 );
 
@@ -264,8 +292,10 @@ export const offers = sqliteTable(
   "offers",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
-    // Identidad en el origen. `url` es la clave natural del upsert.
-    url: text("url").notNull().unique(),
+    user_id: ownerId(),
+    // Identidad en el origen. `url` es la clave natural del upsert, dentro de
+    // cada cuenta: dos cuentas que rastrean el mismo anuncio tienen dos ofertas.
+    url: text("url").notNull(),
     external_id: text("external_id"),
     source: text("source"),
     dealer_id: integer("dealer_id")
@@ -312,9 +342,10 @@ export const offers = sqliteTable(
     ...timestamps,
   },
   (table) => [
+    uniqueIndex("uq_offers_user_url").on(table.user_id, table.url),
     index("ix_offers_model_status_price").on(table.car_model_id, table.status, table.price),
     index("ix_offers_dealer_status").on(table.dealer_id, table.status),
-    index("ix_offers_status_last_seen").on(table.status, table.last_seen_at),
+    index("ix_offers_user_status_last_seen").on(table.user_id, table.status, table.last_seen_at),
     index("ix_offers_external_id").on(table.external_id),
     check("ck_offers_status", inList("status", OFFER_STATUS)),
     check("ck_offers_condition", inList("condition", VEHICLE_CONDITION)),
@@ -378,6 +409,8 @@ export const rankingRuns = sqliteTable(
   "ranking_runs",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
+    // Un run rankea las ofertas de su cuenta, y solo esa cuenta lo ve.
+    user_id: ownerId(),
     make_model_key: text("make_model_key").notNull(),
     // La grafía con la que se enseñó («Audi A3»), congelada al lanzar el run.
     label: text("label").notNull().default(""),
@@ -401,7 +434,11 @@ export const rankingRuns = sqliteTable(
     finished_at: text("finished_at"),
   },
   (table) => [
-    index("ix_ranking_runs_binomio_created").on(table.make_model_key, table.created_at),
+    index("ix_ranking_runs_user_binomio_created").on(
+      table.user_id,
+      table.make_model_key,
+      table.created_at,
+    ),
     check("ck_ranking_runs_status", inList("status", RUN_STATUS)),
   ],
 );
@@ -435,20 +472,29 @@ export const offerRankings = sqliteTable(
 // Configuración
 // --------------------------------------------------------------------------- //
 /**
- * Pesos y parámetros de la puntuación de valor: una sola fila para toda la app.
- * Van en JSON porque su esquema es el de `schemas/scoring.ts`, que ya valida en
- * el borde de la API. La fila puede no existir: rigen los defaults.
+ * Pesos y parámetros de la puntuación de valor: una fila por cuenta. Van en
+ * JSON porque su esquema es el de `schemas/scoring.ts`, que ya valida en el
+ * borde de la API. La fila puede no existir: rigen los defaults.
  */
-export const scoreConfig = sqliteTable("score_config", {
-  id: integer("id").primaryKey(),
-  weights: text("weights", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
-  params: text("params", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
-  ...timestamps,
-});
+export const scoreConfig = sqliteTable(
+  "score_config",
+  {
+    id: integer("id").primaryKey(),
+    user_id: ownerId(),
+    weights: text("weights", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    params: text("params", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    ...timestamps,
+  },
+  (table) => [uniqueIndex("uq_score_config_user").on(table.user_id)],
+);
 
 /**
  * Portal o dealer desde el que el scraper obtiene inventario. No es `dealers`:
  * una fuente puede contener anuncios de muchos vendedores.
+ *
+ * Es lo único compartido entre cuentas —qué portales sabe leer el skill— y por
+ * eso solo lo edita un superusuario: sus `notes` y su `config` son instrucciones
+ * que sigue el scraper de cada cuenta.
  */
 export const scrapeSources = sqliteTable(
   "scrape_sources",
@@ -471,11 +517,12 @@ export const scrapeSources = sqliteTable(
   () => [check("ck_scrape_sources_access", inList("access", SCRAPE_ACCESS))],
 );
 
-/** Una combinación concreta de binomio marca-modelo y fuente. */
+/** Una combinación concreta de binomio marca-modelo y fuente, de una cuenta. */
 export const scrapeTargets = sqliteTable(
   "scrape_targets",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
+    user_id: ownerId(),
     source_id: integer("source_id")
       .notNull()
       .references(() => scrapeSources.id, { onDelete: "cascade" }),
@@ -494,8 +541,12 @@ export const scrapeTargets = sqliteTable(
     ...timestamps,
   },
   (table) => [
-    uniqueIndex("uq_scrape_target_source_model").on(table.source_id, table.make_model_key),
-    index("ix_scrape_targets_active").on(table.is_active, table.source_id),
+    uniqueIndex("uq_scrape_target_source_model").on(
+      table.user_id,
+      table.source_id,
+      table.make_model_key,
+    ),
+    index("ix_scrape_targets_user_active").on(table.user_id, table.is_active),
   ],
 );
 

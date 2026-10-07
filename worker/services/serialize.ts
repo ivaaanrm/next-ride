@@ -170,9 +170,14 @@ export function offerRead(
   };
 }
 
-/** Ofertas con su versión y su dealer, con el filtro y el orden que se pidan. */
+/**
+ * Ofertas de la cuenta `userId` con su versión y su dealer, con el filtro y el
+ * orden que se pidan. La cuenta va aparte y no dentro de `where` para que
+ * ninguna lectura de ofertas pueda olvidarla: `where` solo estrecha.
+ */
 export async function loadOffers(
   db: Db,
+  userId: string,
   options: {
     where?: SQL;
     orderBy?: SQL[];
@@ -185,7 +190,7 @@ export async function loadOffers(
     .from(offers)
     .innerJoin(carModels, eq(carModels.id, offers.car_model_id))
     .innerJoin(dealers, eq(dealers.id, offers.dealer_id))
-    .where(options.where)
+    .where(and(eq(offers.user_id, userId), options.where))
     .$dynamic();
   if (options.orderBy?.length) query = query.orderBy(...options.orderBy);
   if (options.limit !== undefined) query = query.limit(options.limit);
@@ -194,17 +199,23 @@ export async function loadOffers(
   return rows.map((row) => ({ ...row.offer, car_model: row.car_model, dealer: row.dealer }));
 }
 
-export async function loadOffer(db: Db, id: number): Promise<OfferWithRelations | null> {
-  const [offer] = await loadOffers(db, { where: eq(offers.id, id) });
+/** Una oferta de la cuenta, o `null` si no existe o es de otra. */
+export async function loadOffer(
+  db: Db,
+  userId: string,
+  id: number,
+): Promise<OfferWithRelations | null> {
+  const [offer] = await loadOffers(db, userId, { where: eq(offers.id, id) });
   return offer ?? null;
 }
 
 /**
  * Último veredicto del agente por oferta, del run completado más reciente de su
- * binomio: dos versiones del mismo modelo comparten ranking.
+ * binomio en la cuenta: dos versiones del mismo modelo comparten ranking.
  */
 export async function latestAiSummaries(
   db: Db,
+  userId: string,
   list: OfferWithRelations[],
 ): Promise<Map<number, OfferRankSummary>> {
   if (!list.length) return new Map();
@@ -212,7 +223,13 @@ export async function latestAiSummaries(
   const latest = await db
     .select({ id: max(rankingRuns.id) })
     .from(rankingRuns)
-    .where(and(inList(rankingRuns.make_model_key, keys), eq(rankingRuns.status, "completed")))
+    .where(
+      and(
+        eq(rankingRuns.user_id, userId),
+        inList(rankingRuns.make_model_key, keys),
+        eq(rankingRuns.status, "completed"),
+      ),
+    )
     .groupBy(rankingRuns.make_model_key);
   const runIds = latest.map((row) => row.id).filter((id): id is number => id !== null);
   if (!runIds.length) return new Map();
@@ -245,17 +262,20 @@ export async function latestAiSummaries(
   );
 }
 
-/** Ofertas listas para responder: métricas, último veredicto de IA y favorito. */
+/**
+ * Ofertas de la cuenta `userId` listas para responder: métricas, último
+ * veredicto de IA y favorito.
+ */
 export async function serializeOffers(
   db: Db,
+  userId: string,
   list: OfferWithRelations[],
-  userId: string | null,
   config?: ScoringConfig,
 ): Promise<OfferRead[]> {
   if (!list.length) return [];
   const [metrics, ai, favorites] = await Promise.all([
-    enrichOffers(db, list, config),
-    latestAiSummaries(db, list),
+    enrichOffers(db, userId, list, config),
+    latestAiSummaries(db, userId, list),
     favoriteOfferIds(
       db,
       userId,

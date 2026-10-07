@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { Client, offerPayload, signedUpClient, unique } from "./client";
+import { account, offerPayload, unique, type Client } from "./client";
 
-const scraper = new Client("nr_boot0000_bootstrap-secret-for-tests");
-
-/** Un binomio propio por prueba: los filtros por modelo la aíslan del resto. */
-async function seedMarket(count = 6, extra: Record<string, unknown>[] = []) {
+/**
+ * Un binomio propio por prueba, ingestado por el scraper de la cuenta de la
+ * prueba: los filtros por modelo la aíslan del resto de lo que tenga.
+ */
+async function seedMarket(scraper: Client, count = 6, extra: Record<string, unknown>[] = []) {
   const make = unique("Marca");
   const offers = [
     ...Array.from({ length: count }, (_, i) =>
@@ -30,8 +31,8 @@ async function seedMarket(count = 6, extra: Record<string, unknown>[] = []) {
 
 describe("listado de ofertas", () => {
   it("ordena por cada columna, con los nulos al final en los dos sentidos", async () => {
-    const user = await signedUpClient();
-    const { make } = await seedMarket();
+    const { user, scraper } = await account();
+    const { make } = await seedMarket(scraper);
     const q = `q=${encodeURIComponent(make.toLowerCase())}`;
     const list = async (sort: string) =>
       (await user.get(`/api/v1/offers?${q}&sort=${sort}`)).body.items as Array<Record<string, any>>;
@@ -53,8 +54,8 @@ describe("listado de ofertas", () => {
   });
 
   it("filtra y pagina", async () => {
-    const user = await signedUpClient();
-    const { make } = await seedMarket();
+    const { user, scraper } = await account();
+    const { make } = await seedMarket(scraper);
     const q = `q=${encodeURIComponent(make.toLowerCase())}`;
     const page = (await user.get(`/api/v1/offers?${q}&max_price=20000`)).body;
     expect(page.total).toBe(3);
@@ -69,8 +70,8 @@ describe("listado de ofertas", () => {
   });
 
   it("calcula las métricas contra el mercado del binomio, con desglose auditable", async () => {
-    const user = await signedUpClient();
-    const { make } = await seedMarket();
+    const { user, scraper } = await account();
+    const { make } = await seedMarket(scraper);
     const items = (await user.get(`/api/v1/offers?q=${encodeURIComponent(make.toLowerCase())}&sort=price`))
       .body.items;
     // Seis ofertas de 15.000 a 27.500 €: mediana 21.250 €.
@@ -92,8 +93,8 @@ describe("listado de ofertas", () => {
 
 describe("métricas del conjunto filtrado", () => {
   it("describen exactamente las filas del filtro, y el dominio de los deslizadores ignora su propio filtro", async () => {
-    const user = await signedUpClient();
-    const { make } = await seedMarket();
+    const { user, scraper } = await account();
+    const { make } = await seedMarket(scraper);
     const q = `q=${encodeURIComponent(make.toLowerCase())}`;
 
     const all = (await user.get(`/api/v1/offers/stats?${q}`)).body;
@@ -118,13 +119,13 @@ describe("métricas del conjunto filtrado", () => {
 
 describe("configuración de la puntuación", () => {
   it("se lee con sus explicaciones, se edita, se valida y se restaura", async () => {
-    const user = await signedUpClient();
+    const { user, scraper } = await account();
     const config = (await user.get("/api/v1/scoring/config")).body;
     expect(config.components).toHaveLength(10);
     expect(config.components.every((c: { description: string }) => c.description.length > 20)).toBe(true);
     expect(config.default_weights.price_vs_market).toBe(30);
 
-    const { ids } = await seedMarket(4);
+    const { ids } = await seedMarket(scraper, 4);
     const zeroed = Object.fromEntries(Object.keys(config.weights).map((key) => [key, 0]));
     const onlyFresh = await user.put("/api/v1/scoring/config", { weights: { ...zeroed, freshness: 100 } });
     expect(onlyFresh.status).toBe(200);
@@ -145,8 +146,8 @@ describe("configuración de la puntuación", () => {
 
 describe("acciones sobre una oferta", () => {
   it("descartar, expirar y restaurar", async () => {
-    const user = await signedUpClient();
-    const { make, ids } = await seedMarket(3);
+    const { user, scraper } = await account();
+    const { make, ids } = await seedMarket(scraper, 3);
     const q = `q=${encodeURIComponent(make.toLowerCase())}`;
 
     const dismissed = await user.delete(`/api/v1/offers/${ids[0]}`);
@@ -160,8 +161,8 @@ describe("acciones sobre una oferta", () => {
   });
 
   it("valida las correcciones", async () => {
-    const user = await signedUpClient();
-    const { ids } = await seedMarket(1);
+    const { user, scraper } = await account();
+    const { ids } = await seedMarket(scraper, 1);
     expect((await user.patch(`/api/v1/offers/${ids[0]}`, { title: null })).status).toBe(422);
     expect((await user.patch(`/api/v1/offers/${ids[0]}`, { price: 0 })).status).toBe(422);
     expect((await user.patch(`/api/v1/offers/${ids[0]}`, { car_model_id: 999999 })).status).toBe(404);
@@ -170,8 +171,8 @@ describe("acciones sobre una oferta", () => {
   });
 
   it("las notas manuales puntúan, se borran con null y no anclan nada", async () => {
-    const user = await signedUpClient();
-    const { ids } = await seedMarket(4);
+    const { user, scraper } = await account();
+    const { ids } = await seedMarket(scraper, 4);
     const rated = await user.put(`/api/v1/offers/${ids[1]}/rating`, { equipment_rating: 5 });
     expect(rated.body).toMatchObject({ equipment_rating: 5, apparent_condition_rating: null, manual_fields: [] });
     const equipment = rated.body.metrics.score_breakdown.find((c: { key: string }) => c.key === "equipment");
@@ -184,9 +185,9 @@ describe("acciones sobre una oferta", () => {
   });
 
   it("los favoritos son idempotentes y por usuario", async () => {
-    const user = await signedUpClient();
-    const other = await signedUpClient();
-    const { ids } = await seedMarket(1);
+    const { user, scraper } = await account();
+    const other = await account();
+    const { ids } = await seedMarket(scraper, 1);
     const before = (await user.get("/api/v1/stats/overview")).body.favorite_offers;
 
     expect((await user.post(`/api/v1/offers/${ids[0]}/favorite`)).body.is_favorite).toBe(true);
@@ -196,7 +197,9 @@ describe("acciones sobre una oferta", () => {
       ids[0],
     ]);
     expect((await user.get("/api/v1/stats/overview")).body.favorite_offers).toBe(before + 1);
-    expect((await other.get(`/api/v1/offers/${ids[0]}`)).body.is_favorite).toBe(false);
+    // Otra cuenta ni la ve: no hay favorito ajeno que marcar.
+    expect((await other.user.get(`/api/v1/offers/${ids[0]}`)).status).toBe(404);
+    expect((await other.user.post(`/api/v1/offers/${ids[0]}/favorite`)).status).toBe(404);
 
     expect((await user.delete(`/api/v1/offers/${ids[0]}/favorite`)).body.is_favorite).toBe(false);
     expect((await user.get("/api/v1/offers?favorites_only=true")).body.total).toBe(0);
@@ -205,8 +208,8 @@ describe("acciones sobre una oferta", () => {
 
 describe("analítica", () => {
   it("agrega por binomio y detalla los pedidos", async () => {
-    const user = await signedUpClient();
-    const { make } = await seedMarket(6);
+    const { user, scraper } = await account();
+    const { make } = await seedMarket(scraper, 6);
     const key = `${make.toLowerCase()}|modelo x`;
     const res = await user.get(
       `/api/v1/analytics/segments?q=${encodeURIComponent(make.toLowerCase())}&keys=${encodeURIComponent(key)}`,

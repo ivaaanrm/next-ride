@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import { api } from "../lib/api";
+import { useAuth } from "../lib/auth";
 import { slugify } from "../lib/slug";
 import type {
   CarModelGroup,
@@ -116,6 +117,10 @@ export function ScrapingConfigDrawer({
   const [error, setError] = useState<string | null>(null);
   const makeInput = useRef<HTMLInputElement>(null);
   const touch = useTouchLayout();
+  // Los portales son de todas las cuentas: los da de alta y los corrige un
+  // superusuario. El resto los ve, para saber dónde busca su scraper.
+  const { user } = useAuth();
+  const canEditSources = user?.is_superuser === true;
 
   useEffect(() => {
     let active = true;
@@ -301,7 +306,7 @@ export function ScrapingConfigDrawer({
   return (
     <Drawer
       title="Configurar captación"
-      subtitle={`${selectedCount} combinaciones activas · configuración global`}
+      subtitle={`${selectedCount} combinaciones activas · solo en tu cuenta`}
       onClose={onClose}
       wide
     >
@@ -338,9 +343,10 @@ export function ScrapingConfigDrawer({
           </div>
 
           {/* Los dealers, arriba de la matriz: son sus columnas, y este es el
-              único sitio donde se dan de alta y se corrigen. Se listan en las dos
-              maquetaciones —en táctil no hay cabecera de tabla que los enseñe— y
-              cada uno abre su ficha, que es también donde se apagan. */}
+              único sitio donde se dan de alta y se corrigen (solo un
+              superusuario: son los mismos para todas las cuentas). Se listan en
+              las dos maquetaciones —en táctil no hay cabecera de tabla que los
+              enseñe— y cada uno abre su ficha, que es también donde se apagan. */}
           <section className="scrape-sources">
             <div className="scrape-sources-head">
               <p className="card-title">
@@ -350,34 +356,50 @@ export function ScrapingConfigDrawer({
                 </span>
               </p>
               <div className="spacer" />
-              <button
-                className="btn btn-sm"
-                type="button"
-                onClick={() => setEditingSource({ source: null })}
-              >
-                Añadir dealer
-              </button>
+              {canEditSources ? (
+                <button
+                  className="btn btn-sm"
+                  type="button"
+                  onClick={() => setEditingSource({ source: null })}
+                >
+                  Añadir dealer
+                </button>
+              ) : null}
             </div>
             {sources.length === 0 ? (
               <p className="tiny muted" style={{ margin: 0 }}>
-                Todavía no hay ningún portal. Añade el primero para poder marcar
-                combinaciones.
+                {canEditSources
+                  ? "Todavía no hay ningún portal. Añade el primero para poder marcar combinaciones."
+                  : "Todavía no hay ningún portal. Los da de alta un administrador."}
               </p>
             ) : (
               <div className="scrape-source-chips">
-                {sources.map((source) => (
-                  <button
-                    key={source.id}
-                    type="button"
-                    className={`scrape-source-chip${source.is_active ? "" : " off"}`}
-                    title={`Editar ${source.name}`}
-                    onClick={() => setEditingSource({ source })}
-                  >
-                    <span className="sr-only">Editar </span>
-                    <span className="scrape-source-name">{source.name}</span>
-                    <small>{source.is_active ? source.access : "inactiva"}</small>
-                  </button>
-                ))}
+                {sources.map((source) =>
+                  canEditSources ? (
+                    <button
+                      key={source.id}
+                      type="button"
+                      className={`scrape-source-chip${source.is_active ? "" : " off"}`}
+                      title={`Editar ${source.name}`}
+                      onClick={() => setEditingSource({ source })}
+                    >
+                      <span className="sr-only">Editar </span>
+                      <span className="scrape-source-name">{source.name}</span>
+                      <small>{source.is_active ? source.access : "inactiva"}</small>
+                    </button>
+                  ) : (
+                    /* Sin ficha que abrir: el mismo chip, pero sin el `:hover`
+                       que promete un clic. */
+                    <span
+                      key={source.id}
+                      className={`scrape-source-chip${source.is_active ? "" : " off"}`}
+                      style={{ pointerEvents: "none" }}
+                    >
+                      <span className="scrape-source-name">{source.name}</span>
+                      <small>{source.is_active ? source.access : "inactiva"}</small>
+                    </span>
+                  ),
+                )}
               </div>
             )}
           </section>

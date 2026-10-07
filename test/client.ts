@@ -78,6 +78,23 @@ export async function signedUpClient(name = "Prueba"): Promise<Client> {
   return client;
 }
 
+/**
+ * El scraper de una cuenta: una API key suya recién creada. Lo que ingeste
+ * entra en la cuenta de `owner`, y solo ella lo ve.
+ */
+export async function scraperOf(owner: Client): Promise<Client> {
+  const res = await owner.post("/api/v1/api-keys", { name: unique("scraper") });
+  if (res.status !== 201) throw new Error(`api key falló: ${res.status} ${JSON.stringify(res.body)}`);
+  return new Client(res.body.api_key);
+}
+
+/** Una cuenta nueva con sesión y su scraper. */
+export async function account(name = "Prueba"): Promise<{ user: Client; scraper: Client; id: string }> {
+  const user = await signedUpClient(name);
+  const [scraper, me] = await Promise.all([scraperOf(user), user.get("/api/v1/auth/me")]);
+  return { user, scraper, id: me.body.id as string };
+}
+
 export async function adminClient(): Promise<Client> {
   const client = new Client();
   const res = await client.post("/api/auth/sign-in/email", {

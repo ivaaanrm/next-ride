@@ -4,6 +4,9 @@
  * El binomio va en query y no en la ruta: la clave lleva una barra vertical y
  * espacios («audi|a4 allroad quattro»), y un segmento de ruta con eso dentro
  * depende de que nadie normalice el porcentaje por el camino.
+ *
+ * Un run es de una cuenta: rankea sus ofertas y solo ella lo ve. El mismo
+ * binomio en dos cuentas son dos rankings que no se mezclan.
  */
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import type { Context } from "hono";
@@ -37,7 +40,11 @@ const runRead = (run: RankingRun) => ({
 
 async function loadDetail(c: Context<AppEnv>, runId: number) {
   const db = c.var.db;
-  const [run] = await db.select().from(rankingRuns).where(eq(rankingRuns.id, runId));
+  const userId = c.var.user.id;
+  const [run] = await db
+    .select()
+    .from(rankingRuns)
+    .where(and(eq(rankingRuns.id, runId), eq(rankingRuns.user_id, userId)));
   if (!run) throw notFound("Run no encontrado");
 
   const items = await db
@@ -46,7 +53,7 @@ async function loadDetail(c: Context<AppEnv>, runId: number) {
     .where(eq(offerRankings.run_id, runId))
     .orderBy(asc(offerRankings.rank));
   const list = items.length
-    ? await loadOffers(db, {
+    ? await loadOffers(db, userId, {
         where: inList(
           offers.id,
           items.map((item) => item.offer_id),
@@ -54,7 +61,7 @@ async function loadDetail(c: Context<AppEnv>, runId: number) {
       })
     : [];
   const serialized = new Map(
-    (await serializeOffers(db, list, c.var.user.id)).map((offer) => [offer.id, offer]),
+    (await serializeOffers(db, userId, list)).map((offer) => [offer.id, offer]),
   );
 
   return {
@@ -93,13 +100,14 @@ rankingsRoutes.post("/car-model-groups/rank", requireUser, async (c) => {
   const { key } = parseQuery(c, KeyQuery);
   const request = await parseBody(c, RankingRequest);
   const db = c.var.db;
+  const userId = c.var.user.id;
 
   // La etiqueta es la grafía más frecuente entre las versiones, igual que en el
   // listado agrupado: la clave viene en minúsculas y no vale para enseñarla.
   const versions = await db
     .select({ make: carModels.make, model: carModels.model })
     .from(carModels)
-    .where(eq(carModels.make_model_key, key));
+    .where(and(eq(carModels.user_id, userId), eq(carModels.make_model_key, key)));
   if (!versions.length) throw notFound(`Binomio '${key}' no encontrado`);
   const label = `${mode(versions.map((v) => v.make))} ${mode(versions.map((v) => v.model))}`;
 
@@ -107,7 +115,11 @@ rankingsRoutes.post("/car-model-groups/rank", requireUser, async (c) => {
     .select({ id: rankingRuns.id })
     .from(rankingRuns)
     .where(
-      and(eq(rankingRuns.make_model_key, key), inArray(rankingRuns.status, ["pending", "running"])),
+      and(
+        eq(rankingRuns.user_id, userId),
+        eq(rankingRuns.make_model_key, key),
+        inArray(rankingRuns.status, ["pending", "running"]),
+      ),
     )
     .limit(1);
   if (inFlight) {
@@ -118,9 +130,10 @@ rankingsRoutes.post("/car-model-groups/rank", requireUser, async (c) => {
   const [run] = await db
     .insert(rankingRuns)
     .values({
+      user_id: userId,
       make_model_key: key,
       label,
-      triggered_by_id: c.var.user.id,
+      triggered_by_id: userId,
       status: "pending",
       model_used: settings.model,
       effort: settings.effort,
@@ -146,7 +159,13 @@ rankingsRoutes.get("/car-model-groups/ranking", requireUser, async (c) => {
   const [run] = await c.var.db
     .select({ id: rankingRuns.id })
     .from(rankingRuns)
-    .where(and(eq(rankingRuns.make_model_key, key), eq(rankingRuns.status, "completed")))
+    .where(
+      and(
+        eq(rankingRuns.user_id, c.var.user.id),
+        eq(rankingRuns.make_model_key, key),
+        eq(rankingRuns.status, "completed"),
+      ),
+    )
     .orderBy(desc(rankingRuns.created_at), desc(rankingRuns.id))
     .limit(1);
   if (!run) throw notFound("Este modelo no tiene todavía ningún ranking completado");
@@ -158,7 +177,7 @@ rankingsRoutes.get("/car-model-groups/ranking-runs", requireUser, async (c) => {
   const runs = await c.var.db
     .select()
     .from(rankingRuns)
-    .where(eq(rankingRuns.make_model_key, key))
+    .where(and(eq(rankingRuns.user_id, c.var.user.id), eq(rankingRuns.make_model_key, key)))
     .orderBy(desc(rankingRuns.created_at), desc(rankingRuns.id))
     .limit(Math.min(Math.max(limit, 1), 100));
   return c.json(runs.map(runRead));

@@ -25,6 +25,10 @@ El scraper es el skill de `next-ride/` (fuera de este proyecto): pide
 siempre con `X-API-Key`. Ese contrato es el mismo de antes del port, y las
 claves `nr_<prefijo>_<secreto>` existentes siguen valiendo.
 
+Cada cuenta es un compartimento estanco: el scraper de una clave busca lo que
+ha configurado la cuenta dueña de la clave e ingesta en ella, y nadie más ve
+esas ofertas (ver [Cuentas y aislamiento](#cuentas-y-aislamiento)).
+
 ---
 
 ## Arranque local
@@ -85,7 +89,7 @@ opcionales, con `pnpm wrangler secret put NOMBRE`:
 | Secreto | Para qué |
 |---|---|
 | `FIRST_SUPERUSER_EMAIL`, `FIRST_SUPERUSER_PASSWORD` | Siembra del primer usuario en la primera petición (el registro está cerrado: `ALLOW_REGISTRATION=false`) |
-| `BOOTSTRAP_SCRAPER_API_KEY` | La `NR_API_KEY` que ya usa el skill, para que siga valiendo sin tocarlo |
+| `BOOTSTRAP_SCRAPER_API_KEY` | La `NR_API_KEY` que ya usa el skill, para que siga valiendo sin tocarlo. Es del superusuario: ingesta en su cuenta |
 | `ANTHROPIC_API_KEY` | El ranking con IA; sin ella responde 503 |
 
 La configuración no secreta (`ALLOW_REGISTRATION`, modelo y esfuerzo del
@@ -104,6 +108,9 @@ Builds), conectando el repositorio con la rama `main`:
 Las migraciones van **antes** que el código: una migración es aditiva o no se
 escribe, así que el código viejo sigue funcionando con el esquema nuevo
 mientras dura el despliegue, y el nuevo nunca arranca contra un esquema viejo.
+La excepción es `0003_account_isolation.sql`: quita las claves únicas globales
+de las que tiraba la ingesta anterior, así que mientras dura ese despliegue el
+código viejo no puede ingestar. Se despliega fuera de la hora del scraper.
 Si aun así pasa, `/health` responde 503. Antes de cada push conviene pasar
 `pnpm typecheck && pnpm test && pnpm validate:mobile`, que es lo que ningún
 paso del build de Cloudflare comprueba.
@@ -151,8 +158,41 @@ pnpm wrangler r2 object put next-ride/raw/import/nextride-XXXX.raw.json --file b
 
 Los usuarios no se importan (las contraseñas eran bcrypt): todo lo que era de
 alguien —favoritos, seguimientos, quién descartó o editó, las API keys— pasa a
-`--owner`. Las API keys se importan con su hash, así que el skill no nota nada.
-Las fuentes y targets de rastreo del volcado sustituyen a la semilla.
+`--owner`, y todo entra en su cuenta. Las API keys se importan con su hash, así
+que el skill no nota nada. Las fuentes y targets de rastreo del volcado
+sustituyen a la semilla en la cuenta de `--owner`; las demás cuentas no se
+tocan, y si alguna usa ya una fuente de la semilla, la importación falla entera.
+
+---
+
+## Cuentas y aislamiento
+
+Cada fila del dominio es de una cuenta (`user_id`): ofertas con su historial,
+dealers, versiones del catálogo, seguimientos, favoritos, runs del agente,
+pesos de la puntuación, targets de rastreo y API keys. Ninguna consulta cruza de
+una cuenta a otra:
+
+- Lo que el scraper ingesta con una API key entra en la cuenta dueña de la clave,
+  y `GET /scraping/config` le da solo los targets de esa cuenta. Una clave cuya
+  cuenta está desactivada no entra.
+- Una oferta, un dealer, una versión o un run de otra cuenta son un 404 en todos
+  los verbos, igual que uno que no existe.
+- Las métricas se calculan contra el mercado de la cuenta: la mediana del
+  binomio es la de sus ofertas, no la de todas.
+- La misma URL, el mismo dealer o la misma versión pueden estar en dos cuentas:
+  son filas distintas, cada una con su estado, sus correcciones y su historial.
+
+Lo único compartido son las fuentes (`scrape_sources`, los portales que sabe
+leer el skill). Las ve cualquiera y solo las edita un superusuario: sus `notes`
+y su `config` son instrucciones que sigue el scraper de todas las cuentas.
+
+La API filtra por cuenta en cada consulta, y la base lo respalda con
+disparadores: una oferta, su versión y su dealer son de la misma cuenta, y un
+seguimiento, un favorito o un veredicto del agente no pueden señalar una fila
+de otra (`migrations/0003_account_isolation.sql`). Lo que había antes de esa
+migración era de una sola persona y pasó a la cuenta con superusuario más
+antigua; en una base nueva, la semilla de rastreo es del superusuario de
+`FIRST_SUPERUSER_EMAIL`.
 
 ---
 
@@ -215,6 +255,11 @@ cómo se consigue. Lo que no es obvio:
   Time Travel para volver a cualquier minuto del último mes.
 - **`/health`** compara la última migración aplicada con la última del
   repositorio, embebida en el build: 503 si el esquema está desfasado.
+- **`user_id` admite NULL para SQLite** aunque Drizzle la declare obligatoria:
+  se añadió con `ADD COLUMN`, porque reconstruir `offers` en D1 vaciaría por
+  cascada su historial, sus favoritos y sus rankings (`defer_foreign_keys`
+  aplaza comprobaciones, no acciones). Las altas sin cuenta las paran el tipo
+  de Drizzle y los disparadores.
 - **Desaparece**: Docker, nginx, compose, Makefile, Alembic y `/docs` (Swagger).
 
 Diferencias aceptadas a sabiendas:

@@ -1,6 +1,11 @@
 /**
  * Ofertas: ingesta (upsert por URL), corrección manual y favoritos.
  *
+ * Todo dentro de una cuenta: el lote entra en la de quien ingesta (la sesión o
+ * la dueña de la API key), y cada sentencia lleva esa cuenta como parámetro
+ * (?2). Dealers, versiones y URLs se resuelven solo contra los suyos: la misma
+ * URL en dos cuentas son dos ofertas, cada una con su historial.
+ *
  * La ingesta es por conjuntos y no oferta a oferta. D1 cuenta cada sentencia
  * —también las de un `batch()`— contra un tope por invocación, y el upsert
  * fila a fila de antes eran cinco o seis consultas por oferta. Aquí un lote,
@@ -97,10 +102,10 @@ type ExistingOffer = OfferColumns & Pick<Offer, "id" | "manual_fields">;
 const extract = (column: string) => `json_extract(j.value, '$.${column}')`;
 
 const INSERT_OFFERS = `
-  INSERT INTO offers (${OFFER_COLUMNS.join(", ")}, created_at)
-  SELECT ${OFFER_COLUMNS.map(extract).join(", ")}, ${extract("last_seen_at")}
+  INSERT INTO offers (user_id, ${OFFER_COLUMNS.join(", ")}, created_at)
+  SELECT ?2, ${OFFER_COLUMNS.map(extract).join(", ")}, ${extract("last_seen_at")}
   FROM json_each(?1) AS j WHERE true
-  ON CONFLICT(url) DO NOTHING`;
+  ON CONFLICT(user_id, url) DO NOTHING`;
 
 // `previous_updated_at` es el de la fila cuando se leyó. Si alguien la ha tocado
 // entre la lectura y esta escritura (un descarte, una corrección a mano), la
@@ -113,19 +118,19 @@ const UPDATE_OFFERS = `
     .join(", ")}
   FROM (SELECT ${["id", "previous_updated_at", ...OFFER_COLUMNS].map((column) => `${extract(column)} AS ${column}`).join(", ")}
         FROM json_each(?1) AS j) AS j
-  WHERE offers.id = j.id AND offers.updated_at = j.previous_updated_at`;
+  WHERE offers.id = j.id AND offers.user_id = ?2 AND offers.updated_at = j.previous_updated_at`;
 
 const INSERT_HISTORY = `
   INSERT INTO offer_price_history (offer_id, price, recorded_at)
   SELECT o.id, ${extract("price")}, ${extract("recorded_at")}
-  FROM json_each(?1) AS j JOIN offers AS o ON o.url = ${extract("url")}
+  FROM json_each(?1) AS j JOIN offers AS o ON o.user_id = ?2 AND o.url = ${extract("url")}
   ORDER BY j.key`;
 
 const UPSERT_DEALERS = `
-  INSERT INTO dealers (slug, name, website, city, country, created_at, updated_at)
-  SELECT ${["slug", "name", "website", "city", "country"].map(extract).join(", ")}, ?2, ?2
+  INSERT INTO dealers (user_id, slug, name, website, city, country, created_at, updated_at)
+  SELECT ?2, ${["slug", "name", "website", "city", "country"].map(extract).join(", ")}, ?3, ?3
   FROM json_each(?1) AS j WHERE true
-  ON CONFLICT(slug) DO UPDATE SET
+  ON CONFLICT(user_id, slug) DO UPDATE SET
     -- Se completan huecos sin sobrescribir lo que ya se curó a mano.
     website = COALESCE(NULLIF(dealers.website, ''), excluded.website),
     city = COALESCE(NULLIF(dealers.city, ''), excluded.city),
@@ -137,14 +142,14 @@ const UPSERT_DEALERS = `
       THEN excluded.updated_at ELSE dealers.updated_at END`;
 
 const INSERT_CAR_MODELS = `
-  INSERT INTO car_models (slug, make, model, trim, make_model_key, created_at, updated_at)
-  SELECT ${["slug", "make", "model", "trim", "make_model_key"].map(extract).join(", ")}, ?2, ?2
+  INSERT INTO car_models (user_id, slug, make, model, trim, make_model_key, created_at, updated_at)
+  SELECT ?2, ${["slug", "make", "model", "trim", "make_model_key"].map(extract).join(", ")}, ?3, ?3
   FROM json_each(?1) AS j WHERE true
   ON CONFLICT DO NOTHING`;
 
 /**
- * Las versiones que acaba de crear este lote heredan el seguimiento de quien
- * sigue el binomio **entero**.
+ * Las versiones que acaba de crear este lote heredan el seguimiento si la
+ * cuenta sigue el binomio **entero**.
  *
  * Seguir el Audi A3 es seguir también el acabado que el scraper aún no había
  * visto: sin esto, la primera oferta de un A3 nuevo caía en una versión sin
@@ -154,29 +159,30 @@ const INSERT_CAR_MODELS = `
  * recientemente, que es lo que el formulario del binomio escribe en todas.
  *
  * Las versiones nuevas se reconocen por su `created_at`, que es el `now` del
- * lote (?2) y no lo comparte ninguna anterior.
+ * lote (?3) y no lo comparte ninguna anterior de la cuenta.
  */
 const INHERIT_TRACKING = `
   INSERT INTO tracked_models
     (user_id, car_model_id, target_price, max_mileage_km, min_year, notes, is_active, created_at, updated_at)
-  SELECT f.user_id, cm.id, f.target_price, f.max_mileage_km, f.min_year, f.notes, 1, ?2, ?2
+  SELECT ?2, cm.id, f.target_price, f.max_mileage_km, f.min_year, f.notes, 1, ?3, ?3
   FROM car_models AS cm
   JOIN (
-    SELECT t.user_id, m.make_model_key AS key, t.target_price, t.max_mileage_km, t.min_year, t.notes,
-      ROW_NUMBER() OVER (PARTITION BY t.user_id, m.make_model_key ORDER BY t.updated_at DESC, t.id DESC) AS rn,
-      COUNT(*) OVER (PARTITION BY t.user_id, m.make_model_key) AS followed
+    SELECT m.make_model_key AS key, t.target_price, t.max_mileage_km, t.min_year, t.notes,
+      ROW_NUMBER() OVER (PARTITION BY m.make_model_key ORDER BY t.updated_at DESC, t.id DESC) AS rn,
+      COUNT(*) OVER (PARTITION BY m.make_model_key) AS followed
     FROM tracked_models AS t JOIN car_models AS m ON m.id = t.car_model_id
-    WHERE t.is_active = 1 AND m.is_active = 1 AND m.created_at <> ?2
+    WHERE t.user_id = ?2 AND m.user_id = ?2 AND t.is_active = 1 AND m.is_active = 1 AND m.created_at <> ?3
   ) AS f ON f.key = cm.make_model_key AND f.rn = 1
-  WHERE cm.created_at = ?2
+  WHERE cm.user_id = ?2 AND cm.created_at = ?3
     AND f.followed = (
       SELECT COUNT(*) FROM car_models AS o
-      WHERE o.make_model_key = cm.make_model_key AND o.is_active = 1 AND o.created_at <> ?2
+      WHERE o.user_id = ?2 AND o.make_model_key = cm.make_model_key AND o.is_active = 1 AND o.created_at <> ?3
     )
   ON CONFLICT DO NOTHING`;
 
+/** Filas de la cuenta (?2) cuya `key` está en la lista (?1). */
 const SELECT_BY = (table: string, columns: string, key: string) =>
-  `SELECT ${columns} FROM ${table} WHERE ${key} IN (SELECT value FROM json_each(?1))`;
+  `SELECT ${columns} FROM ${table} WHERE user_id = ?2 AND ${key} IN (SELECT value FROM json_each(?1))`;
 
 interface Resolved {
   index: number;
@@ -186,13 +192,15 @@ interface Resolved {
 }
 
 /**
- * Ingesta en lote. Ni un fallo de validación ni uno de BD tumban el lote: si
- * un trozo falla al escribir, se reintenta en trozos menores hasta aislar la
- * oferta mala (lo que antes hacía un savepoint por oferta).
+ * Ingesta en lote en la cuenta `ownerId`. Ni un fallo de validación ni uno de
+ * BD tumban el lote: si un trozo falla al escribir, se reintenta en trozos
+ * menores hasta aislar la oferta mala (lo que antes hacía un savepoint por
+ * oferta).
  */
 export async function ingestOffers(
   d1: D1Database,
   bucket: R2Bucket,
+  ownerId: string,
   rawOffers: unknown[],
 ): Promise<IngestResult> {
   const result: IngestResult = { created: 0, updated: 0, skipped: 0, errors: [], offer_ids: [] };
@@ -222,7 +230,7 @@ export async function ingestOffers(
   // sentencias por invocación (1.000): el peor caso de un lote de 500 son
   // unas 230.
   for (let i = 0; i < valid.length; i += CHUNK) {
-    await writeWithFallback(d1, bucket, valid.slice(i, i + CHUNK), [SUB_CHUNK, 1], result);
+    await writeWithFallback(d1, bucket, ownerId, valid.slice(i, i + CHUNK), [SUB_CHUNK, 1], result);
   }
   return result;
 }
@@ -233,12 +241,13 @@ const SUB_CHUNK = 10;
 async function writeWithFallback(
   d1: D1Database,
   bucket: R2Bucket,
+  ownerId: string,
   items: Resolved[],
   fallbackSizes: number[],
   result: IngestResult,
 ): Promise<void> {
   try {
-    const written = await writeBatch(d1, bucket, items);
+    const written = await writeBatch(d1, bucket, ownerId, items);
     result.created += written.created;
     result.updated += written.updated;
     result.offer_ids.push(...written.offerIds);
@@ -253,7 +262,7 @@ async function writeWithFallback(
       return;
     }
     for (let i = 0; i < items.length; i += size) {
-      await writeWithFallback(d1, bucket, items.slice(i, i + size), rest, result);
+      await writeWithFallback(d1, bucket, ownerId, items.slice(i, i + size), rest, result);
     }
   }
 }
@@ -269,6 +278,7 @@ function logSkipped(url: string, error: unknown) {
 async function writeBatch(
   d1: D1Database,
   bucket: R2Bucket,
+  ownerId: string,
   items: Resolved[],
 ): Promise<{ created: number; updated: number; offerIds: number[] }> {
   const now = nowIso();
@@ -315,14 +325,18 @@ async function writeBatch(
   );
 
   const [, , , dealerRows, modelRows, existingRows] = await d1.batch([
-    d1.prepare(UPSERT_DEALERS).bind(JSON.stringify([...dealersBySlug.values()]), now),
-    d1.prepare(INSERT_CAR_MODELS).bind(JSON.stringify([...modelsBySlug.values()]), now),
-    d1.prepare(INHERIT_TRACKING).bind(null, now),
-    d1.prepare(SELECT_BY("dealers", "id, slug", "slug")).bind(JSON.stringify([...dealersBySlug.keys()])),
-    d1.prepare(SELECT_BY("car_models", "id, slug", "slug")).bind(JSON.stringify([...modelsBySlug.keys()])),
+    d1.prepare(UPSERT_DEALERS).bind(JSON.stringify([...dealersBySlug.values()]), ownerId, now),
+    d1.prepare(INSERT_CAR_MODELS).bind(JSON.stringify([...modelsBySlug.values()]), ownerId, now),
+    d1.prepare(INHERIT_TRACKING).bind(null, ownerId, now),
+    d1
+      .prepare(SELECT_BY("dealers", "id, slug", "slug"))
+      .bind(JSON.stringify([...dealersBySlug.keys()]), ownerId),
+    d1
+      .prepare(SELECT_BY("car_models", "id, slug", "slug"))
+      .bind(JSON.stringify([...modelsBySlug.keys()]), ownerId),
     d1
       .prepare(SELECT_BY("offers", `id, manual_fields, ${OFFER_COLUMNS.join(", ")}`, "url"))
-      .bind(JSON.stringify(urls)),
+      .bind(JSON.stringify(urls), ownerId),
   ]);
 
   const dealerIds = new Map(
@@ -453,10 +467,10 @@ async function writeBatch(
     previous_updated_at: previousUpdatedAt.get(url),
   }));
   const [, , , idRows] = await d1.batch([
-    d1.prepare(INSERT_OFFERS).bind(JSON.stringify(toInsert)),
-    d1.prepare(UPDATE_OFFERS).bind(JSON.stringify(toUpdate)),
-    d1.prepare(INSERT_HISTORY).bind(JSON.stringify(history)),
-    d1.prepare(SELECT_BY("offers", "id, url", "url")).bind(JSON.stringify(urls)),
+    d1.prepare(INSERT_OFFERS).bind(JSON.stringify(toInsert), ownerId),
+    d1.prepare(UPDATE_OFFERS).bind(JSON.stringify(toUpdate), ownerId),
+    d1.prepare(INSERT_HISTORY).bind(JSON.stringify(history), ownerId),
+    d1.prepare(SELECT_BY("offers", "id, url", "url")).bind(JSON.stringify(urls), ownerId),
   ]);
 
   const idOf = new Map(
@@ -518,7 +532,7 @@ export async function applyManualEdit(
         edited_at: nowIso(),
         edited_by_id: userId,
       })
-      .where(eq(offers.id, offer.id)),
+      .where(and(eq(offers.id, offer.id), eq(offers.user_id, offer.user_id))),
   );
   await runBatch(db, statements);
 }

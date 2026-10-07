@@ -9,6 +9,9 @@
  * versiones tienen una sola oferta, así que su mediana sería el propio precio
  * del coche («justo en mercado» comparándolo consigo mismo). Es además la
  * mediana con la que rankea el agente de IA.
+ *
+ * Y es el mercado **de la cuenta**: sus ofertas, no las de todas. Una mediana
+ * sobre las ofertas de otras cuentas diría de ellas lo que no se puede ver.
  */
 import { and, eq, sql } from "drizzle-orm";
 
@@ -128,9 +131,10 @@ function aggregate(rows: MarketRow[]): PriceStats {
   };
 }
 
-/** Agregados de precio por versión, sobre ofertas activas. */
+/** Agregados de precio por versión, sobre las ofertas activas de la cuenta. */
 export async function modelPriceStats(
   db: Db,
+  userId: string,
   carModelIds: number[],
 ): Promise<Map<number, ModelPriceStats>> {
   const result = new Map<number, ModelPriceStats>();
@@ -146,7 +150,13 @@ export async function modelPriceStats(
       condition: offers.condition,
     })
     .from(offers)
-    .where(and(inList(offers.car_model_id, carModelIds), eq(offers.status, "active")));
+    .where(
+      and(
+        eq(offers.user_id, userId),
+        inList(offers.car_model_id, carModelIds),
+        eq(offers.status, "active"),
+      ),
+    );
 
   const grouped = Map.groupBy(rows, (row) => row.car_model_id);
   // Las versiones sin ofertas activas también aparecen, con contadores a cero.
@@ -163,12 +173,13 @@ export interface BinomioMarket {
 }
 
 /**
- * El mercado de unos binomios: sus agregados y su PVP estimado, con una sola
- * consulta sobre las ofertas activas de todas sus versiones (o solo de
- * `onlyModelIds`, cuando el listado que lo pide ha dejado fuera alguna).
+ * El mercado de unos binomios en la cuenta: sus agregados y su PVP estimado,
+ * con una sola consulta sobre las ofertas activas de todas sus versiones (o
+ * solo de `onlyModelIds`, cuando el listado que lo pide ha dejado fuera alguna).
  */
 export async function binomioMarket(
   db: Db,
+  userId: string,
   keys: Iterable<string>,
   params: ScoreParams,
   now: Date = new Date(),
@@ -194,6 +205,8 @@ export async function binomioMarket(
     .innerJoin(carModels, eq(carModels.id, offers.car_model_id))
     .where(
       and(
+        eq(offers.user_id, userId),
+        eq(carModels.user_id, userId),
         inList(carModels.make_model_key, keyList),
         eq(offers.status, "active"),
         onlyModelIds ? inList(offers.car_model_id, onlyModelIds) : undefined,
@@ -307,18 +320,23 @@ export function computeMetrics(
   return metrics;
 }
 
-/** Las métricas de cada oferta, indexadas por `offer.id`. */
+/**
+ * Las métricas de cada oferta, indexadas por `offer.id`, contra el mercado y
+ * con los pesos de la cuenta `userId`, que es la dueña de `list`.
+ */
 export async function enrichOffers(
   db: Db,
+  userId: string,
   list: OfferWithRelations[],
   config?: ScoringConfig,
 ): Promise<Map<number, OfferMetrics>> {
   if (!list.length) return new Map();
-  const scoring = config ?? (await getScoringConfig(db));
+  const scoring = config ?? (await getScoringConfig(db, userId));
   const now = new Date();
   const [market, initialPrices] = await Promise.all([
     binomioMarket(
       db,
+      userId,
       list.map((offer) => offer.car_model.make_model_key),
       scoring.params,
       now,

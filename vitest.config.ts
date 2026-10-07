@@ -23,6 +23,9 @@ export default defineConfig(async () => {
             BOOTSTRAP_SCRAPER_API_KEY: "nr_boot0000_bootstrap-secret-for-tests",
             ANTHROPIC_API_KEY: "",
           },
+          // Una base aparte para probar una migración sobre datos de antes de
+          // ella: la de la app ya está al día cuando arrancan las pruebas.
+          d1Databases: ["MIGRATION_DB"],
         },
       }),
     ],

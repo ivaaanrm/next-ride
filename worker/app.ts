@@ -8,6 +8,11 @@ import type { Db } from "./lib/db";
 export interface IngestPrincipal {
   user: SessionUser | null;
   apiKey: ApiKey | null;
+  /**
+   * La cuenta en la que se lee y se escribe: la de la sesión, o la dueña de la
+   * API key. Lo que ingesta el scraper entra en la cuenta de su clave.
+   */
+  ownerId: string;
 }
 
 export interface AppEnv {

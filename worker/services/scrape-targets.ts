@@ -1,10 +1,11 @@
 /**
- * La captación de **un** binomio: en qué fuentes se busca.
+ * La captación de **un** binomio en una cuenta: en qué fuentes se busca.
  *
- * `PUT /scraping/targets` reemplaza la selección entera —es la matriz global—,
- * y eso obligaba a quien solo quería añadir el Toyota Corolla a mandar las
- * sesenta combinaciones del resto para no apagarlas. Esto toca únicamente las
- * filas del binomio: las de los demás no se leen ni se escriben.
+ * `PUT /scraping/targets` reemplaza la selección entera —la matriz de la
+ * cuenta—, y eso obligaba a quien solo quería añadir el Toyota Corolla a mandar
+ * las sesenta combinaciones del resto para no apagarlas. Esto toca únicamente
+ * las filas del binomio: las de los demás no se leen ni se escriben, y las de
+ * otras cuentas ni se ven.
  */
 import { and, eq } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
@@ -26,6 +27,7 @@ const DEFAULT_MAX_RESULTS = 15;
  */
 export async function setModelSources(
   db: Db,
+  userId: string,
   make: string,
   model: string,
   sourceIds: number[],
@@ -39,13 +41,16 @@ export async function setModelSources(
   if (missing.length) throw unprocessable(`Fuentes inexistentes o inactivas: ${missing.join(", ")}`);
 
   const [existing, limits] = await Promise.all([
-    db.select().from(scrapeTargets).where(eq(scrapeTargets.make_model_key, key)),
-    // El tope por combinación es global en la práctica (la matriz lo pone igual
-    // a todas): un binomio nuevo hereda el que ya tienen los demás.
+    db
+      .select()
+      .from(scrapeTargets)
+      .where(and(eq(scrapeTargets.user_id, userId), eq(scrapeTargets.make_model_key, key))),
+    // El tope por combinación es uno por cuenta en la práctica (la matriz lo
+    // pone igual a todas): un binomio nuevo hereda el que ya tienen los demás.
     db
       .select({ max: scrapeTargets.max_results })
       .from(scrapeTargets)
-      .where(eq(scrapeTargets.is_active, true))
+      .where(and(eq(scrapeTargets.user_id, userId), eq(scrapeTargets.is_active, true)))
       .limit(1),
   ]);
   const bySource = new Map(existing.map((target) => [target.source_id, target]));
@@ -60,6 +65,7 @@ export async function setModelSources(
     if (!current) {
       statements.push(
         db.insert(scrapeTargets).values({
+          user_id: userId,
           source_id: id,
           make_model_key: key,
           make,
@@ -100,10 +106,16 @@ export async function setModelSources(
   return [...wanted].sort((a, b) => a - b);
 }
 
-/** Saca el binomio de la captación en todas las fuentes, sin borrar lo aprendido. */
-export async function stopModelSources(db: Db, key: string): Promise<void> {
+/** Saca el binomio de la captación de la cuenta, sin borrar lo aprendido. */
+export async function stopModelSources(db: Db, userId: string, key: string): Promise<void> {
   await db
     .update(scrapeTargets)
     .set({ is_active: false, updated_at: new Date().toISOString() })
-    .where(and(eq(scrapeTargets.make_model_key, key), eq(scrapeTargets.is_active, true)));
+    .where(
+      and(
+        eq(scrapeTargets.user_id, userId),
+        eq(scrapeTargets.make_model_key, key),
+        eq(scrapeTargets.is_active, true),
+      ),
+    );
 }

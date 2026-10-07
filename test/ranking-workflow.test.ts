@@ -7,11 +7,10 @@ import { introspectWorkflowInstance } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 
-import { Client, offerPayload, signedUpClient, unique } from "./client";
+import { account, offerPayload, unique, type Client } from "./client";
 
-const scraper = new Client("nr_boot0000_bootstrap-secret-for-tests");
-
-async function seedRun() {
+/** Tres ofertas de un binomio en la cuenta, y un run pendiente suyo sobre ellas. */
+async function seedRun({ scraper, id: userId }: { scraper: Client; id: string }) {
   const make = unique("Agente");
   const { offer_ids: ids } = (
     await scraper.post("/api/v1/offers/bulk", {
@@ -24,9 +23,9 @@ async function seedRun() {
   ).body as { offer_ids: number[] };
   const key = `${make.toLowerCase()}|w`;
   const run = await env.DB.prepare(
-    `INSERT INTO ranking_runs (make_model_key, label, status, request) VALUES (?1, ?2, 'pending', ?3) RETURNING id`,
+    `INSERT INTO ranking_runs (user_id, make_model_key, label, status, request) VALUES (?4, ?1, ?2, 'pending', ?3) RETURNING id`,
   )
-    .bind(key, `${make} W`, JSON.stringify({ max_budget: 22000 }))
+    .bind(key, `${make} W`, JSON.stringify({ max_budget: 22000 }), userId)
     .first<{ id: number }>();
   return { key, ids, runId: run!.id };
 }
@@ -43,8 +42,9 @@ const toolUse = (id: string, name: string, input: Record<string, unknown> = {}) 
 
 describe("RankingWorkflow", () => {
   it("investiga con las tools, entrega el ranking y lo guarda validado", async () => {
-    const user = await signedUpClient();
-    const { key, ids, runId } = await seedRun();
+    const owner = await account();
+    const { user } = owner;
+    const { key, ids, runId } = await seedRun(owner);
     const instanceId = `ranking-run-${runId}`;
     await using instance = await introspectWorkflowInstance(env.RANKING_WORKFLOW, instanceId);
     await instance.modify(async (m) => {
@@ -118,8 +118,9 @@ describe("RankingWorkflow", () => {
   });
 
   it("un turno sin `submit_ranking` deja el run fallido con el motivo", async () => {
-    const user = await signedUpClient();
-    const { runId } = await seedRun();
+    const owner = await account();
+    const { user } = owner;
+    const { runId } = await seedRun(owner);
     const instanceId = `ranking-run-${runId}`;
     await using instance = await introspectWorkflowInstance(env.RANKING_WORKFLOW, instanceId);
     await instance.modify(async (m) => {
@@ -141,8 +142,9 @@ describe("RankingWorkflow", () => {
   });
 
   it("sin clave de API, la primera vuelta falla sin reintentar y el run queda fallido", async () => {
-    const user = await signedUpClient();
-    const { runId } = await seedRun();
+    const owner = await account();
+    const { user } = owner;
+    const { runId } = await seedRun(owner);
     const instanceId = `ranking-run-${runId}`;
     await using instance = await introspectWorkflowInstance(env.RANKING_WORKFLOW, instanceId);
     await env.RANKING_WORKFLOW.create({ id: instanceId, params: { runId } });

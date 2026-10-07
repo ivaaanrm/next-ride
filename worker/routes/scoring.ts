@@ -1,8 +1,8 @@
 /**
  * Configuración de la puntuación de valor. La respuesta lleva siempre los
  * defaults al lado de lo vigente para que la UI enseñe el desvío y ofrezca
- * «restaurar» sin otro endpoint. El cambio es para todos: la puntuación es un
- * atributo del catálogo, no una preferencia personal.
+ * «restaurar» sin otro endpoint. El cambio es de la cuenta: puntúa su catálogo
+ * y no toca la puntuación de ninguna otra.
  */
 import { router } from "../app";
 import { parseBody } from "../lib/http";
@@ -27,9 +27,13 @@ const read = (config: ScoringConfig) => ({
 export const scoringRoutes = router();
 scoringRoutes.use(requireUser);
 
-scoringRoutes.get("/config", async (c) => c.json(read(await getScoringConfig(c.var.db))));
+scoringRoutes.get("/config", async (c) =>
+  c.json(read(await getScoringConfig(c.var.db, c.var.user.id))),
+);
 
 scoringRoutes.put("/config", async (c) => {
   const payload = await parseBody(c, ScoreConfigUpdate);
-  return c.json(read(await saveScoringConfig(c.var.db, payload.weights, payload.params)));
+  return c.json(
+    read(await saveScoringConfig(c.var.db, c.var.user.id, payload.weights, payload.params)),
+  );
 });

@@ -19,11 +19,16 @@
  *   (favoritos, seguimientos, quién descartó o editó, quién lanzó un ranking,
  *   quién creó una API key) pasa a la persona de `--owner`, que tiene que
  *   existir ya: entra una vez (o deja que el superusuario se siembre) antes
- *   de importar. next-ride es de una sola persona; si el volcado trae datos de
- *   varias, el script lo avisa.
+ *   de importar. La versión anterior era de una sola persona; si el volcado
+ *   trae datos de varias, el script lo avisa.
+ * - Cuenta: todo entra en la de `--owner` (`user_id`), y nada de las demás
+ *   cuentas se toca: sus ofertas, su catálogo y sus targets siguen igual.
  * - API keys: se importan con su hash. La `NR_API_KEY` del skill sigue valiendo.
  * - Fuentes y targets de rastreo: sustituyen a la semilla por defecto, porque
- *   los del volcado son los que se han ido ajustando por la API.
+ *   los del volcado son los que se han ido ajustando por la API. Los targets
+ *   que se sustituyen son los de `--owner` y los que no tienen dueña; si otra
+ *   cuenta usa ya alguna fuente de la semilla, esa fuente se queda, y si choca
+ *   con una del volcado la importación falla entera en vez de borrar lo suyo.
  * - El resto del dominio, tal cual, con sus ids (las relaciones se conservan).
  * - `car_models.make_model_key` se calcula aquí, con la misma regla que el Worker.
  * - Fechas a ISO-8601 UTC; booleanos a 0/1; importes a REAL.
@@ -124,6 +129,7 @@ const raws = [];
 
 const dealers = get("dealers").map((row) => ({
   id: num(row.id),
+  user_id: OWNER,
   slug: row.slug,
   name: row.name,
   website: row.website,
@@ -138,6 +144,7 @@ const dealers = get("dealers").map((row) => ({
 
 const carModels = get("car_models").map((row) => ({
   id: num(row.id),
+  user_id: OWNER,
   slug: row.slug,
   make: row.make,
   model: row.model,
@@ -158,6 +165,7 @@ const offers = get("offers").map((row) => {
   }
   return {
     id: num(row.id),
+    user_id: OWNER,
     url: row.url,
     external_id: row.external_id,
     source: row.source,
@@ -219,6 +227,7 @@ const tracked = get("tracked_models").map((row) => ({
 
 const runs = get("ranking_runs").map((row) => ({
   id: num(row.id),
+  user_id: OWNER,
   make_model_key: row.make_model_key,
   label: row.label ?? "",
   status: row.status,
@@ -248,8 +257,9 @@ const rankings = get("offer_rankings").map((row) => ({
   cons: json(row.cons),
 }));
 
+// Sin el id: la fila es la de la cuenta, y la clave que choca es `user_id`.
 const scoreConfig = get("score_config").map((row) => ({
-  id: num(row.id),
+  user_id: OWNER,
   weights: json(row.weights),
   params: json(row.params),
   created_at: iso(row.created_at),
@@ -273,6 +283,7 @@ const sources = get("scrape_sources").map((row) => ({
 
 const targets = get("scrape_targets").map((row) => ({
   id: num(row.id),
+  user_id: OWNER,
   source_id: num(row.source_id),
   make_model_key: row.make_model_key,
   make: row.make,
@@ -290,6 +301,7 @@ const targets = get("scrape_targets").map((row) => ({
 // `INSERT OR IGNORE` se saltara la del volcado. El conflicto que importa es el
 // del hash: esa sí es la misma clave.
 const apiKeys = get("api_keys").map((row) => ({
+  user_id: OWNER,
   name: row.name,
   prefix: row.prefix,
   hashed_key: row.hashed_key,
@@ -322,9 +334,10 @@ const sql = [
   `-- Importación de ${basename(dumpPath)} — generado por scripts/pg-dump-to-d1.mjs`,
   ...ownerGuard,
   "PRAGMA defer_foreign_keys = true;",
-  // La semilla de rastreo se sustituye por la configuración real.
-  "DELETE FROM scrape_targets;",
-  "DELETE FROM scrape_sources;",
+  // La semilla de rastreo se sustituye por la configuración real, en la cuenta
+  // del dueño. Las fuentes son de todas: solo se van las que nadie más usa.
+  `DELETE FROM scrape_targets WHERE user_id IS NULL OR user_id = ${q(OWNER)};`,
+  "DELETE FROM scrape_sources WHERE id NOT IN (SELECT source_id FROM scrape_targets);",
   ...insert("dealers", dealers),
   ...insert("car_models", carModels),
   ...insert("offers", offers),

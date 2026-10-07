@@ -32,12 +32,21 @@ const DealerUpdate = z
   })
   .partial();
 
+/** El dealer `id`, solo si es de la cuenta `userId`. */
+const ownDealer = (userId: string, id: number) =>
+  and(eq(dealers.id, id), eq(dealers.user_id, userId));
+
+/**
+ * Los dealers son de cada cuenta: los crea su ingesta, y sus notas y su
+ * valoración son de quien las escribe.
+ */
 export const dealersRoutes = router();
 dealersRoutes.use(requireUser);
 
 dealersRoutes.get("/", async (c) => {
   const query = parseQuery(c, z.object({ q: qString, include_inactive: qBool }));
-  const conditions: SQL[] = [];
+  const userId = c.var.user.id;
+  const conditions: SQL[] = [eq(dealers.user_id, userId)];
   if (!query.include_inactive) conditions.push(eq(dealers.is_active, true));
   if (query.q) {
     const pattern = `%${query.q.toLowerCase()}%`;
@@ -53,7 +62,10 @@ dealersRoutes.get("/", async (c) => {
       best_price: sql<number | null>`MIN(o.price)`,
     })
     .from(dealers)
-    .leftJoin(sql`offers o`, sql`o.dealer_id = ${dealers.id} AND o.status = 'active'`)
+    .leftJoin(
+      sql`offers o`,
+      sql`o.dealer_id = ${dealers.id} AND o.user_id = ${userId} AND o.status = 'active'`,
+    )
     .where(and(...conditions))
     .groupBy(dealers.id)
     .orderBy(desc(activeOffers), asc(dealers.name));
@@ -71,18 +83,25 @@ dealersRoutes.get("/", async (c) => {
 
 dealersRoutes.post("/", async (c) => {
   const { slug: givenSlug, ...payload } = await parseBody(c, DealerCreate);
+  const userId = c.var.user.id;
   const slug = givenSlug || slugify(payload.name);
-  const [existing] = await c.var.db.select({ id: dealers.id }).from(dealers).where(eq(dealers.slug, slug));
+  const [existing] = await c.var.db
+    .select({ id: dealers.id })
+    .from(dealers)
+    .where(and(eq(dealers.user_id, userId), eq(dealers.slug, slug)));
   if (existing) throw conflict(`Ya existe un dealer con slug '${slug}'`);
   const [dealer] = await c.var.db
     .insert(dealers)
-    .values({ ...payload, slug })
+    .values({ ...payload, user_id: userId, slug })
     .returning();
   return c.json(dealerRead(dealer), 201);
 });
 
 dealersRoutes.get("/:id", async (c) => {
-  const [dealer] = await c.var.db.select().from(dealers).where(eq(dealers.id, parseId(c, "id")));
+  const [dealer] = await c.var.db
+    .select()
+    .from(dealers)
+    .where(ownDealer(c.var.user.id, parseId(c, "id")));
   if (!dealer) throw notFound("Dealer no encontrado");
   return c.json(dealerRead(dealer));
 });
@@ -91,9 +110,10 @@ dealersRoutes.patch("/:id", async (c) => {
   const id = parseId(c, "id");
   const payload = await parseBody(c, DealerUpdate);
   const db = c.var.db;
+  const where = ownDealer(c.var.user.id, id);
   const [dealer] = Object.keys(payload).length
-    ? await db.update(dealers).set(payload).where(eq(dealers.id, id)).returning()
-    : await db.select().from(dealers).where(eq(dealers.id, id));
+    ? await db.update(dealers).set(payload).where(where).returning()
+    : await db.select().from(dealers).where(where);
   if (!dealer) throw notFound("Dealer no encontrado");
   return c.json(dealerRead(dealer));
 });

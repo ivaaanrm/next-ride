@@ -95,11 +95,12 @@ analyticsRoutes.use(requireUser);
 analyticsRoutes.get("/segments", async (c) => {
   const { keys, ...filters } = parseQuery(c, OfferFilters.extend({ keys: qString }));
   const db = c.var.db;
+  const userId = c.var.user.id;
   const nowYear = new Date().getUTCFullYear();
 
   // Ordenadas por precio: es el orden en que se recortan los puntos.
-  const rows = await loadOffers(db, {
-    where: filterConditions(filters, c.var.user.id),
+  const rows = await loadOffers(db, userId, {
+    where: filterConditions(filters, userId),
     orderBy: [asc(offers.price), asc(offers.id)],
     limit: ROW_CAP,
   });
@@ -181,7 +182,7 @@ analyticsRoutes.get("/segments", async (c) => {
     .filter((offer) => detailSet.has(offer.car_model.make_model_key))
     .slice(0, POINT_CAP * DETAIL_CAP);
   const sampledByKey = Map.groupBy(sampled, (offer) => offer.car_model.make_model_key);
-  const metrics = await enrichOffers(db, sampled);
+  const metrics = await enrichOffers(db, userId, sampled);
 
   for (const key of detailKeys) {
     const segment = segmentByKey.get(key)!;

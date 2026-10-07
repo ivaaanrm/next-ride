@@ -1,4 +1,11 @@
-/** Configuración operativa que consume el skill de captación. */
+/**
+ * Configuración operativa que consume el skill de captación.
+ *
+ * Las fuentes (portales) son de la plataforma: las ve cualquiera y solo las
+ * edita un superusuario, porque sus `notes` y su `config` son instrucciones que
+ * sigue el scraper de cada cuenta. Los targets —qué se busca en cada fuente—
+ * son de cada cuenta, y el scraper recibe solo los de la cuenta de su clave.
+ */
 import { and, asc, eq, type SQL } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
 import { z } from "zod";
@@ -7,7 +14,7 @@ import { router } from "../app";
 import { SCRAPE_ACCESS, scrapeSources, scrapeTargets, type ScrapeSource } from "../db/schema";
 import { inList, runBatch, type Db } from "../lib/db";
 import { conflict, notFound, parseBody, parseId, parseQuery, qBool, unprocessable } from "../lib/http";
-import { requireIngest, requireUser } from "../middleware";
+import { requireIngest, requireSuperuser, requireUser } from "../middleware";
 import { int, nullable } from "../schemas/common";
 import {
   canonicalMakeModelKey,
@@ -86,7 +93,7 @@ scrapingRoutes.get("/sources", requireUser, async (c) => {
   return c.json(rows.map(scrapeSourceRead));
 });
 
-scrapingRoutes.post("/sources", requireUser, async (c) => {
+scrapingRoutes.post("/sources", requireSuperuser, async (c) => {
   const payload = await parseBody(c, ScrapeSourceCreate);
   const [existing] = await c.var.db
     .select({ id: scrapeSources.id })
@@ -97,7 +104,7 @@ scrapingRoutes.post("/sources", requireUser, async (c) => {
   return c.json(scrapeSourceRead(source), 201);
 });
 
-scrapingRoutes.patch("/sources/:id", requireUser, async (c) => {
+scrapingRoutes.patch("/sources/:id", requireSuperuser, async (c) => {
   const id = parseId(c, "id");
   const payload = await parseBody(c, ScrapeSourceUpdate);
   const db = c.var.db;
@@ -108,12 +115,13 @@ scrapingRoutes.patch("/sources/:id", requireUser, async (c) => {
   return c.json(scrapeSourceRead(source));
 });
 
-async function targetsWithSource(db: Db, where?: SQL) {
+/** Los targets de la cuenta `userId`, con su fuente; `where` solo estrecha. */
+async function targetsWithSource(db: Db, userId: string, where?: SQL) {
   return db
     .select({ target: scrapeTargets, source: scrapeSources })
     .from(scrapeTargets)
     .innerJoin(scrapeSources, eq(scrapeSources.id, scrapeTargets.source_id))
-    .where(where)
+    .where(and(eq(scrapeTargets.user_id, userId), where))
     .orderBy(asc(scrapeTargets.make), asc(scrapeTargets.model), asc(scrapeTargets.source_id));
 }
 
@@ -121,15 +129,17 @@ scrapingRoutes.get("/targets", requireUser, async (c) => {
   const { include_inactive } = parseQuery(c, z.object({ include_inactive: qBool }));
   const rows = await targetsWithSource(
     c.var.db,
+    c.var.user.id,
     include_inactive ? undefined : eq(scrapeTargets.is_active, true),
   );
   return c.json(rows.map((row) => scrapeTargetRead(row.target, row.source)));
 });
 
-/** Reemplaza atómicamente la selección activa, conservando los mappings aprendidos. */
+/** Reemplaza atómicamente la selección activa de la cuenta, conservando los mappings aprendidos. */
 scrapingRoutes.put("/targets", requireUser, async (c) => {
   const payload = await parseBody(c, ScrapeTargetsReplace);
   const db = c.var.db;
+  const userId = c.var.user.id;
 
   const sourceIds = [...new Set(payload.targets.map((item) => item.source_id))];
   const sources = new Map<number, ScrapeSource>(
@@ -145,7 +155,7 @@ scrapingRoutes.put("/targets", requireUser, async (c) => {
     throw unprocessable(`Fuentes inexistentes o inactivas: ${missing.join(", ")}`);
   }
 
-  const existing = await targetsWithSource(db);
+  const existing = await targetsWithSource(db, userId);
   const byIdentity = new Map(
     existing.map((row) => [`${row.target.source_id}|${row.target.make_model_key}`, row]),
   );
@@ -163,6 +173,7 @@ scrapingRoutes.put("/targets", requireUser, async (c) => {
     if (!current) {
       statements.push(
         db.insert(scrapeTargets).values({
+          user_id: userId,
           source_id: item.source_id,
           make_model_key: key,
           make: item.make,
@@ -210,7 +221,7 @@ scrapingRoutes.put("/targets", requireUser, async (c) => {
   }
   await runBatch(db, statements);
 
-  const rows = await targetsWithSource(db, eq(scrapeTargets.is_active, true));
+  const rows = await targetsWithSource(db, userId, eq(scrapeTargets.is_active, true));
   const byKey = new Map(rows.map((row) => [`${row.target.source_id}|${row.target.make_model_key}`, row]));
   return c.json(
     payload.targets.flatMap((item) => {
@@ -225,21 +236,31 @@ scrapingRoutes.patch("/targets/:id", requireIngest, async (c) => {
   const id = parseId(c, "id");
   const payload = await parseBody(c, ScrapeTargetPatch);
   const db = c.var.db;
+  const { ownerId } = c.var.principal;
   if (Object.keys(payload).length) {
-    await db.update(scrapeTargets).set(payload).where(eq(scrapeTargets.id, id));
+    await db
+      .update(scrapeTargets)
+      .set(payload)
+      .where(and(eq(scrapeTargets.id, id), eq(scrapeTargets.user_id, ownerId)));
   }
-  const [row] = await targetsWithSource(db, eq(scrapeTargets.id, id));
+  const [row] = await targetsWithSource(db, ownerId, eq(scrapeTargets.id, id));
   if (!row) throw notFound("Target de rastreo no encontrado");
   return c.json(scrapeTargetRead(row.target, row.source));
 });
 
-/** Configuración completa que el skill pide antes de abrir ningún dealer. */
+/** Configuración completa que el skill pide antes de abrir ningún dealer: la de su cuenta. */
 scrapingRoutes.get("/config", requireIngest, async (c) => {
   const rows = await c.var.db
     .select({ target: scrapeTargets, source: scrapeSources })
     .from(scrapeTargets)
     .innerJoin(scrapeSources, eq(scrapeSources.id, scrapeTargets.source_id))
-    .where(and(eq(scrapeTargets.is_active, true), eq(scrapeSources.is_active, true)))
+    .where(
+      and(
+        eq(scrapeTargets.user_id, c.var.principal.ownerId),
+        eq(scrapeTargets.is_active, true),
+        eq(scrapeSources.is_active, true),
+      ),
+    )
     .orderBy(asc(scrapeTargets.make), asc(scrapeTargets.model), asc(scrapeSources.name));
 
   return c.json({

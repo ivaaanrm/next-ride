@@ -1,5 +1,5 @@
 /** Slugs, clave del binomio y alta (get-or-create) de dealers y versiones. */
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 import { carModels, type CarModel } from "../db/schema";
 import type { Db } from "../lib/db";
@@ -26,23 +26,25 @@ export function makeModelKey(make: string, model: string): string {
   return `${make.toLowerCase()}|${model.toLowerCase()}`;
 }
 
-/** La versión por marca/modelo/acabado; se crea si no existe. */
+/** La versión por marca/modelo/acabado de la cuenta; se crea si no existe. */
 export async function getOrCreateCarModel(
   db: Db,
+  userId: string,
   make: string,
   model: string,
   trim = "",
 ): Promise<CarModel> {
   const slug = slugify(make, model, trim);
-  const [existing] = await db.select().from(carModels).where(eq(carModels.slug, slug));
+  const bySlug = and(eq(carModels.user_id, userId), eq(carModels.slug, slug));
+  const [existing] = await db.select().from(carModels).where(bySlug);
   if (existing) return existing;
 
   const values = { slug, make: make.trim(), model: model.trim(), trim: trim.trim() };
   const [created] = await db
     .insert(carModels)
-    .values({ ...values, make_model_key: makeModelKey(values.make, values.model) })
+    .values({ ...values, user_id: userId, make_model_key: makeModelKey(values.make, values.model) })
     .onConflictDoNothing()
     .returning();
   // Una carrera con otra petición que la acaba de crear: se lee la suya.
-  return created ?? (await db.select().from(carModels).where(eq(carModels.slug, slug)))[0];
+  return created ?? (await db.select().from(carModels).where(bySlug))[0];
 }
