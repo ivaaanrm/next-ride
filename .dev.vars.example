@@ -1,0 +1,19 @@
+# Variables y secretos para `pnpm dev`. Copia a `.dev.vars` (no se versiona).
+# En producción: `wrangler secret put NOMBRE` para cada secreto.
+
+ENVIRONMENT=local
+ALLOW_REGISTRATION=true
+
+# Firma de cookies y sesiones de Better Auth. `openssl rand -base64 32`.
+BETTER_AUTH_SECRET=dev-secret-change-me-dev-secret-change-me
+
+# Superusuario sembrado en la primera petición (si no existe ya).
+FIRST_SUPERUSER_EMAIL=admin@next-ride.dev
+FIRST_SUPERUSER_PASSWORD=changeme123
+
+# Clave con la que ingesta el skill (`NR_API_KEY`). Formato nr_<prefijo>_<secreto>.
+# Si se define, se registra al arrancar: la clave que ya tiene el skill sigue valiendo.
+BOOTSTRAP_SCRAPER_API_KEY=
+
+# Sin clave, el ranking con IA queda desactivado (503 al lanzarlo).
+ANTHROPIC_API_KEY=

@@ -1,0 +1,23 @@
+<!--
+  Variante enmascarable: el mismo dibujo que `icon.svg` reducido al 80 % para
+  que quepa en la zona segura del recorte. Android y algunos lanzadores recortan
+  el icono a la forma que les da la gana (círculo, escudo, cuadrado redondeado)
+  y lo que quede fuera de ese círculo central puede desaparecer.
+
+  El fondo sí llega a sangre: lo que se recorta es color, no dibujo.
+
+  Se rasteriza con `sips` igual que `icon.svg`.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#0e0f11" />
+  <g transform="translate(256 256) scale(0.8) translate(-256 -256) translate(-13.5 13.5)">
+    <path
+      d="M371.9 225A120 120 0 1 1 287.1 140.1"
+      fill="none"
+      stroke="#f4f4f0"
+      stroke-width="56"
+      stroke-linecap="round"
+    />
+    <circle cx="397.4" cy="114.6" r="34" fill="#c6ff3d" />
+  </g>
+</svg>

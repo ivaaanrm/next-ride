@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- `viewport-fit=cover` es la precondición de toda la capa de áreas seguras:
+         sin él, env(safe-area-inset-*) vale 0 y el CSS que las consume es inerte.
+         `user-scalable=no` y `maximum-scale=1` no se ponen nunca: el pellizco para
+         ampliar es un derecho de accesibilidad (WCAG 1.4.4). -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+    <title>next-ride</title>
+
+    <!-- El color de la barra del sistema sigue al tema **elegido**, no al del
+         sistema: una sola etiqueta con el --bg del claro, que es el de partida, y
+         `lib/theme.ts` le reescribe el contenido al conmutar. -->
+    <meta name="theme-color" content="#fbfbfb" />
+
+    <!-- El tema, antes del primer píxel.
+         El juego claro es el que trae el CSS, así que quien no ha elegido nada
+         no necesita este script para nada. Quien eligió el oscuro sí: aplicado
+         desde el bundle, el atributo llegaría después de la primera pintura y
+         cada arranque empezaría con un fogonazo blanco. En línea y en el
+         `<head>` es el único sitio donde eso no pasa.
+         La clave es la misma que la de `lib/theme.ts`. -->
+    <script>
+      try {
+        if (localStorage.getItem("nr.theme") === "dark") {
+          document.documentElement.dataset.theme = "dark";
+          document
+            .querySelector('meta[name="theme-color"]')
+            .setAttribute("content", "#121211");
+        }
+      } catch (e) {
+        /* Safari privado tira al leer localStorage: se queda el claro. */
+      }
+    </script>
+
+    <!-- Instalada, la app se dibuja sin cromo de navegador. `black-translucent`
+         mete el contenido *por debajo* de la barra de estado, así que el padding
+         superior con --safe-top deja de ser opcional. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="next-ride" />
+    <!-- Obligatorio aquí: `formatNumber` produce «103.473» y «24.590», que es
+         justo lo que el detector de datos de iOS convierte en enlaces `tel:`. -->
+    <meta name="format-detection" content="telephone=no" />
+
+    <link rel="manifest" href="/manifest.json" />
+    <!-- Opaco, cuadrado y de 180: iOS compone el alfa contra negro y pone él la
+         máscara. El `.vN` del nombre es lo que permite cambiarlo pese a la caché
+         `immutable` con que se sirve /icons (`public/_headers`). -->
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon-180.v2.png" />
+    <link rel="icon" href="/icons/icon-192.v2.png" type="image/png" />
+
+    <!-- Pantallas de arranque: iOS no las saca del manifest y, sin una que case
+         con el tamaño exacto de la pantalla, la app instalada arranca en blanco
+         (un fogonazo en modo oscuro). Las genera `scripts/gen-splash.mjs`. -->
+    <!-- splash:start -->
+    <link rel="apple-touch-startup-image" media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: light)" href="/splash/1125x2436-light.v1.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)" href="/splash/1125x2436-dark.v1.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: light)" href="/splash/1170x2532-light.v1.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)" href="/splash/1170x2532-dark.v1.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: light)" href="/splash/1179x2556-light.v1.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)" href="/splash/1179x2556-dark.v1.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 402px) and (device-height: 874px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: light)" href="/splash/1206x2622-light.v1.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 402px) and (device-height: 874px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)" href="/splash/1206x2622-dark.v1.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 420px) and (device-height: 912px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: light)" href="/splash/1260x2736-light.v1.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 420px) and (device-height: 912px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)" href="/splash/1260x2736-dark.v1.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: light)" href="/splash/1290x2796-light.v1.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)" href="/splash/1290x2796-dark.v1.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: light)" href="/splash/1320x2868-light.v1.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)" href="/splash/1320x2868-dark.v1.png" />
+    <!-- splash:end -->
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

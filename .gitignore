@@ -1,27 +1,23 @@
-# Entorno
+# Entorno y secretos
 .env
-.env.local
-# El fichero de secretos reales de producción, el que vive en el servidor.
-# `.env.prod.*` (la línea de abajo) NO lo cubre: no hay punto tras `prod`.
-.env.prod
-.env.prod.*
+.env.*
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
 *.local
 
-# Python
-__pycache__/
-*.py[cod]
-.venv/
-venv/
-.pytest_cache/
-.ruff_cache/
-.mypy_cache/
-*.egg-info/
-
-# Node
+# Node / build
 node_modules/
 dist/
 .vite/
+.wrangler/
 npm-debug.log*
+*.tsbuildinfo
+
+# Python (el skill de `next-ride/`)
+__pycache__/
+*.py[cod]
+.venv/
 
 # Editores / OS
 .DS_Store
@@ -32,6 +28,7 @@ npm-debug.log*
 .claude
 skill-next-ride
 
+# Restos del stack anterior y del skill (estado local, no código)
 logs/
 fixtures/
 state/
