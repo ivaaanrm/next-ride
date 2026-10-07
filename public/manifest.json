@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "next-ride",
-  "short_name": "next-ride",
+  "name": "cocheradar",
+  "short_name": "cocheradar",
   "description": "Ofertas de coches de varios dealers, comparadas.",
   "start_url": "/offers",
   "scope": "/",

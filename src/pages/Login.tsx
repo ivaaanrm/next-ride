@@ -51,7 +51,7 @@ export function LoginPage() {
     return (
       <div className="auth-shell">
         <div className="auth-card">
-          <h1>next-ride</h1>
+          <h1>cocheradar</h1>
           <OfflineNotice onRetry={retry} retrying={retrying} />
         </div>
       </div>
@@ -61,7 +61,7 @@ export function LoginPage() {
   return (
     <div className="auth-shell">
       <div className="auth-card">
-        <h1>next-ride</h1>
+        <h1>cocheradar</h1>
         <p className="sub">
           {isRegister
             ? "Crea una cuenta para seguir modelos y ver las mejores ofertas."

@@ -26,7 +26,7 @@ export const registrationEnabled = (env: Env) =>
 function buildAuth(env: Env, baseURL: string) {
   const db = getDb(env);
   return betterAuth({
-    appName: "next-ride",
+    appName: "cocheradar",
     baseURL,
     basePath: AUTH_BASE_PATH,
     secret: env.BETTER_AUTH_SECRET,

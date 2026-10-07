@@ -76,7 +76,8 @@ crea una desde **Más → API keys**.
 
 ## Despliegue
 
-Producción: https://next-ride.iromero-py.workers.dev — D1 `next-ride` y R2
+Producción: https://cocheradar.com (y, mientras el skill no cambie de URL,
+https://next-ride.iromero-py.workers.dev) — D1 `next-ride` y R2
 `next-ride`, ambos en Europa occidental. La base, el bucket, las migraciones y
 `BETTER_AUTH_SECRET` ya están creados; lo que queda por poner son los secretos
 opcionales, con `pnpm wrangler secret put NOMBRE`:

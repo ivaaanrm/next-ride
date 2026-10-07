@@ -56,8 +56,8 @@ export function Layout() {
       <div className="app">
         <nav id="app-sidebar" className={`sidebar${collapsed ? " collapsed" : ""}`}>
           <div className="brand">
-            <span className="brand-mark">NR</span>
-            <span className="nav-label">next-ride</span>
+            <span className="brand-mark">CR</span>
+            <span className="nav-label">cocheradar</span>
             <div className="spacer" />
             <button
               className="sidebar-toggle"
