@@ -14,6 +14,7 @@ import { router } from "../app";
 import { SCRAPE_ACCESS, scrapeSources, scrapeTargets, type ScrapeSource } from "../db/schema";
 import { inList, runBatch, type Db } from "../lib/db";
 import { conflict, notFound, parseBody, parseId, parseQuery, qBool, unprocessable } from "../lib/http";
+import { owned, ownedRow } from "../lib/tenant";
 import { requireIngest, requireSuperuser, requireUser } from "../middleware";
 import { int, nullable } from "../schemas/common";
 import {
@@ -115,13 +116,13 @@ scrapingRoutes.patch("/sources/:id", requireSuperuser, async (c) => {
   return c.json(scrapeSourceRead(source));
 });
 
-/** Los targets de la cuenta `userId`, con su fuente; `where` solo estrecha. */
-async function targetsWithSource(db: Db, userId: string, where?: SQL) {
+/** Los targets de la cuenta `tenantId`, con su fuente; `where` solo estrecha. */
+async function targetsWithSource(db: Db, tenantId: string, where?: SQL) {
   return db
     .select({ target: scrapeTargets, source: scrapeSources })
     .from(scrapeTargets)
     .innerJoin(scrapeSources, eq(scrapeSources.id, scrapeTargets.source_id))
-    .where(and(eq(scrapeTargets.user_id, userId), where))
+    .where(and(owned(scrapeTargets, tenantId), where))
     .orderBy(asc(scrapeTargets.make), asc(scrapeTargets.model), asc(scrapeTargets.source_id));
 }
 
@@ -129,7 +130,7 @@ scrapingRoutes.get("/targets", requireUser, async (c) => {
   const { include_inactive } = parseQuery(c, z.object({ include_inactive: qBool }));
   const rows = await targetsWithSource(
     c.var.db,
-    c.var.user.id,
+    c.var.tenantId,
     include_inactive ? undefined : eq(scrapeTargets.is_active, true),
   );
   return c.json(rows.map((row) => scrapeTargetRead(row.target, row.source)));
@@ -139,7 +140,7 @@ scrapingRoutes.get("/targets", requireUser, async (c) => {
 scrapingRoutes.put("/targets", requireUser, async (c) => {
   const payload = await parseBody(c, ScrapeTargetsReplace);
   const db = c.var.db;
-  const userId = c.var.user.id;
+  const tenantId = c.var.tenantId;
 
   const sourceIds = [...new Set(payload.targets.map((item) => item.source_id))];
   const sources = new Map<number, ScrapeSource>(
@@ -155,7 +156,7 @@ scrapingRoutes.put("/targets", requireUser, async (c) => {
     throw unprocessable(`Fuentes inexistentes o inactivas: ${missing.join(", ")}`);
   }
 
-  const existing = await targetsWithSource(db, userId);
+  const existing = await targetsWithSource(db, tenantId);
   const byIdentity = new Map(
     existing.map((row) => [`${row.target.source_id}|${row.target.make_model_key}`, row]),
   );
@@ -173,7 +174,7 @@ scrapingRoutes.put("/targets", requireUser, async (c) => {
     if (!current) {
       statements.push(
         db.insert(scrapeTargets).values({
-          user_id: userId,
+          user_id: tenantId,
           source_id: item.source_id,
           make_model_key: key,
           make: item.make,
@@ -221,7 +222,7 @@ scrapingRoutes.put("/targets", requireUser, async (c) => {
   }
   await runBatch(db, statements);
 
-  const rows = await targetsWithSource(db, userId, eq(scrapeTargets.is_active, true));
+  const rows = await targetsWithSource(db, tenantId, eq(scrapeTargets.is_active, true));
   const byKey = new Map(rows.map((row) => [`${row.target.source_id}|${row.target.make_model_key}`, row]));
   return c.json(
     payload.targets.flatMap((item) => {
@@ -236,14 +237,11 @@ scrapingRoutes.patch("/targets/:id", requireIngest, async (c) => {
   const id = parseId(c, "id");
   const payload = await parseBody(c, ScrapeTargetPatch);
   const db = c.var.db;
-  const { ownerId } = c.var.principal;
+  const tenantId = c.var.tenantId;
   if (Object.keys(payload).length) {
-    await db
-      .update(scrapeTargets)
-      .set(payload)
-      .where(and(eq(scrapeTargets.id, id), eq(scrapeTargets.user_id, ownerId)));
+    await db.update(scrapeTargets).set(payload).where(ownedRow(scrapeTargets, tenantId, id));
   }
-  const [row] = await targetsWithSource(db, ownerId, eq(scrapeTargets.id, id));
+  const [row] = await targetsWithSource(db, tenantId, eq(scrapeTargets.id, id));
   if (!row) throw notFound("Target de rastreo no encontrado");
   return c.json(scrapeTargetRead(row.target, row.source));
 });
@@ -256,7 +254,7 @@ scrapingRoutes.get("/config", requireIngest, async (c) => {
     .innerJoin(scrapeSources, eq(scrapeSources.id, scrapeTargets.source_id))
     .where(
       and(
-        eq(scrapeTargets.user_id, c.var.principal.ownerId),
+        owned(scrapeTargets, c.var.tenantId),
         eq(scrapeTargets.is_active, true),
         eq(scrapeSources.is_active, true),
       ),

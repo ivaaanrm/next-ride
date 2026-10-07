@@ -119,7 +119,7 @@ describe("ingesta en lote", () => {
     const { user, scraper } = await account();
     const name = unique("Dealer Huecos");
     await scraper.post("/api/v1/offers/bulk", { offers: [offerPayload({ dealer_name: name, dealer_city: null })] });
-    const dealers = (await user.get(`/api/v1/dealers?q=${encodeURIComponent(name.toLowerCase())}`)).body;
+    const dealers = (await user.get(`/api/v1/dealers?q=${encodeURIComponent(name.toLowerCase())}`)).body.items;
     expect(dealers).toHaveLength(1);
     expect(dealers[0].city).toBeNull();
 

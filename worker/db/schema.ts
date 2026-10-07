@@ -343,9 +343,29 @@ export const offers = sqliteTable(
   },
   (table) => [
     uniqueIndex("uq_offers_user_url").on(table.user_id, table.url),
-    index("ix_offers_model_status_price").on(table.car_model_id, table.status, table.price),
-    index("ix_offers_dealer_status").on(table.dealer_id, table.status),
+    // Los índices que empiezan por una clave llevan la cuenta justo detrás.
+    // Sin estadísticas, SQLite elige el índice que casa más columnas por
+    // igualdad: `user_id = ? AND status = ? AND dealer_id = ?` empataba entre
+    // (user_id, status) y (dealer_id, status) y se quedaba con el de la cuenta,
+    // que recorre todas sus ofertas para sacar las de un dealer. Con la cuenta
+    // dentro, el de la clave casa tres y gana siempre; y sigue empezando por la
+    // clave, que es lo que piden las uniones y las claves ajenas.
+    index("ix_offers_model_user_status_price").on(
+      table.car_model_id,
+      table.user_id,
+      table.status,
+      table.price,
+    ),
+    index("ix_offers_dealer_user_status_price").on(
+      table.dealer_id,
+      table.user_id,
+      table.status,
+      table.price,
+    ),
     index("ix_offers_user_status_last_seen").on(table.user_id, table.status, table.last_seen_at),
+    // Las candidatas del orden por puntuación y el orden por precio: las N más
+    // baratas de la cuenta salen en orden del índice, sin leer las demás.
+    index("ix_offers_user_status_price").on(table.user_id, table.status, table.price),
     index("ix_offers_external_id").on(table.external_id),
     check("ck_offers_status", inList("status", OFFER_STATUS)),
     check("ck_offers_condition", inList("condition", VEHICLE_CONDITION)),

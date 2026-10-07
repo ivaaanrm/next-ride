@@ -11,11 +11,12 @@ import {
 } from "../lib/format";
 import { useAsync } from "../lib/hooks";
 import type {
-  CarModelWithStats,
-  DealerWithStats,
+  DealerOption,
   FuelType,
+  ModelOption,
   Offer,
   OfferEditableField,
+  OfferFacets,
   Transmission,
   VehicleCondition,
 } from "../types";
@@ -191,9 +192,8 @@ export function OfferEditor({
 
   // El catálogo se pide al abrir el editor y no con la lista: reatribuir una
   // oferta a otra versión es la corrección más rara de todas, y no puede costar
-  // dos peticiones a quien solo viene a mirar ofertas.
-  const models = useAsync<CarModelWithStats[]>(() => api.get("/car-models"), []);
-  const dealers = useAsync<DealerWithStats[]>(() => api.get("/dealers"), []);
+  // una petición más a quien solo viene a mirar ofertas.
+  const facets = useAsync<OfferFacets>(() => api.get("/offers/facets"), []);
 
   const patch = (next: Partial<Draft>) => setDraft((previous) => ({ ...previous, ...next }));
   const pinned = new Set<OfferEditableField>(offer.manual_fields);
@@ -251,8 +251,8 @@ export function OfferEditor({
       offer={offer}
       pinned={pinned}
       touch={touch}
-      models={models.data ?? []}
-      dealers={dealers.data ?? []}
+      models={facets.data?.car_models ?? []}
+      dealers={facets.data?.dealers ?? []}
       onChange={patch}
     />
   );
@@ -354,8 +354,8 @@ function OfferFields({
   offer: Offer;
   pinned: Set<OfferEditableField>;
   touch: boolean;
-  models: CarModelWithStats[];
-  dealers: DealerWithStats[];
+  models: ModelOption[];
+  dealers: DealerOption[];
   onChange: (next: Partial<Draft>) => void;
 }) {
   return (
@@ -571,7 +571,7 @@ function OfferFields({
                 vacío justo sobre el dato que describe. */}
             {(dealers.some((dealer) => dealer.id === offer.dealer.id)
               ? dealers
-              : [offer.dealer as DealerWithStats, ...dealers]
+              : [{ id: offer.dealer.id, name: offer.dealer.name, active_offers: 0 }, ...dealers]
             ).map((dealer) => (
               <option key={dealer.id} value={dealer.id}>
                 {dealer.name}
@@ -660,7 +660,7 @@ function ModelField({
 }: {
   value: number;
   current: Offer["car_model"];
-  models: CarModelWithStats[];
+  models: ModelOption[];
   touch: boolean;
   pinned: boolean;
   onChange: (id: number) => void;
@@ -696,7 +696,7 @@ function ModelField({
     () =>
       models.some((model) => model.id === current.id)
         ? models
-        : [current as CarModelWithStats, ...models],
+        : [{ id: current.id, display_name: current.display_name, active_offers: 0 }, ...models],
     [models, current],
   );
 

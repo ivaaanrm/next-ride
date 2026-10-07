@@ -2,13 +2,14 @@
  * API keys del servicio scraper. Cada cuenta ve y revoca solo las suyas, y lo
  * que su scraper ingesta con ellas entra en ella.
  */
-import { and, desc, eq } from "drizzle-orm";
+import { desc } from "drizzle-orm";
 import { z } from "zod";
 
 import { router } from "../app";
 import { apiKeys } from "../db/schema";
 import { notFound, parseBody, parseId } from "../lib/http";
 import { generateApiKey } from "../lib/security";
+import { owned, ownedRow } from "../lib/tenant";
 import { requireUser } from "../middleware";
 import { apiKeyRead } from "../services/serialize";
 
@@ -19,7 +20,7 @@ apiKeysRoutes.get("/", async (c) => {
   const rows = await c.var.db
     .select()
     .from(apiKeys)
-    .where(eq(apiKeys.user_id, c.var.user.id))
+    .where(owned(apiKeys, c.var.tenantId))
     .orderBy(desc(apiKeys.created_at), desc(apiKeys.id));
   return c.json(rows.map(apiKeyRead));
 });
@@ -30,7 +31,7 @@ apiKeysRoutes.post("/", async (c) => {
   const [key] = await c.var.db
     .insert(apiKeys)
     .values({
-      user_id: c.var.user.id,
+      user_id: c.var.tenantId,
       name: payload.name,
       prefix,
       hashed_key: hashed,
@@ -45,7 +46,7 @@ apiKeysRoutes.delete("/:id", async (c) => {
   const [key] = await c.var.db
     .update(apiKeys)
     .set({ is_active: false })
-    .where(and(eq(apiKeys.id, parseId(c, "id")), eq(apiKeys.user_id, c.var.user.id)))
+    .where(ownedRow(apiKeys, c.var.tenantId, parseId(c, "id")))
     .returning({ id: apiKeys.id });
   if (!key) throw notFound("API key no encontrada");
   return c.body(null, 204);

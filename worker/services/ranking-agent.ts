@@ -28,6 +28,7 @@ import {
   type Verdict,
 } from "../db/schema";
 import { inList, round, type Db } from "../lib/db";
+import { owned } from "../lib/tenant";
 import { int, nullable, num } from "../schemas/common";
 import { binomioMarket, computeMetrics, firstSeenPrices } from "./metrics";
 import { getScoringConfig } from "./scoring";
@@ -225,13 +226,13 @@ export function rankingSettings(env: Env): RankingSettings {
 }
 
 /**
- * Las ofertas activas del binomio en la cuenta `userId`, con sus métricas
+ * Las ofertas activas del binomio en la cuenta `tenantId`, con sus métricas
  * contra el mercado del binomio en esa cuenta. El agente no ve nada más: ni
  * ofertas ni medianas de otras cuentas.
  */
 export async function buildContext(
   db: Db,
-  userId: string,
+  tenantId: string,
   key: string,
   label: string,
   request: RankingRequest,
@@ -240,21 +241,21 @@ export async function buildContext(
   const [version] = await db
     .select({ id: carModels.id })
     .from(carModels)
-    .where(and(eq(carModels.user_id, userId), eq(carModels.make_model_key, key)))
+    .where(and(owned(carModels, tenantId), eq(carModels.make_model_key, key)))
     .limit(1);
   if (!version) throw new RankingError(`El binomio '${key}' ya no está en el catálogo.`);
 
-  const candidatesList = await loadOffers(db, userId, {
+  const candidatesList = await loadOffers(db, tenantId, {
     where: and(eq(offers.status, "active"), eq(carModels.make_model_key, key)),
     orderBy: [asc(offers.price), asc(offers.id)],
     limit: maxOffers,
   });
   if (!candidatesList.length) throw new RankingError("No hay ofertas activas para este modelo.");
 
-  const config = await getScoringConfig(db, userId);
+  const config = await getScoringConfig(db, tenantId);
   const now = new Date();
   const [market, initialPrices, history] = await Promise.all([
-    binomioMarket(db, userId, [key], config.params, now),
+    binomioMarket(db, tenantId, [key], config.params, now),
     firstSeenPrices(
       db,
       candidatesList.map((offer) => offer.id),

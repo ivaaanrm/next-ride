@@ -1,30 +1,50 @@
-import { and, eq, max, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, eq, max, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 
 import { router } from "../app";
 import { carModels, rankingRuns, trackedModels, type CarModel } from "../db/schema";
 import { inList, round, type Db } from "../lib/db";
-import { conflict, notFound, parseBody, parseId, parseQuery, qBool, qString } from "../lib/http";
+import {
+  conflict,
+  notFound,
+  PageQuery,
+  parseBody,
+  parseId,
+  parseQuery,
+  qBool,
+  qString,
+} from "../lib/http";
+import { owned, ownedRow } from "../lib/tenant";
 import { requireUser } from "../middleware";
 import { nullable } from "../schemas/common";
 import { DEFAULT_PARAMS } from "../schemas/scoring";
 import { makeModelKey, slugify } from "../services/catalog";
-import { binomioMarket, modelPriceStats } from "../services/metrics";
+import { binomioMarket, modelPriceStats, type PriceStats } from "../services/metrics";
 import { carModelRead, trackedPrefs } from "../services/serialize";
 
 type CarModelWithStats = Awaited<ReturnType<typeof withStats>>[number];
 
-async function withStats(db: Db, userId: string, models: CarModel[]) {
+/**
+ * Las versiones con sus agregados y el seguimiento de la cuenta. Quien ya tiene
+ * los agregados (los grupos, que los sacan de las filas del mercado del
+ * binomio) los pasa en `known` y no se vuelven a leer las ofertas.
+ */
+async function withStats(
+  db: Db,
+  tenantId: string,
+  models: CarModel[],
+  known?: Map<number, PriceStats>,
+) {
   if (!models.length) return [];
   const ids = models.map((model) => model.id);
   const [stats, tracked] = await Promise.all([
-    modelPriceStats(db, userId, ids),
+    known ?? modelPriceStats(db, tenantId, ids),
     db
       .select()
       .from(trackedModels)
       .where(
         and(
-          eq(trackedModels.user_id, userId),
+          eq(trackedModels.user_id, tenantId),
           inList(trackedModels.car_model_id, ids),
           eq(trackedModels.is_active, true),
         ),
@@ -60,8 +80,22 @@ function medianOfSorted(values: number[]): number | null {
 
 const ListQuery = z.object({ q: qString, tracked_only: qBool, include_inactive: qBool });
 
-const trackedByUser = (userId: string) =>
-  sql`EXISTS (SELECT 1 FROM tracked_models t WHERE t.car_model_id = ${carModels.id} AND t.user_id = ${userId} AND t.is_active = 1)`;
+const trackedByUser = (tenantId: string) =>
+  sql`EXISTS (SELECT 1 FROM tracked_models t WHERE t.car_model_id = ${carModels.id} AND t.user_id = ${tenantId} AND t.is_active = 1)`;
+
+/** Las versiones de la cuenta que casan con la búsqueda. */
+function listConditions(query: z.output<typeof ListQuery>, tenantId: string): SQL[] {
+  const conditions: SQL[] = [owned(carModels, tenantId)];
+  if (!query.include_inactive) conditions.push(eq(carModels.is_active, true));
+  if (query.q) {
+    const pattern = `%${query.q.toLowerCase()}%`;
+    conditions.push(
+      sql`(lower(${carModels.make}) LIKE ${pattern} OR lower(${carModels.model}) LIKE ${pattern} OR lower(${carModels.slug}) LIKE ${pattern})`,
+    );
+  }
+  if (query.tracked_only) conditions.push(trackedByUser(tenantId));
+  return conditions;
+}
 
 const CarModelCreate = z.object({
   make: z.string().min(1).max(80),
@@ -79,32 +113,36 @@ const CarModelUpdate = z
   })
   .partial();
 
-/** La versión `id`, solo si es de la cuenta `userId`. */
-const ownModel = (userId: string, id: number) =>
-  and(eq(carModels.id, id), eq(carModels.user_id, userId));
-
 /** El catálogo es de cada cuenta: lo forman sus ofertas y lo que ella sigue. */
 export const carModelsRoutes = router();
 carModelsRoutes.use(requireUser);
 
+/**
+ * Las versiones de la cuenta, por páginas y con sus agregados: solo los de la
+ * página, que son los únicos que se leen.
+ */
 carModelsRoutes.get("/", async (c) => {
-  const query = parseQuery(c, ListQuery);
-  const conditions: SQL[] = [eq(carModels.user_id, c.var.user.id)];
-  if (!query.include_inactive) conditions.push(eq(carModels.is_active, true));
-  if (query.q) {
-    const pattern = `%${query.q.toLowerCase()}%`;
-    conditions.push(
-      sql`(lower(${carModels.make}) LIKE ${pattern} OR lower(${carModels.model}) LIKE ${pattern} OR lower(${carModels.slug}) LIKE ${pattern})`,
-    );
-  }
-  if (query.tracked_only) conditions.push(trackedByUser(c.var.user.id));
+  const { limit, offset, ...query } = parseQuery(c, ListQuery.extend(PageQuery.shape));
+  const db = c.var.db;
+  const tenantId = c.var.tenantId;
+  const where = and(...listConditions(query, tenantId));
 
-  const models = await c.var.db
-    .select()
-    .from(carModels)
-    .where(and(...conditions))
-    .orderBy(sql`lower(${carModels.make})`, sql`lower(${carModels.model})`, sql`lower(${carModels.trim})`);
-  return c.json(await withStats(c.var.db, c.var.user.id, models));
+  const [[{ total }], models] = await Promise.all([
+    db.select({ total: count() }).from(carModels).where(where),
+    db
+      .select()
+      .from(carModels)
+      .where(where)
+      .orderBy(
+        sql`lower(${carModels.make})`,
+        sql`lower(${carModels.model})`,
+        sql`lower(${carModels.trim})`,
+        asc(carModels.id),
+      )
+      .limit(limit)
+      .offset(offset),
+  ]);
+  return c.json({ items: await withStats(db, tenantId, models), total, limit, offset });
 });
 
 /**
@@ -119,25 +157,16 @@ carModelsRoutes.get("/", async (c) => {
 carModelsRoutes.get("/groups", async (c) => {
   const query = parseQuery(c, ListQuery);
   const db = c.var.db;
-  const userId = c.var.user.id;
+  const tenantId = c.var.tenantId;
 
   // Dos pasos: qué binomios casan con el filtro y luego *todas* sus versiones.
   // Buscar «sportback» encuentra el A3 entero, no tres de sus versiones: un
   // grupo recortado daría una mediana que no es la del mercado que describe.
-  const conditions: SQL[] = [eq(carModels.user_id, userId)];
-  if (!query.include_inactive) conditions.push(eq(carModels.is_active, true));
-  if (query.q) {
-    const pattern = `%${query.q.toLowerCase()}%`;
-    conditions.push(
-      sql`(lower(${carModels.make}) LIKE ${pattern} OR lower(${carModels.model}) LIKE ${pattern} OR lower(${carModels.slug}) LIKE ${pattern})`,
-    );
-  }
   // Basta con seguir una versión para que el binomio esté en la lista.
-  if (query.tracked_only) conditions.push(trackedByUser(userId));
   const keyRows = await db
     .selectDistinct({ key: carModels.make_model_key })
     .from(carModels)
-    .where(and(...conditions));
+    .where(and(...listConditions(query, tenantId)));
   const keys = keyRows.map((row) => row.key);
   if (!keys.length) return c.json([]);
 
@@ -146,7 +175,7 @@ carModelsRoutes.get("/groups", async (c) => {
     .from(carModels)
     .where(
       and(
-        eq(carModels.user_id, userId),
+        owned(carModels, tenantId),
         inList(carModels.make_model_key, keys),
         query.include_inactive ? undefined : eq(carModels.is_active, true),
       ),
@@ -157,22 +186,25 @@ carModelsRoutes.get("/groups", async (c) => {
     // en medio pondría «mercedes-benz» antes que «mercedes».
     .orderBy(sql`lower(${carModels.make})`, sql`lower(${carModels.model})`, sql`lower(${carModels.trim})`);
 
-  const [variants, market, ranked] = await Promise.all([
-    withStats(db, userId, models),
-    binomioMarket(
-      db,
-      userId,
-      keys,
-      DEFAULT_PARAMS,
-      new Date(),
-      models.map((model) => model.id),
-    ),
+  // Una sola lectura de las ofertas: los agregados de cada versión salen de
+  // las mismas filas que el mercado del binomio.
+  const marketQuery = binomioMarket(
+    db,
+    tenantId,
+    keys,
+    DEFAULT_PARAMS,
+    new Date(),
+    models.map((model) => model.id),
+  );
+  const [market, variants, ranked] = await Promise.all([
+    marketQuery,
+    marketQuery.then((market) => withStats(db, tenantId, models, market.variants)),
     db
       .select({ key: rankingRuns.make_model_key, last: max(rankingRuns.created_at) })
       .from(rankingRuns)
       .where(
         and(
-          eq(rankingRuns.user_id, userId),
+          owned(rankingRuns, tenantId),
           inList(rankingRuns.make_model_key, keys),
           eq(rankingRuns.status, "completed"),
         ),
@@ -231,18 +263,18 @@ carModelsRoutes.get("/groups", async (c) => {
 
 carModelsRoutes.post("/", async (c) => {
   const payload = await parseBody(c, CarModelCreate);
-  const userId = c.var.user.id;
+  const tenantId = c.var.tenantId;
   const slug = slugify(payload.make, payload.model, payload.trim);
   const [existing] = await c.var.db
     .select({ id: carModels.id })
     .from(carModels)
-    .where(and(eq(carModels.user_id, userId), eq(carModels.slug, slug)));
+    .where(and(owned(carModels, tenantId), eq(carModels.slug, slug)));
   if (existing) throw conflict(`Ya existe el modelo '${slug}'`);
   const [model] = await c.var.db
     .insert(carModels)
     .values({
       ...payload,
-      user_id: userId,
+      user_id: tenantId,
       slug,
       make_model_key: makeModelKey(payload.make, payload.model),
     })
@@ -251,20 +283,20 @@ carModelsRoutes.post("/", async (c) => {
 });
 
 carModelsRoutes.get("/:id", async (c) => {
-  const userId = c.var.user.id;
+  const tenantId = c.var.tenantId;
   const [model] = await c.var.db
     .select()
     .from(carModels)
-    .where(ownModel(userId, parseId(c, "id")));
+    .where(ownedRow(carModels, tenantId, parseId(c, "id")));
   if (!model) throw notFound("Modelo no encontrado");
-  return c.json((await withStats(c.var.db, userId, [model]))[0]);
+  return c.json((await withStats(c.var.db, tenantId, [model]))[0]);
 });
 
 carModelsRoutes.patch("/:id", async (c) => {
   const id = parseId(c, "id");
   const payload = await parseBody(c, CarModelUpdate);
   const db = c.var.db;
-  const where = ownModel(c.var.user.id, id);
+  const where = ownedRow(carModels, c.var.tenantId, id);
   const [model] = Object.keys(payload).length
     ? await db.update(carModels).set(payload).where(where).returning()
     : await db.select().from(carModels).where(where);

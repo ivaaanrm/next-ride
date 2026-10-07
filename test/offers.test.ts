@@ -69,6 +69,30 @@ describe("listado de ofertas", () => {
     expect(paged.items.map((o: { price: number }) => o.price)).toEqual([20000, 22500]);
   });
 
+  it("el orden por puntuación pagina sin repetir ni perder, con las métricas de la ficha", async () => {
+    const { user, scraper } = await account();
+    const { make } = await seedMarket(scraper, 7);
+    const q = `q=${encodeURIComponent(make.toLowerCase())}`;
+    const whole = (await user.get(`/api/v1/offers?${q}`)).body;
+    expect(whole.total).toBe(7);
+
+    // Por tramos, como la lista de la pantalla: el mismo orden, sin huecos.
+    const ids: number[] = [];
+    for (let offset = 0; offset < whole.total; offset += 3) {
+      const page = (await user.get(`/api/v1/offers?${q}&limit=3&offset=${offset}`)).body;
+      expect(page).toMatchObject({ total: 7, limit: 3, offset });
+      ids.push(...page.items.map((o: { id: number }) => o.id));
+    }
+    expect(ids).toEqual(whole.items.map((o: { id: number }) => o.id));
+
+    // La página se serializa con las métricas con las que se ordenó: son las
+    // mismas que da la ficha, que las calcula sola.
+    for (const offer of whole.items) {
+      const detail = (await user.get(`/api/v1/offers/${offer.id}`)).body;
+      expect(offer.metrics).toEqual(detail.metrics);
+    }
+  });
+
   it("calcula las métricas contra el mercado del binomio, con desglose auditable", async () => {
     const { user, scraper } = await account();
     const { make } = await seedMarket(scraper);

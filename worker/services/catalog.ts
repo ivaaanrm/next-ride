@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 
 import { carModels, type CarModel } from "../db/schema";
 import type { Db } from "../lib/db";
+import { owned } from "../lib/tenant";
 
 export function slugify(...parts: (string | null | undefined)[]): string {
   const text = parts.filter(Boolean).join(" ");
@@ -29,20 +30,20 @@ export function makeModelKey(make: string, model: string): string {
 /** La versión por marca/modelo/acabado de la cuenta; se crea si no existe. */
 export async function getOrCreateCarModel(
   db: Db,
-  userId: string,
+  tenantId: string,
   make: string,
   model: string,
   trim = "",
 ): Promise<CarModel> {
   const slug = slugify(make, model, trim);
-  const bySlug = and(eq(carModels.user_id, userId), eq(carModels.slug, slug));
+  const bySlug = and(owned(carModels, tenantId), eq(carModels.slug, slug));
   const [existing] = await db.select().from(carModels).where(bySlug);
   if (existing) return existing;
 
   const values = { slug, make: make.trim(), model: model.trim(), trim: trim.trim() };
   const [created] = await db
     .insert(carModels)
-    .values({ ...values, user_id: userId, make_model_key: makeModelKey(values.make, values.model) })
+    .values({ ...values, user_id: tenantId, make_model_key: makeModelKey(values.make, values.model) })
     .onConflictDoNothing()
     .returning();
   // Una carrera con otra petición que la acaba de crear: se lee la suya.

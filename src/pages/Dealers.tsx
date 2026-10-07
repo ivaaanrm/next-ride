@@ -6,9 +6,9 @@ import { useTouchLayout } from "../components/SwipeRow";
 import { Banner, Chip, Drawer, Empty, Loading, Toggle } from "../components/ui";
 import { api } from "../lib/api";
 import { formatNumber, formatPct, formatPrice } from "../lib/format";
-import { useAsync, useDebounced } from "../lib/hooks";
+import { useDebounced, usePaged } from "../lib/hooks";
 import { slugify } from "../lib/slug";
-import type { DealerWithStats } from "../types";
+import type { DealerWithStats, Page } from "../types";
 
 /** «41 ofertas» / «1 oferta»: la cifra que decide si este dealer importa hoy. */
 const offersOf = (count: number) => `${formatNumber(count)} ${count === 1 ? "oferta" : "ofertas"}`;
@@ -47,22 +47,26 @@ export function DealersPage() {
   const touch = useTouchLayout();
 
   const debouncedSearch = useDebounced(search);
-  const dealers = useAsync<DealerWithStats[]>(
-    () =>
-      api.get("/dealers", {
+  // Por tramos de 50, de los que más ofertas tienen a los que menos: los de
+  // arriba son los que se vienen a mirar, y el resto se pide al llegar.
+  const dealers = usePaged<DealerWithStats>(
+    (offset, limit) =>
+      api.get<Page<DealerWithStats>>("/dealers", {
         q: debouncedSearch || undefined,
         include_inactive: includeInactive || undefined,
+        limit,
+        offset,
       }),
     [debouncedSearch, includeInactive],
   );
 
-  const items = dealers.data ?? [];
+  const items = dealers.items;
 
   return (
     <>
       <PageHeader
         title="Dealers"
-        meta={dealers.data ? dealersOf(items.length) : undefined}
+        meta={dealers.loading ? undefined : dealersOf(dealers.total)}
         actions={
           <>
             <HeaderButton icon={IconRefresh} label="Actualizar" onClick={() => dealers.reload()} />
@@ -263,6 +267,21 @@ export function DealersPage() {
             </table>
           </div>
         )}
+
+        {dealers.hasMore && !dealers.loading ? (
+          <div className="table-more">
+            <button
+              type="button"
+              className={touch ? "btn btn-ghost" : "btn btn-ghost btn-sm"}
+              onClick={dealers.loadMore}
+              disabled={dealers.loadingMore}
+            >
+              {dealers.loadingMore
+                ? "Cargando más dealers…"
+                : `Ver más · quedan ${formatNumber(dealers.total - items.length)}`}
+            </button>
+          </div>
+        ) : null}
       </div>
 
       {editing ? (

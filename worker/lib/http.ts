@@ -125,3 +125,20 @@ export const qString = z
   .string()
   .optional()
   .transform((value) => (value === "" ? undefined : value));
+
+/**
+ * `limit`/`offset` de un listado paginado. La respuesta es siempre la misma
+ * envoltura, `{ items, total, limit, offset }`: `total` es el del filtro, no el
+ * de la página.
+ */
+export const PageQuery = z.object({
+  limit: qInt(z.number().min(1).max(200)).default(50),
+  offset: qInt(z.number().min(0)).default(0),
+});
+
+export interface Page<T> {
+  items: T[];
+  total: number;
+  limit: number;
+  offset: number;
+}

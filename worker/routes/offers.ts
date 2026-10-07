@@ -22,7 +22,18 @@ import {
   type OfferStatus,
 } from "../db/schema";
 import { roundOrNull, type Db } from "../lib/db";
-import { notFound, parseBody, parseId, parseQuery, qBool, qInt, qNumber, qString } from "../lib/http";
+import {
+  notFound,
+  PageQuery,
+  parseBody,
+  parseId,
+  parseQuery,
+  qBool,
+  qInt,
+  qNumber,
+  qString,
+} from "../lib/http";
+import { owned, ownedRow } from "../lib/tenant";
 import { requireIngest, requireUser } from "../middleware";
 import {
   OfferBulkIngest,
@@ -34,7 +45,14 @@ import {
 import { enrichOffers, type OfferWithRelations } from "../services/metrics";
 import { applyManualEdit, ingestOffers } from "../services/offers";
 import { getRaw } from "../services/raw-store";
-import { loadOffer, loadOffers, serializeOffers, type OfferRead } from "../services/serialize";
+import {
+  latestAiSummaries,
+  loadOffer,
+  loadOffers,
+  modelDisplayName,
+  serializeOffers,
+  type OfferRankSummary,
+} from "../services/serialize";
 import type { Context } from "hono";
 
 // --------------------------------------------------------------------------- //
@@ -61,10 +79,10 @@ export const OfferFilters = z.object({
 });
 export type OfferFilters = z.output<typeof OfferFilters>;
 
-/** Las condiciones del filtro, siempre dentro de las ofertas de la cuenta `userId`. */
-export function filterConditions(filters: OfferFilters, userId: string): SQL {
+/** Las condiciones del filtro, siempre dentro de las ofertas de la cuenta `tenantId`. */
+export function filterConditions(filters: OfferFilters, tenantId: string): SQL {
   const conditions: (SQL | undefined)[] = [
-    eq(offers.user_id, userId),
+    owned(offers, tenantId),
     eq(offers.status, filters.status ?? "active"),
   ];
   if (filters.car_model_id) conditions.push(eq(offers.car_model_id, filters.car_model_id));
@@ -83,12 +101,12 @@ export function filterConditions(filters: OfferFilters, userId: string): SQL {
   }
   if (filters.tracked_only) {
     conditions.push(
-      sql`EXISTS (SELECT 1 FROM tracked_models t WHERE t.car_model_id = ${offers.car_model_id} AND t.user_id = ${userId} AND t.is_active = 1)`,
+      sql`EXISTS (SELECT 1 FROM tracked_models t WHERE t.car_model_id = ${offers.car_model_id} AND t.user_id = ${tenantId} AND t.is_active = 1)`,
     );
   }
   if (filters.favorites_only) {
     conditions.push(
-      sql`EXISTS (SELECT 1 FROM offer_favorites f WHERE f.offer_id = ${offers.id} AND f.user_id = ${userId})`,
+      sql`EXISTS (SELECT 1 FROM offer_favorites f WHERE f.offer_id = ${offers.id} AND f.user_id = ${tenantId})`,
     );
   }
   return and(...conditions)!;
@@ -142,10 +160,25 @@ const DB_SORTS: Partial<Record<(typeof SORTS)[number], SQL>> = {
  */
 export const SCORE_SORT_CAP = 500;
 
+/**
+ * Las candidatas del orden por puntuación, con sus métricas: las
+ * `SCORE_SORT_CAP` más baratas del filtro. `ix_offers_user_status_price` las da
+ * ya en ese orden, así que se leen esas filas y no todas las de la cuenta para
+ * ordenarlas antes. El listado y el mejor chollo de `/stats` comparten esto, y
+ * así coinciden en la fila de arriba.
+ */
+async function scoredCandidates(db: Db, tenantId: string, where: SQL) {
+  const list = await loadOffers(db, tenantId, {
+    where,
+    orderBy: [asc(offers.price), asc(offers.id)],
+    limit: SCORE_SORT_CAP,
+  });
+  return { list, metrics: await enrichOffers(db, tenantId, list) };
+}
+
 const ListQuery = OfferFilters.extend({
   sort: z.enum(SORTS).default("value_score"),
-  limit: qInt(z.number().min(1).max(200)).default(50),
-  offset: qInt(z.number().min(0)).default(0),
+  ...PageQuery.shape,
 });
 
 /** La primera oferta con la puntuación más alta (como `max()` de Python). */
@@ -165,19 +198,15 @@ export function bestByScore<T extends { id: number }>(
   return best;
 }
 
-/** La oferta `id`, solo si es de la cuenta `userId`. */
-const ownOffer = (userId: string, id: number) =>
-  and(eq(offers.id, id), eq(offers.user_id, userId));
-
-async function getOfferOr404(db: Db, userId: string, id: number): Promise<OfferWithRelations> {
-  const offer = await loadOffer(db, userId, id);
+async function getOfferOr404(db: Db, tenantId: string, id: number): Promise<OfferWithRelations> {
+  const offer = await loadOffer(db, tenantId, id);
   if (!offer) throw notFound("Oferta no encontrada");
   return offer;
 }
 
-async function respondOne(c: Context<AppEnv>, userId: string, id: number) {
-  const offer = await getOfferOr404(c.var.db, userId, id);
-  return (await serializeOffers(c.var.db, userId, [offer]))[0];
+async function respondOne(c: Context<AppEnv>, id: number) {
+  const offer = await getOfferOr404(c.var.db, c.var.tenantId, id);
+  return (await serializeOffers(c.var.db, c.var.tenantId, [offer]))[0];
 }
 
 export const offersRoutes = router();
@@ -187,16 +216,15 @@ export const offersRoutes = router();
 offersRoutes.post("/", requireIngest, async (c) => {
   // El cuerpo se valida entero antes de tocar nada: aquí un error es un 422.
   const payload = await parseBody(c, OfferIngest);
-  const { ownerId } = c.var.principal;
-  const result = await ingestOffers(c.env.DB, c.env.BUCKET, ownerId, [payload]);
+  const result = await ingestOffers(c.env.DB, c.env.BUCKET, c.var.tenantId, [payload]);
   if (!result.offer_ids.length) throw new Error(result.errors[0] ?? "No se pudo guardar la oferta");
-  return c.json(await respondOne(c, ownerId, result.offer_ids[0]), 201);
+  return c.json(await respondOne(c, result.offer_ids[0]), 201);
 });
 
 offersRoutes.post("/bulk", requireIngest, async (c) => {
   const payload = await parseBody(c, OfferBulkIngest);
   return c.json(
-    await ingestOffers(c.env.DB, c.env.BUCKET, c.var.principal.ownerId, payload.offers),
+    await ingestOffers(c.env.DB, c.env.BUCKET, c.var.tenantId, payload.offers),
   );
 });
 
@@ -204,42 +232,42 @@ offersRoutes.post("/bulk", requireIngest, async (c) => {
 offersRoutes.get("/", requireUser, async (c) => {
   const { sort, limit, offset, ...filters } = parseQuery(c, ListQuery);
   const db = c.var.db;
-  const user = c.var.user;
-  const where = filterConditions(filters, user.id);
-
-  const [{ total }] = await db.select({ total: count() }).from(offers).where(where);
+  const tenantId = c.var.tenantId;
+  const where = filterConditions(filters, tenantId);
+  const counted = db.select({ total: count() }).from(offers).where(where);
 
   const dbSort = DB_SORTS[sort];
   if (dbSort) {
-    const list = await loadOffers(db, user.id, {
-      where,
-      orderBy: [dbSort, asc(offers.id)],
-      limit,
-      offset,
-    });
-    return c.json({ items: await serializeOffers(db, user.id, list), total, limit, offset });
+    const [[{ total }], list] = await Promise.all([
+      counted,
+      loadOffers(db, tenantId, { where, orderBy: [dbSort, asc(offers.id)], limit, offset }),
+    ]);
+    return c.json({ items: await serializeOffers(db, tenantId, list), total, limit, offset });
   }
 
-  // Ordenación por puntuación: se calcula sobre un conjunto acotado.
-  const list = await loadOffers(db, user.id, {
-    where,
-    orderBy: [asc(offers.price), asc(offers.id)],
-    limit: SCORE_SORT_CAP,
-  });
-  const serialized = await serializeOffers(db, user.id, list);
-  const valueOf = (offer: OfferRead) => offer.metrics.value_score ?? 0;
+  // Ordenación por puntuación: se puntúan las candidatas, se ordenan y solo la
+  // página se serializa (veredictos y favoritos de 50 ofertas, no de 500).
+  const [[{ total }], { list, metrics }] = await Promise.all([
+    counted,
+    scoredCandidates(db, tenantId, where),
+  ]);
+  const valueOf = (offer: OfferWithRelations) => metrics.get(offer.id)!.value_score ?? 0;
+  const ordered = [...list];
+  let ai: Map<number, OfferRankSummary> | undefined;
   if (sort === "ai_score") {
-    serialized.sort(
+    const ranks = (ai = await latestAiSummaries(db, tenantId, list));
+    ordered.sort(
       (a, b) =>
-        Number(a.ai === null) - Number(b.ai === null) ||
-        (b.ai?.score ?? 0) - (a.ai?.score ?? 0) ||
+        Number(!ranks.has(a.id)) - Number(!ranks.has(b.id)) ||
+        (ranks.get(b.id)?.score ?? 0) - (ranks.get(a.id)?.score ?? 0) ||
         valueOf(b) - valueOf(a),
     );
   } else {
-    serialized.sort((a, b) => valueOf(b) - valueOf(a));
+    ordered.sort((a, b) => valueOf(b) - valueOf(a));
   }
+  const page = ordered.slice(offset, offset + limit);
   return c.json({
-    items: serialized.slice(offset, offset + limit),
+    items: await serializeOffers(db, tenantId, page, { metrics, ai }),
     total: Math.min(total, SCORE_SORT_CAP),
     limit,
     offset,
@@ -250,7 +278,7 @@ offersRoutes.get("/", requireUser, async (c) => {
 offersRoutes.get("/stats", requireUser, async (c) => {
   const filters = parseQuery(c, OfferFilters);
   const db = c.var.db;
-  const user = c.var.user;
+  const tenantId = c.var.tenantId;
 
   // Extremos para los controles de rango, cada uno con **su propio filtro
   // quitado**: son el dominio del deslizador, no un agregado de lo que se ve.
@@ -266,32 +294,25 @@ offersRoutes.get("/stats", requireUser, async (c) => {
         avg_discount_pct: sql<number | null>`AVG(${discountSql()})`,
       })
       .from(offers)
-      .where(filterConditions(filters, user.id)),
+      .where(filterConditions(filters, tenantId)),
     db
       .select({ floor: min(offers.price), ceiling: max(offers.price) })
       .from(offers)
       .where(
-        filterConditions({ ...filters, min_price: undefined, max_price: undefined }, user.id),
+        filterConditions({ ...filters, min_price: undefined, max_price: undefined }, tenantId),
       ),
     db
       .select({ floor: min(offers.year), ceiling: max(offers.year) })
       .from(offers)
-      .where(filterConditions({ ...filters, min_year: undefined, max_year: undefined }, user.id)),
-    // El mejor chollo exige puntuar en TS: se acota igual que el orden por
-    // puntuación del listado, así ambos coinciden en la fila de arriba.
-    loadOffers(db, user.id, {
-      where: filterConditions(filters, user.id),
-      orderBy: [asc(offers.price), asc(offers.id)],
-      limit: SCORE_SORT_CAP,
-    }),
+      .where(filterConditions({ ...filters, min_year: undefined, max_year: undefined }, tenantId)),
+    // El mejor chollo exige puntuar en TS: son las mismas candidatas que las
+    // del orden por puntuación del listado, así ambos coinciden en la de arriba.
+    scoredCandidates(db, tenantId, filterConditions(filters, tenantId)),
   ]);
 
-  let bestDeal: OfferRead | null = null;
-  if (candidates.length) {
-    const metrics = await enrichOffers(db, user.id, candidates);
-    const top = bestByScore(candidates, (offer) => metrics.get(offer.id)!.value_score)!;
-    bestDeal = (await serializeOffers(db, user.id, [top]))[0];
-  }
+  const { metrics } = candidates;
+  const top = bestByScore(candidates.list, (offer) => metrics.get(offer.id)!.value_score);
+  const bestDeal = top ? (await serializeOffers(db, tenantId, [top], { metrics }))[0] : null;
 
   return c.json({
     count: row.count,
@@ -309,8 +330,57 @@ offersRoutes.get("/stats", requireUser, async (c) => {
   });
 });
 
+/**
+ * Los desplegables de la pantalla de ofertas y del editor: las versiones y los
+ * dealers activos de la cuenta, con cuántas ofertas activas tiene cada uno.
+ * Antes eran `/car-models` y `/dealers` enteros —la mediana y los extremos de
+ * cada una de las 2.300 versiones— para pintar un nombre y un número.
+ *
+ * Va antes de `/:id`: «facets» no es un entero.
+ */
+offersRoutes.get("/facets", requireUser, async (c) => {
+  const db = c.var.db;
+  const tenantId = c.var.tenantId;
+  const activeOffers = sql<number>`COUNT(${offers.id})`;
+  // La cuenta acota versiones y dealers; sus ofertas se siguen por la clave.
+  const [models, dealerRows] = await Promise.all([
+    db
+      .select({
+        id: carModels.id,
+        make: carModels.make,
+        model: carModels.model,
+        trim: carModels.trim,
+        active_offers: activeOffers,
+      })
+      .from(carModels)
+      .leftJoin(offers, and(eq(offers.car_model_id, carModels.id), eq(offers.status, "active")))
+      .where(and(owned(carModels, tenantId), eq(carModels.is_active, true)))
+      .groupBy(carModels.id)
+      .orderBy(
+        sql`lower(${carModels.make})`,
+        sql`lower(${carModels.model})`,
+        sql`lower(${carModels.trim})`,
+      ),
+    db
+      .select({ id: dealers.id, name: dealers.name, active_offers: activeOffers })
+      .from(dealers)
+      .leftJoin(offers, and(eq(offers.dealer_id, dealers.id), eq(offers.status, "active")))
+      .where(and(owned(dealers, tenantId), eq(dealers.is_active, true)))
+      .groupBy(dealers.id)
+      .orderBy(desc(activeOffers), asc(dealers.name)),
+  ]);
+  return c.json({
+    car_models: models.map((model) => ({
+      id: model.id,
+      display_name: modelDisplayName(model),
+      active_offers: model.active_offers,
+    })),
+    dealers: dealerRows,
+  });
+});
+
 offersRoutes.get("/:id", requireUser, async (c) => {
-  return c.json(await respondOne(c, c.var.user.id, parseId(c, "id")));
+  return c.json(await respondOne(c, parseId(c, "id")));
 });
 
 /** Payload crudo del scraper, desde R2. Se pide aparte: no va en el listado. */
@@ -318,7 +388,7 @@ offersRoutes.get("/:id/raw", requireUser, async (c) => {
   const [offer] = await c.var.db
     .select({ raw_ref: offers.raw_ref })
     .from(offers)
-    .where(ownOffer(c.var.user.id, parseId(c, "id")));
+    .where(ownedRow(offers, c.var.tenantId, parseId(c, "id")));
   if (!offer) throw notFound("Oferta no encontrada");
   return c.json({ raw: await getRaw(c.env.BUCKET, offer.raw_ref) });
 });
@@ -329,7 +399,7 @@ offersRoutes.get("/:id/price-history", requireUser, async (c) => {
   const [exists] = await db
     .select({ id: offers.id })
     .from(offers)
-    .where(ownOffer(c.var.user.id, id));
+    .where(ownedRow(offers, c.var.tenantId, id));
   if (!exists) throw notFound("Oferta no encontrada");
   const points = await db
     .select({ price: offerPriceHistory.price, recorded_at: offerPriceHistory.recorded_at })
@@ -347,8 +417,8 @@ offersRoutes.patch("/:id", requireUser, async (c) => {
   const id = parseId(c, "id");
   const payload = await parseBody(c, OfferUpdate);
   const db = c.var.db;
-  const userId = c.var.user.id;
-  const offer = await getOfferOr404(db, userId, id);
+  const tenantId = c.var.tenantId;
+  const offer = await getOfferOr404(db, tenantId, id);
 
   // Reatribuir se comprueba antes de escribir: un 404 con el nombre de lo que
   // no existe, y no un error de clave ajena. Una versión o un dealer de otra
@@ -360,7 +430,7 @@ offersRoutes.patch("/:id", requireUser, async (c) => {
       await db
         .select({ id: carModels.id })
         .from(carModels)
-        .where(and(eq(carModels.id, payload.car_model_id), eq(carModels.user_id, userId)))
+        .where(ownedRow(carModels, tenantId, payload.car_model_id))
     ).length
   ) {
     throw notFound("Modelo no encontrado");
@@ -372,14 +442,14 @@ offersRoutes.patch("/:id", requireUser, async (c) => {
       await db
         .select({ id: dealers.id })
         .from(dealers)
-        .where(and(eq(dealers.id, payload.dealer_id), eq(dealers.user_id, userId)))
+        .where(ownedRow(dealers, tenantId, payload.dealer_id))
     ).length
   ) {
     throw notFound("Dealer no encontrado");
   }
 
-  await applyManualEdit(db, offer, payload, userId);
-  return c.json(await respondOne(c, userId, id));
+  await applyManualEdit(db, offer, payload, c.var.user.id);
+  return c.json(await respondOne(c, id));
 });
 
 // ---- Estado: las tres transiciones que se hacen a mano ---------------------- //
@@ -388,19 +458,19 @@ offersRoutes.patch("/:id", requireUser, async (c) => {
 async function moveTo(c: Context<AppEnv>, target: OfferStatus, reason: string | null = null) {
   const id = parseId(c, "id");
   const db = c.var.db;
-  const userId = c.var.user.id;
-  await getOfferOr404(db, userId, id);
+  const tenantId = c.var.tenantId;
+  await getOfferOr404(db, tenantId, id);
   const backToActive = target === "active";
   await db
     .update(offers)
     .set({
       status: target,
       dismissed_at: backToActive ? null : nowIso(),
-      dismissed_by_id: backToActive ? null : userId,
+      dismissed_by_id: backToActive ? null : c.var.user.id,
       dismiss_reason: backToActive ? null : reason,
     })
-    .where(ownOffer(userId, id));
-  return c.json(await respondOne(c, userId, id));
+    .where(ownedRow(offers, tenantId, id));
+  return c.json(await respondOne(c, id));
 }
 
 /** Descarta una oferta. Borrado lógico: el scraper no la revive. */
@@ -421,32 +491,30 @@ offersRoutes.post("/:id/restore", requireUser, async (c) => moveTo(c, "active"))
 offersRoutes.put("/:id/rating", requireUser, async (c) => {
   const id = parseId(c, "id");
   const payload = await parseBody(c, OfferRatingUpdate);
-  const userId = c.var.user.id;
-  await getOfferOr404(c.var.db, userId, id);
+  const tenantId = c.var.tenantId;
+  await getOfferOr404(c.var.db, tenantId, id);
   if (Object.keys(payload).length) {
-    await c.var.db.update(offers).set(payload).where(ownOffer(userId, id));
+    await c.var.db.update(offers).set(payload).where(ownedRow(offers, tenantId, id));
   }
-  return c.json(await respondOne(c, userId, id));
+  return c.json(await respondOne(c, id));
 });
 
 // ---- Favoritos: marca personal, idempotente --------------------------------- //
 offersRoutes.post("/:id/favorite", requireUser, async (c) => {
   const id = parseId(c, "id");
-  const userId = c.var.user.id;
-  await getOfferOr404(c.var.db, userId, id);
+  await getOfferOr404(c.var.db, c.var.tenantId, id);
   await c.var.db
     .insert(offerFavorites)
-    .values({ user_id: userId, offer_id: id })
+    .values({ user_id: c.var.user.id, offer_id: id })
     .onConflictDoNothing();
-  return c.json(await respondOne(c, userId, id));
+  return c.json(await respondOne(c, id));
 });
 
 offersRoutes.delete("/:id/favorite", requireUser, async (c) => {
   const id = parseId(c, "id");
-  const userId = c.var.user.id;
-  await getOfferOr404(c.var.db, userId, id);
+  await getOfferOr404(c.var.db, c.var.tenantId, id);
   await c.var.db
     .delete(offerFavorites)
-    .where(and(eq(offerFavorites.user_id, userId), eq(offerFavorites.offer_id, id)));
-  return c.json(await respondOne(c, userId, id));
+    .where(and(eq(offerFavorites.user_id, c.var.user.id), eq(offerFavorites.offer_id, id)));
+  return c.json(await respondOne(c, id));
 });

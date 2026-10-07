@@ -21,7 +21,7 @@ describe("modelos y dealers", () => {
       ],
     });
     const q = encodeURIComponent(make.toLowerCase());
-    const models = (await user.get(`/api/v1/car-models?q=${q}`)).body;
+    const models = (await user.get(`/api/v1/car-models?q=${q}`)).body.items;
     expect(models).toHaveLength(3);
     expect(models[0]).toMatchObject({ active_offers: 1, is_tracked: false, tracking: null });
     expect(models[0].display_name).toContain("Uno");
@@ -56,12 +56,63 @@ describe("modelos y dealers", () => {
     await scraper.post("/api/v1/offers/bulk", {
       offers: [offerPayload({ dealer_name: name, price: 20000, original_price: 25000 })],
     });
-    const [dealer] = (await user.get(`/api/v1/dealers?q=${encodeURIComponent(name.toLowerCase())}`)).body;
+    const [dealer] = (await user.get(`/api/v1/dealers?q=${encodeURIComponent(name.toLowerCase())}`)).body.items;
     expect(dealer).toMatchObject({ active_offers: 1, avg_discount_pct: 20, best_price: 20000, notes: null });
 
     const patched = await user.patch(`/api/v1/dealers/${dealer.id}`, { notes: "llamar antes" });
     expect(patched.body.notes).toBe("llamar antes");
     expect((await user.post("/api/v1/dealers", { name })).status).toBe(409);
+  });
+
+  it("modelos y dealers se piden por páginas, con un orden estable", async () => {
+    const { user, scraper } = await account();
+    const make = unique("Paginas");
+    await scraper.post("/api/v1/offers/bulk", {
+      offers: [0, 1, 2, 3, 4].map((i) =>
+        offerPayload({ make, model: "Uno", trim: `T${i}`, dealer_name: `${make} Dealer ${i}` }),
+      ),
+    });
+    const q = encodeURIComponent(make.toLowerCase());
+    for (const path of [`/api/v1/car-models?q=${q}`, `/api/v1/dealers?q=${q}`]) {
+      const whole = (await user.get(path)).body;
+      expect(whole).toMatchObject({ total: 5, limit: 50, offset: 0 });
+      const ids: number[] = [];
+      for (const offset of [0, 2, 4]) {
+        const page = (await user.get(`${path}&limit=2&offset=${offset}`)).body;
+        expect(page).toMatchObject({ total: 5, limit: 2, offset });
+        ids.push(...page.items.map((row: { id: number }) => row.id));
+      }
+      expect(ids).toEqual(whole.items.map((row: { id: number }) => row.id));
+      expect((await user.get(`${path}&limit=0`)).status).toBe(422);
+      expect((await user.get(`${path}&limit=201`)).status).toBe(422);
+    }
+  });
+
+  it("los desplegables de ofertas: versiones y dealers activos con sus ofertas activas", async () => {
+    const { user, scraper } = await account();
+    const make = unique("Facetas");
+    const ingested = await scraper.post("/api/v1/offers/bulk", {
+      offers: [
+        offerPayload({ make, model: "Uno", trim: "A", dealer_name: `${make} Norte` }),
+        offerPayload({ make, model: "Uno", trim: "A", dealer_name: `${make} Norte` }),
+        offerPayload({ make, model: "Uno", trim: "B", dealer_name: `${make} Sur` }),
+      ],
+    });
+    // Una oferta descartada ya no cuenta, y una versión sin ofertas sí aparece.
+    await user.delete(`/api/v1/offers/${ingested.body.offer_ids[2]}`, { reason: "vista" });
+    await user.post("/api/v1/car-models", { make, model: "Uno", trim: "C" });
+
+    const facets = (await user.get("/api/v1/offers/facets")).body;
+    expect(facets.car_models).toEqual([
+      { id: expect.any(Number), display_name: `${make} Uno A`, active_offers: 2 },
+      { id: expect.any(Number), display_name: `${make} Uno B`, active_offers: 0 },
+      { id: expect.any(Number), display_name: `${make} Uno C`, active_offers: 0 },
+    ]);
+    // Los dealers, de los que más ofertas activas tienen a los que menos.
+    expect(facets.dealers).toEqual([
+      { id: expect.any(Number), name: `${make} Norte`, active_offers: 2 },
+      { id: expect.any(Number), name: `${make} Sur`, active_offers: 0 },
+    ]);
   });
 });
 
@@ -72,7 +123,7 @@ describe("seguimiento de modelos", () => {
     await scraper.post("/api/v1/offers/bulk", {
       offers: [offerPayload({ make, model: "M", trim: "1" }), offerPayload({ make, model: "M", trim: "2" })],
     });
-    const models = (await user.get(`/api/v1/car-models?q=${encodeURIComponent(make.toLowerCase())}`)).body;
+    const models = (await user.get(`/api/v1/car-models?q=${encodeURIComponent(make.toLowerCase())}`)).body.items;
 
     const tracked = await user.post("/api/v1/tracked-models", { car_model_id: models[0].id, target_price: 20000 });
     expect(tracked.status).toBe(201);
@@ -80,7 +131,7 @@ describe("seguimiento de modelos", () => {
     const again = await user.post("/api/v1/tracked-models", { car_model_id: models[0].id, target_price: 19000 });
     expect(again.body).toMatchObject({ id: tracked.body.id, target_price: 19000 });
 
-    const onlyTracked = (await user.get("/api/v1/car-models?tracked_only=true")).body;
+    const onlyTracked = (await user.get("/api/v1/car-models?tracked_only=true")).body.items;
     expect(onlyTracked.map((m: { id: number }) => m.id)).toEqual([models[0].id]);
 
     const bulk = await user.post("/api/v1/tracked-models/bulk", {
@@ -167,7 +218,7 @@ describe("seguimiento de modelos", () => {
         offerPayload({ make, model: "Corolla", trim: "Touring", price: 21000 }),
       ],
     });
-    const variants = (await user.get(`/api/v1/car-models?q=${q}`)).body as {
+    const variants = (await user.get(`/api/v1/car-models?q=${q}`)).body.items as {
       trim: string;
       is_tracked: boolean;
       tracking: { target_price: number } | null;
@@ -189,11 +240,11 @@ describe("seguimiento de modelos", () => {
       offers: [offerPayload({ make, model: "P", trim: "1" }), offerPayload({ make, model: "P", trim: "2" })],
     });
     const q = encodeURIComponent(make.toLowerCase());
-    const [one] = (await user.get(`/api/v1/car-models?q=${q}`)).body;
+    const [one] = (await user.get(`/api/v1/car-models?q=${q}`)).body.items;
     await user.post("/api/v1/tracked-models", { car_model_id: one.id });
 
     await scraper.post("/api/v1/offers/bulk", { offers: [offerPayload({ make, model: "P", trim: "3" })] });
-    const variants = (await user.get(`/api/v1/car-models?q=${q}`)).body as { is_tracked: boolean }[];
+    const variants = (await user.get(`/api/v1/car-models?q=${q}`)).body.items as { is_tracked: boolean }[];
     expect(variants.filter((v) => v.is_tracked)).toHaveLength(1);
   });
 });

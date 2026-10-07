@@ -13,6 +13,7 @@ import type { BatchItem } from "drizzle-orm/batch";
 import { scrapeSources, scrapeTargets } from "../db/schema";
 import { inList, runBatch, type Db } from "../lib/db";
 import { unprocessable } from "../lib/http";
+import { owned } from "../lib/tenant";
 import { canonicalMakeModelKey, defaultSearchParams } from "./scraping-config";
 
 /** Lo que pide cada combinación cuando el binomio entra nuevo en captación. */
@@ -27,7 +28,7 @@ const DEFAULT_MAX_RESULTS = 15;
  */
 export async function setModelSources(
   db: Db,
-  userId: string,
+  tenantId: string,
   make: string,
   model: string,
   sourceIds: number[],
@@ -44,13 +45,13 @@ export async function setModelSources(
     db
       .select()
       .from(scrapeTargets)
-      .where(and(eq(scrapeTargets.user_id, userId), eq(scrapeTargets.make_model_key, key))),
+      .where(and(owned(scrapeTargets, tenantId), eq(scrapeTargets.make_model_key, key))),
     // El tope por combinación es uno por cuenta en la práctica (la matriz lo
     // pone igual a todas): un binomio nuevo hereda el que ya tienen los demás.
     db
       .select({ max: scrapeTargets.max_results })
       .from(scrapeTargets)
-      .where(and(eq(scrapeTargets.user_id, userId), eq(scrapeTargets.is_active, true)))
+      .where(and(owned(scrapeTargets, tenantId), eq(scrapeTargets.is_active, true)))
       .limit(1),
   ]);
   const bySource = new Map(existing.map((target) => [target.source_id, target]));
@@ -65,7 +66,7 @@ export async function setModelSources(
     if (!current) {
       statements.push(
         db.insert(scrapeTargets).values({
-          user_id: userId,
+          user_id: tenantId,
           source_id: id,
           make_model_key: key,
           make,
@@ -107,13 +108,13 @@ export async function setModelSources(
 }
 
 /** Saca el binomio de la captación de la cuenta, sin borrar lo aprendido. */
-export async function stopModelSources(db: Db, userId: string, key: string): Promise<void> {
+export async function stopModelSources(db: Db, tenantId: string, key: string): Promise<void> {
   await db
     .update(scrapeTargets)
     .set({ is_active: false, updated_at: new Date().toISOString() })
     .where(
       and(
-        eq(scrapeTargets.user_id, userId),
+        owned(scrapeTargets, tenantId),
         eq(scrapeTargets.make_model_key, key),
         eq(scrapeTargets.is_active, true),
       ),

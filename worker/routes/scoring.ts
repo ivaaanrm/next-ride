@@ -28,12 +28,12 @@ export const scoringRoutes = router();
 scoringRoutes.use(requireUser);
 
 scoringRoutes.get("/config", async (c) =>
-  c.json(read(await getScoringConfig(c.var.db, c.var.user.id))),
+  c.json(read(await getScoringConfig(c.var.db, c.var.tenantId))),
 );
 
 scoringRoutes.put("/config", async (c) => {
   const payload = await parseBody(c, ScoreConfigUpdate);
   return c.json(
-    read(await saveScoringConfig(c.var.db, c.var.user.id, payload.weights, payload.params)),
+    read(await saveScoringConfig(c.var.db, c.var.tenantId, payload.weights, payload.params)),
   );
 });

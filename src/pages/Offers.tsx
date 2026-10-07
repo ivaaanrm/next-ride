@@ -80,10 +80,9 @@ import {
   type SortDir,
 } from "../lib/offerParams";
 import type {
-  CarModelWithStats,
-  DealerWithStats,
   Offer,
   OfferAggregateStats,
+  OfferFacets,
   OfferMetrics,
   OfferPricePoint,
   OfferRatingField,
@@ -284,8 +283,11 @@ export function OffersPage() {
   const [sheet, setSheet] = useState<"filters" | "sort" | null>(null);
   const toasts = useToasts();
 
-  const models = useAsync<CarModelWithStats[]>(() => api.get("/car-models"), []);
-  const dealers = useAsync<DealerWithStats[]>(() => api.get("/dealers"), []);
+  // Los desplegables de versión y dealer: nombre y ofertas activas de cada uno.
+  // Antes eran `/car-models` y `/dealers` enteros, con la mediana de cada versión.
+  const facets = useAsync<OfferFacets>(() => api.get("/offers/facets"), []);
+  const models = facets.data?.car_models ?? [];
+  const dealers = facets.data?.dealers ?? [];
 
   const listKey = filterKey(view);
   const stats = useAsync<OfferAggregateStats>(
@@ -684,8 +686,8 @@ export function OffersPage() {
   const filterCount = countFilters(view);
 
   const names = {
-    model: models.data?.find((model) => String(model.id) === view.model)?.display_name,
-    dealer: dealers.data?.find((dealer) => String(dealer.id) === view.dealer)?.name,
+    model: models.find((model) => String(model.id) === view.model)?.display_name,
+    dealer: dealers.find((dealer) => String(dealer.id) === view.dealer)?.name,
     condition: view.condition
       ? CONDITION_LABELS[view.condition as keyof typeof CONDITION_LABELS]
       : undefined,
@@ -793,7 +795,7 @@ export function OffersPage() {
                 onChange={(event) => commit({ ...view, model: event.target.value })}
               >
                 <option value="">Todos los modelos</option>
-                {(models.data ?? []).map((model) => (
+                {models.map((model) => (
                   <option key={model.id} value={model.id}>
                     {model.display_name} ({model.active_offers})
                   </option>
@@ -807,7 +809,7 @@ export function OffersPage() {
                 onChange={(event) => commit({ ...view, dealer: event.target.value })}
               >
                 <option value="">Todos los dealers</option>
-                {(dealers.data ?? []).map((dealer) => (
+                {dealers.map((dealer) => (
                   <option key={dealer.id} value={dealer.id}>
                     {dealer.name}
                   </option>
@@ -1142,8 +1144,8 @@ export function OffersPage() {
       {sheet === "filters" ? (
         <FilterSheet
           view={view}
-          models={models.data ?? []}
-          dealers={dealers.data ?? []}
+          models={models}
+          dealers={dealers}
           domains={domains}
           fallbackStats={stats.data}
           onClose={() => setSheet(null)}

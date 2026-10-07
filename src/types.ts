@@ -42,6 +42,26 @@ export interface DealerWithStats extends Dealer {
   best_price: number | null;
 }
 
+/** Un dealer en los desplegables de ofertas (`GET /offers/facets`). */
+export interface DealerOption {
+  id: number;
+  name: string;
+  active_offers: number;
+}
+
+/** Una versión en los desplegables de ofertas (`GET /offers/facets`). */
+export interface ModelOption {
+  id: number;
+  display_name: string;
+  active_offers: number;
+}
+
+/** Lo que piden los filtros de ofertas y el editor: nombre y ofertas activas, nada más. */
+export interface OfferFacets {
+  car_models: ModelOption[];
+  dealers: DealerOption[];
+}
+
 export interface CarModel {
   id: number;
   slug: string;

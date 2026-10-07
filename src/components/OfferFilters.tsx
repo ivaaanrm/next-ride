@@ -27,8 +27,8 @@ import {
   type OffersView,
 } from "../lib/offerParams";
 import type {
-  CarModelWithStats,
-  DealerWithStats,
+  DealerOption,
+  ModelOption,
   Offer,
   OfferAggregateStats,
   OfferStatus,
@@ -190,8 +190,8 @@ export function FilterSheet({
   onOpenOffer,
 }: {
   view: OffersView;
-  models: CarModelWithStats[];
-  dealers: DealerWithStats[];
+  models: ModelOption[];
+  dealers: DealerOption[];
   domains: { price: RangeDomain | null; year: RangeDomain | null };
   /** Las métricas de la lista de detrás, mientras las de la hoja llegan: sin
    *  ellas el bloque «Resumen» aparecería vacío y saltaría al primer dato. */

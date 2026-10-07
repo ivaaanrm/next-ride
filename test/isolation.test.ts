@@ -49,9 +49,13 @@ describe("ofertas", () => {
     const segments = (await b.user.get(`/api/v1/analytics/segments?${q(make)}`)).body;
     expect(segments).toMatchObject({ segments: [], offers: 0 });
 
-    expect((await b.user.get(`/api/v1/dealers?q=${encodeURIComponent(dealer.toLowerCase())}`)).body).toEqual([]);
-    expect((await b.user.get(`/api/v1/car-models?${q(make)}`)).body).toEqual([]);
+    expect((await b.user.get(`/api/v1/dealers?q=${encodeURIComponent(dealer.toLowerCase())}`)).body).toMatchObject({
+      items: [],
+      total: 0,
+    });
+    expect((await b.user.get(`/api/v1/car-models?${q(make)}`)).body).toMatchObject({ items: [], total: 0 });
     expect((await b.user.get(`/api/v1/car-models/groups?${q(make)}`)).body).toEqual([]);
+    expect((await b.user.get("/api/v1/offers/facets")).body).toEqual({ car_models: [], dealers: [] });
   });
 
   it("una oferta de otra cuenta es un 404 en todos los verbos, y queda intacta", async () => {
@@ -130,8 +134,8 @@ describe("ofertas", () => {
 describe("catálogo", () => {
   it("dealers y versiones son de cada cuenta: ni se leen, ni se editan, ni se reatribuyen", async () => {
     const { a, b, make, dealer, aIds } = await twoAccounts();
-    const [aDealer] = (await a.user.get(`/api/v1/dealers?q=${encodeURIComponent(dealer.toLowerCase())}`)).body;
-    const [aModel] = (await a.user.get(`/api/v1/car-models?${q(make)}`)).body;
+    const [aDealer] = (await a.user.get(`/api/v1/dealers?q=${encodeURIComponent(dealer.toLowerCase())}`)).body.items;
+    const [aModel] = (await a.user.get(`/api/v1/car-models?${q(make)}`)).body.items;
     await a.user.patch(`/api/v1/dealers/${aDealer.id}`, { notes: "negociado a 19.000" });
 
     expect((await b.user.get(`/api/v1/dealers/${aDealer.id}`)).status).toBe(404);
@@ -156,11 +160,11 @@ describe("catálogo", () => {
 
     // El mismo nombre en B es otro dealer, sin las notas de A; y A sigue igual.
     await b.scraper.post("/api/v1/offers/bulk", { offers: [offerPayload({ make, model: "Uno", dealer_name: dealer })] });
-    const [bDealer] = (await b.user.get(`/api/v1/dealers?q=${encodeURIComponent(dealer.toLowerCase())}`)).body;
+    const [bDealer] = (await b.user.get(`/api/v1/dealers?q=${encodeURIComponent(dealer.toLowerCase())}`)).body.items;
     expect(bDealer.id).not.toBe(aDealer.id);
     expect(bDealer).toMatchObject({ notes: null, active_offers: 1 });
     expect((await a.user.get(`/api/v1/dealers/${aDealer.id}`)).body.notes).toBe("negociado a 19.000");
-    const [aDealerRow] = (await a.user.get(`/api/v1/dealers?q=${encodeURIComponent(dealer.toLowerCase())}`)).body;
+    const [aDealerRow] = (await a.user.get(`/api/v1/dealers?q=${encodeURIComponent(dealer.toLowerCase())}`)).body.items;
     expect(aDealerRow).toMatchObject({ id: aDealer.id, active_offers: 3 });
     expect((await a.user.get(`/api/v1/car-models/${aModel.id}`)).body).toMatchObject({
       reference_price: null,
@@ -173,13 +177,13 @@ describe("catálogo", () => {
     const { a, b, make } = await twoAccounts();
     const followed = await b.user.put("/api/v1/tracked-models/group", { make, model: "Uno", target_price: 15000 });
     expect(followed.body).toMatchObject({ tracked_variants: 1 });
-    const [bModel] = (await b.user.get(`/api/v1/car-models?${q(make)}`)).body;
+    const [bModel] = (await b.user.get(`/api/v1/car-models?${q(make)}`)).body.items;
     expect(bModel).toMatchObject({ active_offers: 0, is_tracked: true });
 
     // Las ofertas que A ingesta después no le llegan a B ni heredan su seguimiento.
     await a.scraper.post("/api/v1/offers/bulk", { offers: [offerPayload({ make, model: "Uno", trim: "Nueva" })] });
-    expect((await b.user.get(`/api/v1/car-models?${q(make)}`)).body).toHaveLength(1);
-    expect((await a.user.get(`/api/v1/car-models?${q(make)}&tracked_only=true`)).body).toEqual([]);
+    expect((await b.user.get(`/api/v1/car-models?${q(make)}`)).body.items).toHaveLength(1);
+    expect((await a.user.get(`/api/v1/car-models?${q(make)}&tracked_only=true`)).body.items).toEqual([]);
     expect((await b.user.get(`/api/v1/offers?tracked_only=true`)).body.total).toBe(0);
   });
 });

@@ -2,8 +2,9 @@
  * Las dos puertas de la API: sesión de persona (Better Auth) y, en los
  * endpoints que usa el skill, también `X-API-Key`.
  *
- * Las dos dicen además en qué cuenta se está: la de la persona, o la dueña de
- * la API key. Todo lo que hay detrás filtra por esa cuenta.
+ * Las dos dicen además en qué cuenta se está (`tenantId`): la de la persona, o
+ * la dueña de la API key. Todo lo que hay detrás filtra por esa cuenta, con
+ * las reglas de `lib/tenant.ts`.
  */
 import { and, eq } from "drizzle-orm";
 import type { Context } from "hono";
@@ -29,6 +30,7 @@ export const requireUser = createMiddleware<AppEnv>(async (c, next) => {
   const user = await sessionUser(c);
   if (!user) throw CREDENTIALS_ERROR();
   c.set("user", user);
+  c.set("tenantId", user.id);
   await next();
 });
 
@@ -38,6 +40,7 @@ export const requireSuperuser = createMiddleware<AppEnv>(async (c, next) => {
   if (!user) throw CREDENTIALS_ERROR();
   if (!user.isSuperuser) throw forbidden("Solo un administrador puede hacer esto");
   c.set("user", user);
+  c.set("tenantId", user.id);
   await next();
 });
 
@@ -71,7 +74,8 @@ export const requireIngest = createMiddleware<AppEnv>(async (c, next) => {
     c.executionCtx.waitUntil(
       c.var.db.update(apiKeys).set({ last_used_at: nowIso() }).where(eq(apiKeys.id, key.id)),
     );
-    c.set("principal", { user: null, apiKey: key, ownerId: key.user_id });
+    c.set("principal", { user: null, apiKey: key });
+    c.set("tenantId", key.user_id);
     await next();
     return;
   }
@@ -83,6 +87,7 @@ export const requireIngest = createMiddleware<AppEnv>(async (c, next) => {
     });
   }
   c.set("user", user);
-  c.set("principal", { user, apiKey: null, ownerId: user.id });
+  c.set("principal", { user, apiKey: null });
+  c.set("tenantId", user.id);
   await next();
 });

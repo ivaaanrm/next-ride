@@ -26,6 +26,7 @@ import {
 } from "../db/schema";
 import { inList, round, type Db } from "../lib/db";
 import { average, maxOf, median, minOf, mode } from "../lib/stats";
+import { owned } from "../lib/tenant";
 import type { ScoreBreakdownItem, ScoreParams } from "../schemas/scoring";
 import {
   DEFAULT_CONFIG,
@@ -131,10 +132,16 @@ function aggregate(rows: MarketRow[]): PriceStats {
   };
 }
 
-/** Agregados de precio por versión, sobre las ofertas activas de la cuenta. */
+/**
+ * Agregados de precio por versión, sobre las ofertas activas de la cuenta.
+ *
+ * La cuenta acota las versiones y las ofertas se siguen por su clave
+ * (`lib/tenant.ts`): con `offers.user_id` en el filtro, SQLite recorría todas
+ * las ofertas de la cuenta para sacar las de una versión.
+ */
 export async function modelPriceStats(
   db: Db,
-  userId: string,
+  tenantId: string,
   carModelIds: number[],
 ): Promise<Map<number, ModelPriceStats>> {
   const result = new Map<number, ModelPriceStats>();
@@ -149,11 +156,12 @@ export async function modelPriceStats(
       dealer_id: offers.dealer_id,
       condition: offers.condition,
     })
-    .from(offers)
+    .from(carModels)
+    .innerJoin(offers, eq(offers.car_model_id, carModels.id))
     .where(
       and(
-        eq(offers.user_id, userId),
-        inList(offers.car_model_id, carModelIds),
+        owned(carModels, tenantId),
+        inList(carModels.id, carModelIds),
         eq(offers.status, "active"),
       ),
     );
@@ -170,23 +178,32 @@ export interface BinomioMarket {
   stats: Map<string, MakeModelPriceStats>;
   /** PVP estimado por binomio (curva invertida), el ancla de reserva del valor esperado. */
   anchors: Map<string, number>;
+  /**
+   * Los agregados de cada versión, de las mismas filas: lo que daría
+   * `modelPriceStats` sin volver a leer las ofertas. Una versión sin ofertas
+   * activas no está.
+   */
+  variants: Map<number, PriceStats>;
 }
 
 /**
  * El mercado de unos binomios en la cuenta: sus agregados y su PVP estimado,
  * con una sola consulta sobre las ofertas activas de todas sus versiones (o
  * solo de `onlyModelIds`, cuando el listado que lo pide ha dejado fuera alguna).
+ *
+ * La raíz son las versiones de la cuenta con esa clave; sus ofertas se siguen
+ * por `car_model_id` (`lib/tenant.ts`).
  */
 export async function binomioMarket(
   db: Db,
-  userId: string,
+  tenantId: string,
   keys: Iterable<string>,
   params: ScoreParams,
   now: Date = new Date(),
   onlyModelIds?: number[],
 ): Promise<BinomioMarket> {
   const keyList = [...new Set(keys)];
-  const market: BinomioMarket = { stats: new Map(), anchors: new Map() };
+  const market: BinomioMarket = { stats: new Map(), anchors: new Map(), variants: new Map() };
   if (!keyList.length) return market;
 
   const rows = await db
@@ -201,12 +218,11 @@ export async function binomioMarket(
       dealer_id: offers.dealer_id,
       condition: offers.condition,
     })
-    .from(offers)
-    .innerJoin(carModels, eq(carModels.id, offers.car_model_id))
+    .from(carModels)
+    .innerJoin(offers, eq(offers.car_model_id, carModels.id))
     .where(
       and(
-        eq(offers.user_id, userId),
-        eq(carModels.user_id, userId),
+        owned(carModels, tenantId),
         inList(carModels.make_model_key, keyList),
         eq(offers.status, "active"),
         onlyModelIds ? inList(offers.car_model_id, onlyModelIds) : undefined,
@@ -228,6 +244,9 @@ export async function binomioMarket(
     });
     const anchor = marketNewPrice(group, params, nowYear);
     if (anchor !== null) market.anchors.set(key, anchor);
+  }
+  for (const [id, group] of Map.groupBy(rows, (row) => row.car_model_id)) {
+    market.variants.set(id, aggregate(group));
   }
   return market;
 }
@@ -322,21 +341,21 @@ export function computeMetrics(
 
 /**
  * Las métricas de cada oferta, indexadas por `offer.id`, contra el mercado y
- * con los pesos de la cuenta `userId`, que es la dueña de `list`.
+ * con los pesos de la cuenta `tenantId`, que es la dueña de `list`.
  */
 export async function enrichOffers(
   db: Db,
-  userId: string,
+  tenantId: string,
   list: OfferWithRelations[],
   config?: ScoringConfig,
 ): Promise<Map<number, OfferMetrics>> {
   if (!list.length) return new Map();
-  const scoring = config ?? (await getScoringConfig(db, userId));
+  const scoring = config ?? (await getScoringConfig(db, tenantId));
   const now = new Date();
   const [market, initialPrices] = await Promise.all([
     binomioMarket(
       db,
-      userId,
+      tenantId,
       list.map((offer) => offer.car_model.make_model_key),
       scoring.params,
       now,

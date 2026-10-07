@@ -12,11 +12,11 @@
  * completa» dice qué desviación lo lleva al extremo). La potencia va en S.
  * Determinista: los mismos datos y la misma fecha dan la misma cifra.
  */
-import { eq } from "drizzle-orm";
 
 import { scoreConfig, type Offer, type VehicleCondition } from "../db/schema";
 import type { Db } from "../lib/db";
 import { median } from "../lib/stats";
+import { owned } from "../lib/tenant";
 import {
   DEFAULT_PARAMS,
   DEFAULT_WEIGHTS,
@@ -94,8 +94,8 @@ function validated<T>(
 }
 
 /** Los pesos y parámetros de la cuenta: cada una puntúa con los suyos. */
-export async function getScoringConfig(db: Db, userId: string): Promise<ScoringConfig> {
-  const [row] = await db.select().from(scoreConfig).where(eq(scoreConfig.user_id, userId));
+export async function getScoringConfig(db: Db, tenantId: string): Promise<ScoringConfig> {
+  const [row] = await db.select().from(scoreConfig).where(owned(scoreConfig, tenantId));
   if (!row) return DEFAULT_CONFIG;
   return {
     weights: validated(ScoreWeights, row.weights, DEFAULT_WEIGHTS),
@@ -107,21 +107,21 @@ export async function getScoringConfig(db: Db, userId: string): Promise<ScoringC
 /** Guarda lo que venga y conserva el resto. Crea la fila de la cuenta si no existe. */
 export async function saveScoringConfig(
   db: Db,
-  userId: string,
+  tenantId: string,
   weights: ScoreWeights | null | undefined,
   params: ScoreParams | null | undefined,
 ): Promise<ScoringConfig> {
-  const current = await getScoringConfig(db, userId);
+  const current = await getScoringConfig(db, tenantId);
   const merged = { weights: weights ?? current.weights, params: params ?? current.params };
   const now = new Date().toISOString();
   await db
     .insert(scoreConfig)
-    .values({ user_id: userId, ...merged, created_at: now, updated_at: now })
+    .values({ user_id: tenantId, ...merged, created_at: now, updated_at: now })
     .onConflictDoUpdate({
       target: scoreConfig.user_id,
       set: { ...merged, updated_at: now },
     });
-  return getScoringConfig(db, userId);
+  return getScoringConfig(db, tenantId);
 }
 
 // --------------------------------------------------------------------------- //

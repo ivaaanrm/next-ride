@@ -19,6 +19,7 @@ import {
   type User,
 } from "../db/schema";
 import { inList, type Db } from "../lib/db";
+import { owned } from "../lib/tenant";
 import { enrichOffers, type OfferMetrics, type OfferWithRelations } from "./metrics";
 import { favoriteOfferIds } from "./offers";
 import type { ScoringConfig } from "./scoring";
@@ -36,6 +37,10 @@ export const dealerRead = (dealer: Dealer) => ({
   created_at: dealer.created_at,
 });
 
+/** «Marca Modelo Acabado», sin huecos cuando falta el acabado. */
+export const modelDisplayName = (model: Pick<CarModel, "make" | "model" | "trim">) =>
+  [model.make, model.model, model.trim].filter(Boolean).join(" ");
+
 export const carModelRead = (model: CarModel) => ({
   id: model.id,
   slug: model.slug,
@@ -45,7 +50,7 @@ export const carModelRead = (model: CarModel) => ({
   body_type: model.body_type,
   reference_price: model.reference_price,
   is_active: model.is_active,
-  display_name: [model.make, model.model, model.trim].filter(Boolean).join(" "),
+  display_name: modelDisplayName(model),
 });
 
 export const trackedPrefs = (row: TrackedModel) => ({
@@ -171,13 +176,14 @@ export function offerRead(
 }
 
 /**
- * Ofertas de la cuenta `userId` con su versión y su dealer, con el filtro y el
- * orden que se pidan. La cuenta va aparte y no dentro de `where` para que
- * ninguna lectura de ofertas pueda olvidarla: `where` solo estrecha.
+ * Ofertas de la cuenta `tenantId` con su versión y su dealer, con el filtro y
+ * el orden que se pidan. La cuenta va aparte y no dentro de `where` para que
+ * ninguna lectura de ofertas pueda olvidarla: `where` solo estrecha. La versión
+ * y el dealer se siguen por su clave (`lib/tenant.ts`).
  */
 export async function loadOffers(
   db: Db,
-  userId: string,
+  tenantId: string,
   options: {
     where?: SQL;
     orderBy?: SQL[];
@@ -190,7 +196,7 @@ export async function loadOffers(
     .from(offers)
     .innerJoin(carModels, eq(carModels.id, offers.car_model_id))
     .innerJoin(dealers, eq(dealers.id, offers.dealer_id))
-    .where(and(eq(offers.user_id, userId), options.where))
+    .where(and(owned(offers, tenantId), options.where))
     .$dynamic();
   if (options.orderBy?.length) query = query.orderBy(...options.orderBy);
   if (options.limit !== undefined) query = query.limit(options.limit);
@@ -202,10 +208,10 @@ export async function loadOffers(
 /** Una oferta de la cuenta, o `null` si no existe o es de otra. */
 export async function loadOffer(
   db: Db,
-  userId: string,
+  tenantId: string,
   id: number,
 ): Promise<OfferWithRelations | null> {
-  const [offer] = await loadOffers(db, userId, { where: eq(offers.id, id) });
+  const [offer] = await loadOffers(db, tenantId, { where: eq(offers.id, id) });
   return offer ?? null;
 }
 
@@ -215,7 +221,7 @@ export async function loadOffer(
  */
 export async function latestAiSummaries(
   db: Db,
-  userId: string,
+  tenantId: string,
   list: OfferWithRelations[],
 ): Promise<Map<number, OfferRankSummary>> {
   if (!list.length) return new Map();
@@ -225,7 +231,7 @@ export async function latestAiSummaries(
     .from(rankingRuns)
     .where(
       and(
-        eq(rankingRuns.user_id, userId),
+        owned(rankingRuns, tenantId),
         inList(rankingRuns.make_model_key, keys),
         eq(rankingRuns.status, "completed"),
       ),
@@ -263,22 +269,31 @@ export async function latestAiSummaries(
 }
 
 /**
- * Ofertas de la cuenta `userId` listas para responder: métricas, último
+ * Ofertas de la cuenta `tenantId` listas para responder: métricas, último
  * veredicto de IA y favorito.
+ *
+ * Quien ya ha puntuado un conjunto mayor para ordenarlo (el orden por
+ * puntuación, el mejor chollo) pasa sus `metrics` y su `ai`: el mercado de
+ * cada binomio no depende de qué ofertas se pidan, así que son las mismas
+ * cifras, y aquí solo se serializa la página.
  */
 export async function serializeOffers(
   db: Db,
-  userId: string,
+  tenantId: string,
   list: OfferWithRelations[],
-  config?: ScoringConfig,
+  options: {
+    config?: ScoringConfig;
+    metrics?: Map<number, OfferMetrics>;
+    ai?: Map<number, OfferRankSummary>;
+  } = {},
 ): Promise<OfferRead[]> {
   if (!list.length) return [];
   const [metrics, ai, favorites] = await Promise.all([
-    enrichOffers(db, userId, list, config),
-    latestAiSummaries(db, userId, list),
+    options.metrics ?? enrichOffers(db, tenantId, list, options.config),
+    options.ai ?? latestAiSummaries(db, tenantId, list),
     favoriteOfferIds(
       db,
-      userId,
+      tenantId,
       list.map((offer) => offer.id),
     ),
   ]);
