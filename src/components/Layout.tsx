@@ -1,22 +1,30 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type ComponentType, type ReactNode } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 
 import { useAuth } from "../lib/auth";
 import { useTheme } from "../lib/theme";
+import {
+  IconAnalytics,
+  IconDealers,
+  IconKey,
+  IconModels,
+  IconOffers,
+  IconSettings,
+} from "./icons";
 import { NoticesProvider, NotificationsNav } from "./Notifications";
 import { TabBar } from "./TabBar";
 import { ThemeIcon, themeLabel } from "./ThemeToggle";
 
 const NAV = [
-  { to: "/offers", label: "Ofertas", icon: "◱" },
-  { to: "/analytics", label: "Analítica", icon: "◫" },
-  { to: "/models", label: "Modelos", icon: "◈" },
-  { to: "/dealers", label: "Dealers", icon: "◇" },
+  { to: "/offers", label: "Ofertas", Icon: IconOffers },
+  { to: "/analytics", label: "Analítica", Icon: IconAnalytics },
+  { to: "/models", label: "Modelos", Icon: IconModels },
+  { to: "/dealers", label: "Dealers", Icon: IconDealers },
 ];
 
 const SETTINGS_NAV = [
-  { to: "/settings", label: "Ajustes", icon: "⚙" },
-  { to: "/api-keys", label: "API Keys", icon: "⚿" },
+  { to: "/settings", label: "Ajustes", Icon: IconSettings },
+  { to: "/api-keys", label: "API Keys", Icon: IconKey },
 ];
 
 const COLLAPSED_KEY = "nr.sidebar_collapsed";
@@ -80,7 +88,9 @@ export function Layout() {
               aria-label={item.label}
               title={tip(item.label)}
             >
-              <span className="nav-icon">{item.icon}</span>
+              <span className="nav-icon">
+                <item.Icon size={16} />
+              </span>
               <span className="nav-label">{item.label}</span>
             </NavLink>
           ))}
@@ -96,7 +106,9 @@ export function Layout() {
               aria-label={item.label}
               title={tip(item.label)}
             >
-              <span className="nav-icon">{item.icon}</span>
+              <span className="nav-icon">
+                <item.Icon size={16} />
+              </span>
               <span className="nav-label">{item.label}</span>
             </NavLink>
           ))}
@@ -145,6 +157,45 @@ export function Layout() {
         <TabBar />
       </div>
     </NoticesProvider>
+  );
+}
+
+/**
+ * Acción de la barra superior: icono y rótulo en escritorio, solo icono en la
+ * mano.
+ *
+ * En 390 pt los rótulos escritos no cabían junto al titular: Modelos apilaba
+ * tres botones a lo ancho en dos líneas y Dealers dos, y la cabecera se comía
+ * cien píxeles del pliegue para decir «Actualizar». Con el icono solo la barra
+ * vuelve a ser una línea, con el titular a la izquierda y las acciones a la
+ * derecha, que es donde iOS las pone. El rótulo sigue siendo el nombre
+ * accesible y el `title`, así que nada se pierde para quien no ve el dibujo.
+ */
+export function HeaderButton({
+  icon: Icon,
+  label,
+  onClick,
+  primary = false,
+  disabled = false,
+}: {
+  icon: ComponentType<{ size?: number }>;
+  label: string;
+  onClick: () => void;
+  primary?: boolean;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      className={`btn btn-sm header-btn${primary ? " btn-primary" : ""}`}
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      title={label}
+    >
+      <Icon size={16} />
+      <span className="header-btn-label">{label}</span>
+    </button>
   );
 }
 

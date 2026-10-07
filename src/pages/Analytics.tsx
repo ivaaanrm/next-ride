@@ -40,8 +40,9 @@ import {
   useMeasuredBox,
   type RadarSeries,
 } from "../components/charts";
-import { PageHeader } from "../components/Layout";
-import { useTouchLayout } from "../components/SwipeRow";
+import { IconRefresh } from "../components/icons";
+import { HeaderButton, PageHeader } from "../components/Layout";
+import { scrollBehavior, useTouchLayout } from "../components/SwipeRow";
 import { Banner, Empty, Loading } from "../components/ui";
 import {
   ChartContainer,
@@ -88,7 +89,7 @@ const MIN_R2 = 0.15;
 const AXIS = {
   tickLine: false,
   axisLine: false,
-  tick: { fontSize: 11, fill: "var(--text-secondary)" },
+  tick: <AxisTick />,
 } as const;
 
 /** Hueco de 2 px del color del fondo entre rellenos contiguos. */
@@ -111,14 +112,53 @@ const ratio = new Intl.NumberFormat("es-ES", {
   maximumFractionDigits: 2,
 });
 
-/** Dominio con aire a los lados: pegar un punto al eje lo hace ilegible. */
-function paddedDomain(values: number[], pad = 0.06): [number, number] {
-  if (!values.length) return [0, 1];
-  const lo = Math.min(...values);
-  const hi = Math.max(...values);
-  const margin = (hi - lo || Math.abs(hi) || 1) * pad;
-  return [lo - margin, hi + margin];
+/**
+ * Dominio y marcas de un eje numérico, con aire a los lados y extremos redondos.
+ *
+ * El aire es porque pegar un punto al eje lo hace ilegible. Los extremos
+ * redondos, porque Recharts toma el dominio tal cual como primera y última
+ * marca: con el margen del 6 % el eje de precios arrancaba en «-3 k€» y acababa
+ * en «23,7 k€». Un precio o un kilometraje no bajan de cero, así que el margen
+ * de abajo se corta ahí.
+ *
+ * Las marcas se dan hechas, de paso redondo, partiendo el rango en el número de
+ * tramos que menos dominio desperdicia sin pasar de `maxTicks`. Ese tope es lo
+ * que cabe a lo ancho: dejar que Recharts se salte rótulos que se pisan dejaba
+ * «0 · 100 · 300 · 500 mil», una escala que parece no ser lineal.
+ */
+function niceScale(
+  values: number[],
+  maxTicks = 6,
+): { domain: [number, number]; ticks?: number[]; interval?: 0 } {
+  if (!values.length) return { domain: [0, 1] };
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const margin = (max - min || Math.abs(max) || 1) * 0.06;
+  const from = min >= 0 ? Math.max(0, min - margin) : min - margin;
+  const to = max + margin;
+  let best: { lo: number; hi: number; step: number } | undefined;
+  for (let parts = Math.max(2, Math.min(5, maxTicks - 1)); parts >= 2; parts--) {
+    const raw = (to - from) / parts;
+    const unit = 10 ** Math.floor(Math.log10(raw));
+    const step = ([1, 2, 2.5, 5, 10].find((m) => m * unit >= raw) ?? 10) * unit;
+    const lo = Math.floor(from / step) * step;
+    const hi = Math.ceil(to / step) * step;
+    if (!best || hi - lo < best.hi - best.lo) best = { lo, hi, step };
+  }
+  if (!best) return { domain: [from, to] };
+  const ticks: number[] = [];
+  for (let i = 0; best.lo + i * best.step <= best.hi + best.step / 2; i++) {
+    ticks.push(best.lo + i * best.step);
+  }
+  // `interval={0}`: las marcas ya caben por construcción, y el descarte de
+  // Recharts, que mide con el cuerpo del documento y no con el del rótulo, se
+  // comía alguna de en medio y dejaba la escala a saltos.
+  return { domain: [best.lo, best.hi], ticks, interval: 0 };
 }
+
+/** Cuántas marcas caben a lo ancho de un eje X: unos 56 px por rótulo. */
+const ticksFor = (width: number): number | undefined =>
+  width > 0 ? Math.max(3, Math.floor(width / 56)) : undefined;
 
 /** Paso «redondo» más cercano: los tramos de 1.873 € no los lee nadie. */
 function niceStep(raw: number): number {
@@ -171,32 +211,71 @@ function tickInterval(labels: string[], available: number, fontSize = 11, gap = 
 }
 
 /**
- * El rótulo de una categoría en el eje Y, en **una** línea.
+ * El rótulo de una marca de eje, en **una** línea.
  *
  * El `Text` de Recharts parte el rótulo en varias líneas cuando no le cabe, y
  * mide para decidirlo con el tamaño heredado del documento, no con el `fontSize`
  * del propio tick: en móvil el cuerpo es de 15 px, así que creía que «OcasionPlus
  * Ma…» medía 131 px y lo rompía en dos renglones —«OcasionPlus» / «Ma…»— dentro
- * de una fila de 26 px. Un `<text>` liso no envuelve nunca, y el recorte lo hace
- * `fitLabel` contra el ancho real del eje.
+ * de una fila de 26 px. Con las cifras pasaba lo mismo: «23,7 k€» salía partido
+ * en «23,7» / «k€» en un eje de 40 px. Un `<text>` liso no envuelve nunca.
+ *
+ * Sirve a todos los ejes: el ancla y la línea base las decide Recharts según la
+ * orientación. Con `fit`, el rótulo se recorta contra el ancho real del eje, que
+ * es lo que necesitan las categorías; las cifras no se recortan nunca.
  */
-function CategoryTick(props: {
+function AxisTick(props: {
   x?: number;
   y?: number;
   width?: number;
+  index?: number;
+  textAnchor?: "start" | "middle" | "end";
+  verticalAnchor?: "start" | "middle" | "end";
   payload?: { value?: string | number };
+  tickFormatter?: (value: never, index: number) => string;
+  fit?: boolean;
+  /** El ancho contra el que recortar, si no es el del eje (un eje X lo reparte). */
+  room?: number;
 }) {
-  const { x = 0, y = 0, width = 0, payload } = props;
+  const { x = 0, y = 0, width = 0, index = 0, payload, tickFormatter, fit, room } = props;
+  const raw = payload?.value ?? "";
+  const label = tickFormatter ? tickFormatter(raw as never, index) : String(raw);
   return (
     <text
       x={x}
       y={y}
-      dy="0.32em"
-      textAnchor="end"
+      dy={props.verticalAnchor === "start" ? "0.71em" : "0.32em"}
+      textAnchor={props.textAnchor ?? "end"}
       fontSize={11}
       fill="var(--text-secondary)"
     >
-      {fitLabel(String(payload?.value ?? ""), width - 10, 11)}
+      {fit ? fitLabel(label, room ?? width - 10, 11) : label}
+    </text>
+  );
+}
+
+/**
+ * El nombre de una categoría encima de su barra, alineado con el arranque del
+ * dibujo. Recharts entrega `y` en el centro de la banda; el rótulo se sube media
+ * barra más su propio aire para que la barra quede debajo, no atravesándolo.
+ */
+function OverBarTick({
+  y = 0,
+  payload,
+  left = 0,
+  room = 0,
+  lift = 10,
+}: {
+  y?: number;
+  payload?: { value?: string | number };
+  left?: number;
+  room?: number;
+  /** Media barra más 4 px de aire: lo que hay del centro de la banda al rótulo. */
+  lift?: number;
+}) {
+  return (
+    <text x={left} y={y - lift} textAnchor="start" fontSize={11} fill="var(--text-secondary)">
+      {fitLabel(String(payload?.value ?? ""), room, 11)}
     </text>
   );
 }
@@ -237,10 +316,15 @@ interface DataTable {
  * tramos, con lo que ninguna tarjeta monta mil filas de golpe.
  */
 function ChartData({ title, table }: { title: string; table: DataTable }) {
+  const touch = useTouchLayout();
   const chunk = table.chunk ?? table.rows.length;
   const [shown, setShown] = useState(chunk);
   const rows = table.rows.slice(0, shown);
   const rest = table.rows.length - rows.length;
+  const dot = (color?: string) =>
+    color ? (
+      <span className="chart-note-dot" style={{ background: color }} aria-hidden="true" />
+    ) : null;
 
   return (
     <details className="chart-data">
@@ -250,49 +334,84 @@ function ChartData({ title, table }: { title: string; table: DataTable }) {
         <span className="chart-data-count">{formatNumber(table.rows.length)}</span>
       </summary>
       <div className="chart-data-wrap">
-        <table className="chart-data-table">
-          <caption className="sr-only">{table.caption}</caption>
-          <thead>
-            <tr>
-              {table.columns.map((column) => (
-                <th
-                  key={column.key}
-                  scope="col"
-                  className={column.numeric ? "num" : undefined}
-                >
-                  {column.color ? (
-                    <span
-                      className="chart-note-dot"
-                      style={{ background: column.color }}
-                      aria-hidden="true"
-                    />
+        {touch ? (
+          /* En la mano, una ficha por fila y no la tabla: la de la nube de puntos
+             son ocho columnas, y en 326 px solo se leían barriendo de lado a
+             ciegas. La primera celda titula la ficha, el texto suelto (binomio,
+             dealer) va en una línea debajo, y las cifras en pares rótulo-valor. */
+          <ul className="chart-data-list" aria-label={table.caption}>
+            {rows.map((row) => {
+              const columns = table.columns.slice(1).map((column, index) => ({
+                column,
+                cell: row.cells[index + 1],
+              }));
+              const text = columns.filter(({ column }) => !column.numeric);
+              return (
+                <li key={row.key}>
+                  <div className="chart-data-item">{row.cells[0]}</div>
+                  {text.length ? (
+                    <div className="chart-data-meta">
+                      {text.map(({ cell }) => cell).join(" · ")}
+                    </div>
                   ) : null}
-                  {column.label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.key}>
-                {row.cells.map((cell, index) =>
-                  index === 0 ? (
-                    <th key={table.columns[index].key} scope="row">
-                      {cell}
-                    </th>
-                  ) : (
-                    <td
-                      key={table.columns[index].key}
-                      className={table.columns[index]?.numeric ? "num" : undefined}
-                    >
-                      {cell}
-                    </td>
-                  ),
-                )}
+                  <dl>
+                    {columns
+                      .filter(({ column }) => column.numeric)
+                      .map(({ column, cell }) => (
+                        // La cifra de un binomio va en su renglón entero: el
+                        // nombre es largo y a media columna quedaba en «Merced…».
+                        <div key={column.key} className={column.color ? "wide" : undefined}>
+                          <dt>
+                            {dot(column.color)}
+                            {column.label}
+                          </dt>
+                          <dd>{cell}</dd>
+                        </div>
+                      ))}
+                  </dl>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <table className="chart-data-table">
+            <caption className="sr-only">{table.caption}</caption>
+            <thead>
+              <tr>
+                {table.columns.map((column) => (
+                  <th
+                    key={column.key}
+                    scope="col"
+                    className={column.numeric ? "num" : undefined}
+                  >
+                    {dot(column.color)}
+                    {column.label}
+                  </th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.key}>
+                  {row.cells.map((cell, index) =>
+                    index === 0 ? (
+                      <th key={table.columns[index].key} scope="row">
+                        {cell}
+                      </th>
+                    ) : (
+                      <td
+                        key={table.columns[index].key}
+                        className={table.columns[index]?.numeric ? "num" : undefined}
+                      >
+                        {cell}
+                      </td>
+                    ),
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
       {rest > 0 ? (
         <button
@@ -366,8 +485,16 @@ export function AnalyticsPage() {
     });
   }, [data]);
 
+  const touch = useTouchLayout();
+  const strip = useRef<HTMLDivElement>(null);
+
   function toggle(key: string) {
     touched.current = true;
+    // En la tira el elegido salta al principio: se lleva la tira hasta él para
+    // que el dedo vea dónde ha caído, en vez de dejarlo fuera de la pantalla.
+    if (touch && !slots.includes(key)) {
+      strip.current?.scrollTo({ left: 0, behavior: scrollBehavior() });
+    }
     setSlots((current) => {
       const taken = current.indexOf(key);
       if (taken >= 0) return current.map((value, i) => (i === taken ? null : value));
@@ -405,6 +532,20 @@ export function AnalyticsPage() {
     [series],
   );
 
+  /* En la mano, una tira de una sola línea con los elegidos delante.
+   *
+   * Dieciséis chips envolviendo eran ~280 px de selector —el primer gráfico
+   * quedaba debajo del pliegue— para una decisión que se toca una vez por
+   * visita. En una tira de desplazamiento lateral el selector mide un chip de
+   * alto, y lo elegido va primero, en el orden de sus ranuras, para que lo que se
+   * está comparando se lea sin desplazar nada. */
+  const chips = touch
+    ? [
+        ...selectedKeys.map((key) => byKey.get(key)).filter((item): item is Segment => !!item),
+        ...catalog.filter((segment) => !slots.includes(segment.key)),
+      ]
+    : catalog;
+
   const full = slots.every(Boolean);
   const stale = analytics.loading && !!data;
 
@@ -414,13 +555,13 @@ export function AnalyticsPage() {
         title="Analítica"
         meta={
           data
-            ? `${formatNumber(data.offers)} ofertas · ${catalog.length} binomios marca-modelo`
+            ? touch
+              ? `${formatNumber(data.offers)} ofertas · ${catalog.length} modelos`
+              : `${formatNumber(data.offers)} ofertas · ${catalog.length} binomios marca-modelo`
             : undefined
         }
         actions={
-          <button className="btn btn-sm" onClick={() => analytics.reload()}>
-            Actualizar
-          </button>
+          <HeaderButton icon={IconRefresh} label="Actualizar" onClick={() => analytics.reload()} />
         }
       />
 
@@ -482,8 +623,8 @@ export function AnalyticsPage() {
               hint="Ajusta los filtros o ingesta ofertas desde el scraper."
             />
           ) : (
-            <div className="binomio-list" role="group">
-              {catalog.map((segment) => {
+            <div className="binomio-list" role="group" ref={strip}>
+              {chips.map((segment) => {
                 const slot = slots.indexOf(segment.key);
                 const on = slot >= 0;
                 return (
@@ -645,7 +786,7 @@ function ChartCard({
   return (
     <section className={`chart-card${wide ? " wide" : ""}`}>
       <header className="chart-card-head">
-        <div style={{ minWidth: 0 }}>
+        <div className="chart-card-heading">
           <h2 className="chart-card-title">{title}</h2>
           <p className="chart-card-hint">{hint}</p>
         </div>
@@ -737,12 +878,15 @@ function PriceRangeChart({ series, config }: { series: Series; config: ChartConf
     max: segment.max_price ?? 0,
   }));
 
-  const domain = paddedDomain(
+  // En la mano el nombre va encima de su caja, como en el gráfico de dealers:
+  // al lado, «Mercedes Clase A» se quedaba en «Mercedes Clas…» y le quitaba un
+  // tercio del ancho a la caja, que es lo que se lee.
+  const narrow = isNarrow(box.width);
+  const axisWidth = narrow ? 0 : categoryAxisWidth(box.width, 128);
+  const scale = niceScale(
     rows.flatMap((row) => [row.min, row.max]),
-    0.06,
+    ticksFor(box.width - axisWidth - 16),
   );
-
-  const axisWidth = categoryAxisWidth(box.width, 128);
 
   return (
     <ChartCard
@@ -772,18 +916,25 @@ function PriceRangeChart({ series, config }: { series: Series; config: ChartConf
       }}
     >
       <ChartContainer config={config} className="chart-box" containerRef={ref} box={box}>
-        <BarChart data={rows} layout="vertical" margin={{ left: 4, right: 12, top: 4 }}>
+        <BarChart
+          data={rows}
+          layout="vertical"
+          // La última marca se centra sobre el borde del dibujo: 20 px son la
+          // mitad de «100 k€», para que no se corte. A la izquierda pasa lo
+          // mismo con «0 k€», pero solo en la mano, donde no hay eje al lado.
+          margin={{ left: narrow ? 16 : 4, right: 20, top: 4 }}
+        >
           <CartesianGrid horizontal={false} stroke="var(--border)" />
-          <XAxis type="number" domain={domain} tickFormatter={kEur} {...AXIS} />
+          <XAxis type="number" {...scale} tickFormatter={kEur} {...AXIS} />
           <YAxis
             type="category"
             dataKey="label"
-            width={axisWidth}
+            {...AXIS}
             // El nombre entero está en «Ver los datos»: aquí se recorta a lo que
             // cabe en vez de desbordar la tarjeta por la izquierda.
-            tick={<CategoryTick />}
-            tickLine={false}
-            axisLine={false}
+            {...(narrow
+              ? { mirror: true, tick: <OverBarTick left={16} room={box.width - 36} lift={13} /> }
+              : { width: axisWidth, tick: <AxisTick fit /> })}
           />
           <ChartTooltip cursor={{ fill: "var(--surface-sunken)" }} content={<RangeTip />} />
           <Bar
@@ -839,6 +990,7 @@ function PriceVsKmChart({ series, config }: { series: Series; config: ChartConfi
   }));
 
   const km = withKm.flatMap((item) => item.points.map((point) => point.mileage_km!));
+  const priceAxis = categoryAxisWidth(box.width, 52, 0.16, 40);
   const prices = withKm.flatMap((item) => item.points.map((point) => point.price));
 
   if (!km.length) {
@@ -855,7 +1007,10 @@ function PriceVsKmChart({ series, config }: { series: Series; config: ChartConfi
       const { slope, intercept } = item.segment.trend!;
       const xs = item.points.map((point) => point.mileage_km!);
       const lo = Math.min(...xs);
-      const hi = Math.max(...xs);
+      // La recta se corta donde cruzaría el cero: un precio negativo no existe, y
+      // prolongarla obligaba a Recharts a estirar el eje por debajo de 0 €.
+      const zero = slope < 0 ? -intercept / slope : Infinity;
+      const hi = Math.max(lo, Math.min(Math.max(...xs), zero));
       return {
         slot: item.slot,
         key: item.segment.key,
@@ -910,13 +1065,15 @@ function PriceVsKmChart({ series, config }: { series: Series; config: ChartConfi
       }}
     >
       <ChartContainer config={config} className="chart-scatter" containerRef={ref} box={box}>
-        <ScatterChart margin={{ left: 4, right: 12, top: 8, bottom: 4 }}>
+        {/* 20 a la derecha: la última marca, «500 mil», va centrada sobre el
+            borde del dibujo y con 12 se cortaba por la mitad. */}
+        <ScatterChart margin={{ left: 4, right: 20, top: 8, bottom: 4 }}>
           <CartesianGrid stroke="var(--border)" />
           <XAxis
             type="number"
             dataKey="mileage_km"
             name="Kilómetros"
-            domain={paddedDomain(km)}
+            {...niceScale(km, ticksFor(box.width - priceAxis - 16))}
             tickFormatter={kKm}
             {...AXIS}
           />
@@ -924,11 +1081,11 @@ function PriceVsKmChart({ series, config }: { series: Series; config: ChartConfi
             type="number"
             dataKey="price"
             name="Precio"
-            domain={paddedDomain(prices)}
+            {...niceScale(prices)}
             tickFormatter={kEur}
             // Proporcional también aquí: 52 px son el 16 % de una tarjeta ancha
             // y el 16 % de una estrecha, pero el suelo evita que «24 k€» se corte.
-            width={categoryAxisWidth(box.width, 52, 0.16, 40)}
+            width={priceAxis}
             {...AXIS}
           />
           <ZAxis range={[44, 44]} />
@@ -1074,7 +1231,7 @@ function DepreciationChart({ series, config }: { series: Series; config: ChartCo
               {...AXIS}
             />
             <YAxis
-              domain={paddedDomain(prices)}
+              {...niceScale(prices)}
               tickFormatter={kEur}
               width={axisWidth}
               {...AXIS}
@@ -1265,6 +1422,15 @@ function DealerStockChart({ series, config }: { series: Series; config: ChartCon
   // 208 y dejaba 108 para ocho barras apiladas. Ahora son 104 y 222.
   const axisWidth = categoryAxisWidth(box.width, 208, 0.32, 72);
 
+  /* Por debajo del corte, el nombre sube encima de su barra.
+   *
+   * Con el eje al lado, en 326 px a cada nombre le quedaban 94: «OcasionPlus
+   * Ba…», «Flexicar A…», ocho rótulos que dicen lo mismo, y es justo la parte que
+   * distingue a un dealer de otro. Encima de la barra el rótulo tiene el ancho
+   * entero de la tarjeta y la barra también. El precio es alto: cada fila pide
+   * su renglón de texto, así que la altura sale de cuántos dealers hay. */
+  const narrow = isNarrow(box.width);
+
   return (
     <ChartCard
       title="Dealers con más stock"
@@ -1291,24 +1457,41 @@ function DealerStockChart({ series, config }: { series: Series; config: ChartCon
       {rows.length === 0 ? (
         <Empty title="Sin dealers que mostrar" />
       ) : (
-        <ChartContainer config={config} className="chart-tall" containerRef={ref} box={box}>
-          <BarChart data={rows} layout="vertical" margin={{ left: 4, right: 16, top: 4 }}>
+        <ChartContainer
+          config={config}
+          className="chart-tall"
+          containerRef={ref}
+          box={box}
+          style={narrow ? { height: rows.length * 36 + 84 } : undefined}
+        >
+          <BarChart
+            data={rows}
+            layout="vertical"
+            margin={{ left: 4, right: 16, top: narrow ? 8 : 4 }}
+          >
             <CartesianGrid horizontal={false} stroke="var(--border)" />
-            <XAxis type="number" allowDecimals={false} {...AXIS} />
+            <XAxis
+              type="number"
+              // El cero va dentro: las barras arrancan en él aunque el dealer
+              // más pequeño tenga cuarenta ofertas.
+              {...niceScale([0, ...top.map((entry) => entry.offers)], ticksFor(box.width - 20))}
+              {...AXIS}
+            />
             <YAxis
               type="category"
               dataKey="dealer"
-              width={axisWidth}
               // Sin esto Recharts se salta etiquetas y quedan barras anónimas,
               // que en un gráfico cuyo eje *es* el nombre no vale para nada. Lo
               // que se recorta es el rótulo, nunca la lista: el nombre entero
               // —«OcasionPlus Madrid - Alcalá de Henares», 56 caracteres— está
               // en «Ver los datos».
               interval={0}
-              tickFormatter={(value: string) => fitLabel(String(value), axisWidth - 10, 11)}
-              tick={{ fontSize: 11, fill: "var(--text-secondary)" }}
-              tickLine={false}
-              axisLine={false}
+              {...AXIS}
+              // `mirror` mete el eje dentro del dibujo y deja de reservarle
+              // ancho: el rótulo se coloca a mano encima de la barra.
+              {...(narrow
+                ? { mirror: true, tick: <OverBarTick left={4} room={box.width - 24} /> }
+                : { width: axisWidth, tick: <AxisTick fit /> })}
             />
             <ChartTooltip
               cursor={{ fill: "var(--surface-sunken)" }}
@@ -1327,7 +1510,7 @@ function DealerStockChart({ series, config }: { series: Series; config: ChartCon
                 stackId="stock"
                 fill={SERIES_COLOR[slot]}
                 {...GAP}
-                barSize={14}
+                barSize={narrow ? 12 : 14}
                 isAnimationActive={false}
               />
             ))}
@@ -1387,7 +1570,8 @@ function MixChart({
   const rows = values
     .map((value) => {
       const row: Record<string, string | number> = {
-        name: active.labels[value] ?? value,
+        // El backend agrupa los nulos bajo «unknown»: es la clave, no un rótulo.
+        name: active.labels[value] ?? (value === "unknown" ? "Sin dato" : value),
       };
       let total = 0;
       for (const { slot, segment } of series) {
@@ -1412,7 +1596,8 @@ function MixChart({
    * entero y el porcentaje corre a lo largo, que además es la dirección en la
    * que se comparan proporciones. */
   const vertical = isNarrow(box.width);
-  const axisWidth = categoryAxisWidth(box.width, 160, 0.34, 72);
+  // El 40 % y no un tercio: con 108 px, «Híbrido enchufable» salía recortado.
+  const axisWidth = categoryAxisWidth(box.width, 160, 0.4, 72);
   // Un renglón por categoría y por serie, más el aire del eje: en horizontal el
   // alto lo fija la clase, en vertical lo fija cuánta categoría hay.
   const height = vertical
@@ -1427,24 +1612,22 @@ function MixChart({
         caption: `Reparto por ${active.label.toLowerCase()}: porcentaje y número de ofertas de cada binomio.`,
         columns: [
           { key: "name", label: active.label },
-          ...series.flatMap(({ slot, segment }) => [
-            {
-              key: `${segment.key}-pct`,
-              label: `${segment.label} %`,
-              numeric: true,
-              color: SERIES_COLOR[slot],
-            },
-            { key: `${segment.key}-n`, label: `${segment.label} ofertas`, numeric: true },
-          ]),
+          // Una columna por binomio con las dos cifras juntas, y no dos: con
+          // «Mercedes Clase A %» y «Mercedes Clase A ofertas» la tabla de tres
+          // binomios eran siete columnas, y en la ficha del móvil los dos rótulos
+          // se recortaban justo por la parte que los distingue.
+          ...seriesColumns(series),
         ],
         rows: rows.map((row) => ({
           key: String(row.name),
           cells: [
             String(row.name),
-            ...series.flatMap(({ slot }) => [
-              formatPct(Number(row[SERIES[slot]] ?? 0)),
-              formatNumber(Number(row[`${SERIES[slot]}_n`] ?? 0)),
-            ]),
+            ...series.map(
+              ({ slot }) =>
+                `${formatPct(Number(row[SERIES[slot]] ?? 0))} · ${formatNumber(
+                  Number(row[`${SERIES[slot]}_n`] ?? 0),
+                )}`,
+            ),
           ],
         })),
       }}
@@ -1492,7 +1675,16 @@ function MixChart({
                 {...AXIS}
               />
             ) : (
-              <XAxis dataKey="name" interval={0} {...AXIS} />
+              <XAxis
+                dataKey="name"
+                interval={0}
+                {...AXIS}
+                // Recortado al ancho de su columna: en la media tarjeta de un
+                // portátil, siete combustibles dejan unos 80 px por columna y
+                // «Híbrido enchufable» se montaba sobre sus vecinos. El nombre
+                // entero sigue en el tooltip y en «Ver los datos».
+                tick={<AxisTick fit room={(box.width - 50) / Math.max(1, rows.length) - 6} />}
+              />
             )}
             {vertical ? (
               <YAxis
@@ -1500,8 +1692,8 @@ function MixChart({
                 dataKey="name"
                 width={axisWidth}
                 interval={0}
-                tickFormatter={(value: string) => fitLabel(String(value), axisWidth - 10, 11)}
                 {...AXIS}
+                tick={<AxisTick fit />}
               />
             ) : (
               <YAxis
@@ -1712,7 +1904,12 @@ function ProfileRadarChart({ series, catalog }: { series: Series; catalog: Segme
               <li key={segment.key}>
                 <RadarMark color={SERIES_COLOR[slot]} />
                 <span className="chart-note-label">{segment.label}</span>
-                <RadarReading rows={rows} seriesKey={SERIES[slot]} />
+                {/* En un solo `span`: suelta, cada pieza de la frase era un hijo
+                    del `flex` y en la mano se partía por piezas —«flojea en» en
+                    un renglón y «precio» solo en el siguiente—. */}
+                <span>
+                  <RadarReading rows={rows} seriesKey={SERIES[slot]} />
+                </span>
               </li>
             ))}
             {dropped.length ? (

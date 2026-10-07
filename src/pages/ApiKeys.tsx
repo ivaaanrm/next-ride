@@ -32,6 +32,9 @@ export function ApiKeysPage() {
   const [busy, setBusy] = useState(false);
 
   const activeCount = (keys.data ?? []).filter((key) => key.is_active).length;
+  // El ejemplo apunta a donde se está mirando la página, no a un puerto de
+  // desarrollo fijo: en producción, copiar el `curl` tal cual tiene que valer.
+  const origin = window.location.origin;
 
   async function createKey(event: FormEvent) {
     event.preventDefault();
@@ -68,11 +71,15 @@ export function ApiKeysPage() {
 
       <div className="content stack" style={{ maxWidth: 860 }}>
         <div className="card">
-          <p className="card-title">API keys para el servicio scraper</p>
+          <p className="card-title">API keys del scraper</p>
           <p className="tiny muted" style={{ marginTop: -4 }}>
-            El scraper (servicio aparte, aún sin implementar) ingesta ofertas contra{" "}
-            <code className="mono">POST /api/v1/offers/bulk</code> enviando la cabecera{" "}
-            <code className="mono">X-API-Key</code>.
+            El scraper es la skill <code className="mono">next-ride/</code>: lee qué captar de{" "}
+            <code className="mono">GET /api/v1/scraping/config</code> e ingesta con{" "}
+            <code className="mono">POST /api/v1/offers/bulk</code>, siempre con la cabecera{" "}
+            <code className="mono">X-API-Key</code>. Toma la clave de{" "}
+            <code className="mono">NR_API_KEY</code> y la URL base de{" "}
+            <code className="mono">NR_API_BASE_URL</code>, que para esta instancia es{" "}
+            <code className="mono">{origin}</code>.
           </p>
 
           {error ? <Banner kind="error">{error}</Banner> : null}
@@ -98,23 +105,29 @@ export function ApiKeysPage() {
             </Banner>
           ) : null}
 
-          <form className="row" style={{ margin: "10px 0 14px" }} onSubmit={createKey}>
-            <input
-              className="input grow"
-              aria-label="Nombre de la clave"
-              placeholder="Nombre de la clave"
-              enterKeyHint="done"
-              autoComplete="off"
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-              required
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-            />
-            <button className="btn btn-primary" type="submit" disabled={busy}>
-              {busy ? <span className="spinner" /> : null} Generar
-            </button>
+          {/* Rótulo visible y no solo `aria-label`: con el valor por defecto
+              puesto —«scraper»— el marcador no se ve nunca, y el campo se
+              quedaba sin decir qué es. */}
+          <form className="field" style={{ margin: "10px 0 14px" }} onSubmit={createKey}>
+            <label htmlFor="key-name">Nombre de la nueva clave</label>
+            <div className="row">
+              <input
+                id="key-name"
+                className="input grow"
+                placeholder="Ej: scraper"
+                enterKeyHint="done"
+                autoComplete="off"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                required
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+              />
+              <button className="btn btn-primary" type="submit" disabled={busy}>
+                {busy ? <span className="spinner" /> : null} Generar
+              </button>
+            </div>
           </form>
 
           {keys.loading || (keys.data ?? []).length === 0 ? (
@@ -130,29 +143,30 @@ export function ApiKeysPage() {
                desmontada con CSS pierde su semántica sin avisar. La ficha no es
                pulsable entera —una clave no tiene detalle que abrir, y lo único
                que se puede hacer con ella es revocarla— así que el único
-               objetivo de la fila es ese botón. */
+               objetivo de la fila es ese botón, al margen y en rojo: es
+               destructivo, y en una tercera línea pedía 40 px por clave para
+               decir una palabra. */
             <ul className="record-list">
               {(keys.data ?? []).map((key) => (
-                <li key={key.id} className="record-item">
-                  {/* Sin `.record-link`: una clave no tiene detalle que abrir, y
-                      la cabecera y el apoyo cuelgan directamente del ítem, que es
-                      quien les pone el sangrado cuando no hay fila pulsable. */}
-                  <div className="record-head">
-                    <span className="record-title">{key.name}</span>
-                    <span className="record-value">
+                <li key={key.id} className="record-item split key-item">
+                  <div className="key-body">
+                    <div className="record-head">
+                      <span className="record-title">{key.name}</span>
                       <Chip tone={key.is_active ? "positive" : "neutral"}>
                         {key.is_active ? "Activa" : "Revocada"}
                       </Chip>
-                    </span>
-                  </div>
-                  <div className="record-meta">
-                    <span className="mono">nr_{key.prefix}_…</span> · {keyMeta(key)}
+                    </div>
+                    {/* El prefijo en su propia línea y en mono: es lo que se
+                        compara contra la clave del entorno del scraper. Las
+                        fechas debajo, partiendo línea antes que recortarse. */}
+                    <div className="record-meta mono">nr_{key.prefix}_…</div>
+                    <div className="record-meta key-dates">{keyMeta(key)}</div>
                   </div>
                   {key.is_active ? (
                     <div className="record-actions">
                       <button
                         type="button"
-                        className="btn btn-sm btn-danger"
+                        className="btn btn-ghost key-revoke"
                         aria-label={`Revocar la API key ${key.name}`}
                         onClick={() => revoke(key)}
                       >
@@ -221,7 +235,7 @@ export function ApiKeysPage() {
               fontSize: 11,
               lineHeight: 1.6,
             }}
-          >{`curl -X POST http://localhost:8000/api/v1/offers/bulk \\
+          >{`curl -X POST ${origin}/api/v1/offers/bulk \\
   -H "X-API-Key: nr_xxxx_yyyy" \\
   -H "Content-Type: application/json" \\
   -d '{"offers": [{

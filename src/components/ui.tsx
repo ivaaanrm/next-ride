@@ -614,6 +614,7 @@ export function Drawer({
   onClose,
   children,
   actions,
+  footer,
   wide = false,
   over = false,
 }: {
@@ -622,6 +623,9 @@ export function Drawer({
   onClose: () => void;
   children: ReactNode;
   actions?: ReactNode;
+  /** La acción principal del panel, pegada al pie del cuerpo y al alcance del
+   *  pulgar: en un formulario largo, al final del scroll no la encontraba nadie. */
+  footer?: ReactNode;
   /** Para paneles con contenido a dos columnas. */
   wide?: boolean;
   /** Un panel que se abre **desde** otro (el editor desde la ficha).
@@ -666,7 +670,10 @@ export function Drawer({
               quedaba en una columna de 100 px partida en seis renglones. */}
           {actions ? <div className="drawer-actions">{actions}</div> : null}
         </header>
-        <div className="drawer-body">{children}</div>
+        <div className="drawer-body">
+          {children}
+          {footer ? <div className="drawer-footer">{footer}</div> : null}
+        </div>
       </aside>
     </>,
     document.body,

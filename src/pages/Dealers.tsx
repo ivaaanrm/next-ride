@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 
-import { PageHeader } from "../components/Layout";
+import { IconExternal, IconPlus, IconRefresh, IconSearch } from "../components/icons";
+import { HeaderButton, PageHeader } from "../components/Layout";
 import { useTouchLayout } from "../components/SwipeRow";
 import { Banner, Chip, Drawer, Empty, Loading, Toggle } from "../components/ui";
 import { api } from "../lib/api";
@@ -11,6 +12,9 @@ import type { DealerWithStats } from "../types";
 
 /** «41 ofertas» / «1 oferta»: la cifra que decide si este dealer importa hoy. */
 const offersOf = (count: number) => `${formatNumber(count)} ${count === 1 ? "oferta" : "ofertas"}`;
+
+/** «285 dealers» / «1 dealer»: la cabecera también se lee en singular. */
+const dealersOf = (count: number) => `${formatNumber(count)} ${count === 1 ? "dealer" : "dealers"}`;
 
 /**
  * La segunda línea de la ficha, ya escrita: las seis columnas que no caben en la
@@ -37,7 +41,9 @@ export function DealersPage() {
   const [search, setSearch] = useState("");
   const [includeInactive, setIncludeInactive] = useState(false);
   // `null` = panel cerrado. `{ dealer: null }` = alta de un dealer nuevo.
-  const [editing, setEditing] = useState<{ dealer: DealerWithStats | null } | null>(null);
+  const [editing, setEditing] = useState<{
+    dealer: DealerWithStats | null;
+  } | null>(null);
   const touch = useTouchLayout();
 
   const debouncedSearch = useDebounced(search);
@@ -56,26 +62,31 @@ export function DealersPage() {
     <>
       <PageHeader
         title="Dealers"
-        meta={dealers.data ? `${items.length} dealers` : undefined}
+        meta={dealers.data ? dealersOf(items.length) : undefined}
         actions={
           <>
-            <button className="btn btn-sm" onClick={() => dealers.reload()}>
-              Actualizar
-            </button>
-            <button
-              className="btn btn-sm btn-primary"
+            <HeaderButton icon={IconRefresh} label="Actualizar" onClick={() => dealers.reload()} />
+            <HeaderButton
+              icon={IconPlus}
+              label="Nuevo dealer"
+              primary
               onClick={() => setEditing({ dealer: null })}
-            >
-              Nuevo dealer
-            </button>
+            />
           </>
         }
       />
 
       <div className="content">
-        <div className="filters">
-          <div className="field grow">
-            <label htmlFor="q">Buscar</label>
+        {/* En táctil el rótulo apilado se queda solo para el lector de pantalla:
+            el marcador ya dice qué se busca, y visible desalineaba el campo
+            respecto al interruptor. El campo pasa a su propia línea entera y el
+            interruptor baja debajo, en vez de comerse el ancho del marcador. */}
+        <div className={`filters${touch ? " dealer-filters" : ""}`}>
+          <div className={`field grow${touch ? " search-field" : ""}`}>
+            {touch ? <IconSearch size={18} /> : null}
+            <label htmlFor="q" className={touch ? "sr-only" : undefined}>
+              Buscar
+            </label>
             <input
               id="q"
               className="input"
@@ -83,7 +94,7 @@ export function DealersPage() {
               inputMode="search"
               enterKeyHint="search"
               autoComplete="off"
-              placeholder="Nombre o ciudad…"
+              placeholder={touch ? "Buscar nombre o ciudad" : "Nombre o ciudad…"}
               value={search}
               onChange={(event) => setSearch(event.target.value)}
             />
@@ -125,12 +136,16 @@ export function DealersPage() {
              desmontada con CSS pierde su semántica sin avisar, y lo que hay aquí
              ya no son ocho columnas sino un registro por fila. La fila entera
              abre la edición, que en esta pantalla es el único detalle que hay;
-             en la tabla ese botón solo aparecía al pasar el ratón por encima. */
-          <ul className="record-list">
+             en la tabla ese botón solo aparecía al pasar el ratón por encima.
+
+             La web va al margen como icono de 44 y no como botón escrito en una
+             tercera línea: apilada, cada dealer pedía ~114 px y en la pantalla
+             entraban seis de 285. De borde a borde (`flush`), igual que Modelos. */
+          <ul className="record-list flush">
             {items.map((dealer) => {
               const meta = dealerMeta(dealer);
               return (
-                <li key={dealer.id} className="record-item">
+                <li key={dealer.id} className="record-item split dealer-item">
                   <button
                     type="button"
                     className="record-link"
@@ -143,19 +158,24 @@ export function DealersPage() {
                     </span>
                     {meta ? <span className="record-meta">{meta}</span> : null}
                   </button>
-                  {dealer.website ? (
-                    <div className="record-actions">
+                  {/* El hueco se reserva aunque no haya web: sin él, la cifra de
+                      ofertas de esas filas se corría 44 px a la derecha y la
+                      columna dejaba de leerse como una. */}
+                  <div className="record-actions">
+                    {dealer.website ? (
                       <a
-                        className="btn btn-sm"
+                        className="icon-btn"
                         href={dealer.website}
                         target="_blank"
                         rel="noreferrer"
                         aria-label={`Abrir la web de ${dealer.name}`}
                       >
-                        Web ↗
+                        <IconExternal size={18} />
                       </a>
-                    </div>
-                  ) : null}
+                    ) : (
+                      <span className="icon-btn" aria-hidden="true" />
+                    )}
+                  </div>
                 </li>
               );
             })}
@@ -291,6 +311,7 @@ function DealerDrawer({
   const [isActive, setIsActive] = useState(dealer?.is_active ?? true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const touch = useTouchLayout();
 
   // Solo al crear: ¿hay ya un dealer con este mismo slug?
   const duplicate =
@@ -313,7 +334,10 @@ function DealerDrawer({
       };
 
       if (dealer) {
-        await api.patch(`/dealers/${dealer.id}`, { ...body, is_active: isActive });
+        await api.patch(`/dealers/${dealer.id}`, {
+          ...body,
+          is_active: isActive,
+        });
       } else {
         await api.post("/dealers", body);
       }
@@ -328,7 +352,11 @@ function DealerDrawer({
   return (
     <Drawer
       title={dealer ? dealer.name : "Nuevo dealer"}
-      subtitle={dealer ? `slug ${dealer.slug} · ${dealer.active_offers} ofertas activas` : undefined}
+      subtitle={
+        dealer
+          ? `slug ${dealer.slug} · ${offersOf(dealer.active_offers)} ${dealer.active_offers === 1 ? "activa" : "activas"}`
+          : undefined
+      }
       onClose={onClose}
     >
       {error ? <Banner kind="error">{error}</Banner> : null}
@@ -363,12 +391,21 @@ function DealerDrawer({
           <input
             id="website"
             className="input"
+            type="url"
+            inputMode="url"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
             placeholder="https://…"
             value={website}
             onChange={(event) => setWebsite(event.target.value)}
           />
         </div>
-        <div className="row">
+        {/* Ciudad, país y valoración en una fila caben en el panel de escritorio;
+            en 375 pt la valoración se salía por la derecha con el rótulo
+            cortado. En táctil la ciudad se queda la línea y los otros dos se
+            reparten la de debajo (ver `.dealer-place` en la capa táctil). */}
+        <div className="row dealer-place">
           <div className="field grow">
             <label htmlFor="city">Ciudad</label>
             <input
@@ -378,22 +415,26 @@ function DealerDrawer({
               onChange={(event) => setCity(event.target.value)}
             />
           </div>
-          <div className="field" style={{ width: 80 }}>
+          <div className="field" style={touch ? undefined : { width: 80 }}>
             <label htmlFor="country">País</label>
             <input
               id="country"
               className="input"
               maxLength={2}
+              autoCapitalize="characters"
+              autoCorrect="off"
+              spellCheck={false}
               value={country}
               onChange={(event) => setCountry(event.target.value)}
             />
           </div>
-          <div className="field" style={{ width: 100 }}>
+          <div className="field" style={touch ? undefined : { width: 100 }}>
             <label htmlFor="rating">Valoración</label>
             <input
               id="rating"
               className="input"
               type="number"
+              inputMode="decimal"
               min={0}
               max={5}
               step={0.1}
@@ -413,7 +454,21 @@ function DealerDrawer({
           />
         </div>
 
-        {dealer ? (
+        {/* En táctil, el mismo interruptor de 44 de la barra de filtros: la casilla
+            nativa son 13 px de tinta. La explicación baja a su propia línea en
+            vez de ser el rótulo, para que el nombre accesible sea «Activo». */}
+        {dealer && touch ? (
+          <div className="stack" style={{ gap: 6 }}>
+            <div>
+              <Toggle on={isActive} onChange={setIsActive}>
+                Activo
+              </Toggle>
+            </div>
+            <p className="tiny muted" style={{ margin: 0 }}>
+              Al desactivarlo desaparece de los listados, pero sus ofertas se conservan.
+            </p>
+          </div>
+        ) : dealer ? (
           <label className="row tiny muted">
             <input
               type="checkbox"

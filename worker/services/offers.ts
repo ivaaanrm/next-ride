@@ -142,6 +142,39 @@ const INSERT_CAR_MODELS = `
   FROM json_each(?1) AS j WHERE true
   ON CONFLICT DO NOTHING`;
 
+/**
+ * Las versiones que acaba de crear este lote heredan el seguimiento de quien
+ * sigue el binomio **entero**.
+ *
+ * Seguir el Audi A3 es seguir también el acabado que el scraper aún no había
+ * visto: sin esto, la primera oferta de un A3 nuevo caía en una versión sin
+ * seguimiento y no aparecía en «solo los que sigo» justo cuando era noticia.
+ * Quien sigue solo algunas versiones las eligió a mano, y a esa elección no se
+ * le añade nada. Los criterios son los del seguimiento tocado más
+ * recientemente, que es lo que el formulario del binomio escribe en todas.
+ *
+ * Las versiones nuevas se reconocen por su `created_at`, que es el `now` del
+ * lote (?2) y no lo comparte ninguna anterior.
+ */
+const INHERIT_TRACKING = `
+  INSERT INTO tracked_models
+    (user_id, car_model_id, target_price, max_mileage_km, min_year, notes, is_active, created_at, updated_at)
+  SELECT f.user_id, cm.id, f.target_price, f.max_mileage_km, f.min_year, f.notes, 1, ?2, ?2
+  FROM car_models AS cm
+  JOIN (
+    SELECT t.user_id, m.make_model_key AS key, t.target_price, t.max_mileage_km, t.min_year, t.notes,
+      ROW_NUMBER() OVER (PARTITION BY t.user_id, m.make_model_key ORDER BY t.updated_at DESC, t.id DESC) AS rn,
+      COUNT(*) OVER (PARTITION BY t.user_id, m.make_model_key) AS followed
+    FROM tracked_models AS t JOIN car_models AS m ON m.id = t.car_model_id
+    WHERE t.is_active = 1 AND m.is_active = 1 AND m.created_at <> ?2
+  ) AS f ON f.key = cm.make_model_key AND f.rn = 1
+  WHERE cm.created_at = ?2
+    AND f.followed = (
+      SELECT COUNT(*) FROM car_models AS o
+      WHERE o.make_model_key = cm.make_model_key AND o.is_active = 1 AND o.created_at <> ?2
+    )
+  ON CONFLICT DO NOTHING`;
+
 const SELECT_BY = (table: string, columns: string, key: string) =>
   `SELECT ${columns} FROM ${table} WHERE ${key} IN (SELECT value FROM json_each(?1))`;
 
@@ -281,9 +314,10 @@ async function writeBatch(
     items.map((item) => item.payload.raw),
   );
 
-  const [, , dealerRows, modelRows, existingRows] = await d1.batch([
+  const [, , , dealerRows, modelRows, existingRows] = await d1.batch([
     d1.prepare(UPSERT_DEALERS).bind(JSON.stringify([...dealersBySlug.values()]), now),
     d1.prepare(INSERT_CAR_MODELS).bind(JSON.stringify([...modelsBySlug.values()]), now),
+    d1.prepare(INHERIT_TRACKING).bind(null, now),
     d1.prepare(SELECT_BY("dealers", "id, slug", "slug")).bind(JSON.stringify([...dealersBySlug.keys()])),
     d1.prepare(SELECT_BY("car_models", "id, slug", "slug")).bind(JSON.stringify([...modelsBySlug.keys()])),
     d1

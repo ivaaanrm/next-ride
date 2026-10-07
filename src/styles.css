@@ -410,6 +410,8 @@ summary,
 
 .nav-icon {
   width: 16px;
+  display: inline-grid;
+  place-items: center;
   text-align: center;
   font-size: 13px;
 }
@@ -566,6 +568,16 @@ summary,
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* Icono y rótulo juntos en escritorio; en la mano el rótulo se esconde (ver la
+   capa táctil) y el botón queda cuadrado. */
+.header-btn {
+  gap: 6px;
+}
+
+.header-btn > svg {
+  flex: none;
 }
 
 .content {
@@ -3031,6 +3043,20 @@ table.records tbody tr.row-leaving {
   .scrape-add .btn {
     flex: 1 0 100%;
   }
+
+  /* El tope por combinación es un número de tres cifras: rótulo a la izquierda
+     y campo corto a la derecha, en una línea, no un campo a lo ancho. */
+  .scrape-limit {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-md);
+  }
+
+  .scrape-limit .input {
+    width: 88px;
+    text-align: right;
+  }
 }
 
 /* Pares etiqueta / valor del panel de detalle.
@@ -3443,11 +3469,21 @@ table.records tbody tr.row-leaving {
   grid-column: 1 / -1;
 }
 
+/* El conmutador baja de línea cuando no cabe al lado del título. Sin `wrap`,
+   en 326 px el título y su explicación se quedaban en una columna de 140 px y
+   la explicación de dos líneas pasaba a ocupar siete. La base de 240 px es la
+   condición: en una tarjeta de escritorio sobra sitio y nada se mueve. */
 .chart-card-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
-  gap: var(--space-md);
+  gap: var(--space-sm) var(--space-md);
   margin-bottom: var(--space-md);
+}
+
+.chart-card-heading {
+  flex: 1 1 240px;
+  min-width: 0;
 }
 
 .chart-card-title {
@@ -3584,6 +3620,7 @@ table.records tbody tr.row-leaving {
 .chart-radar-tip {
   position: absolute;
   z-index: 1;
+  width: 200px;
   pointer-events: none;
   transform: translate(8px, -8px);
 }
@@ -3810,6 +3847,79 @@ table.records tbody tr.row-leaving {
   margin: var(--space-sm) 0 var(--space-xs);
 }
 
+/* La misma lectura en fichas, para la capa táctil: ver `ChartData`. Los pares
+   rótulo-valor van a dos columnas cuando caben, que es lo que en 326 px deja la
+   ficha de una oferta en tres renglones de cifras en vez de seis. */
+.chart-data-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: var(--font-meta);
+}
+
+.chart-data-list > li {
+  padding: var(--space-sm) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.chart-data-list > li:last-child {
+  border-bottom: none;
+}
+
+.chart-data-item {
+  color: var(--text);
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.chart-data-meta {
+  margin-top: 2px;
+  color: var(--text-tertiary);
+  line-height: 1.35;
+}
+
+.chart-data-list dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(136px, 1fr));
+  gap: 2px var(--space-lg);
+  margin: var(--space-xs) 0 0;
+}
+
+.chart-data-list dl > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+/* En bloque y no en `flex`: el recorte con puntos suspensivos solo funciona
+   sobre texto en línea, y lo que se recorta es el nombre del binomio, nunca la
+   cifra. La marca de color ya dice cuál es. */
+.chart-data-list dt {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+.chart-data-list dt > .chart-note-dot {
+  display: inline-block;
+  margin-right: 6px;
+}
+
+.chart-data-list dl > .wide {
+  grid-column: 1 / -1;
+}
+
+.chart-data-list dd {
+  margin: 0;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 /* ---- Conmutador de dimensión --------------------------------------------- */
 .segmented {
   display: inline-flex;
@@ -3858,6 +3968,24 @@ table.records tbody tr.row-leaving {
 @container (max-width: 720px) {
   .chart-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+/* En una tarjeta de teléfono el conmutador baja bajo la explicación y se lleva
+   el ancho entero, a tercios: tres objetivos de 100 px en vez de tres de 60
+   apretados contra el borde derecho. */
+@container (max-width: 480px) {
+  .chart-card-actions {
+    flex: 1 1 100%;
+    margin-left: 0;
+  }
+
+  .chart-card-actions > .segmented {
+    display: flex;
+  }
+
+  .chart-card-actions > .segmented > button {
+    flex: 1 1 0;
   }
 }
 
@@ -3916,12 +4044,13 @@ table.records tbody tr.row-leaving {
 
 .tabbar-icon {
   position: relative;
-  font-size: 17px;
+  display: grid;
+  place-items: center;
   line-height: 1;
 }
 
-/* El rótulo va siempre visible: cuatro glifos geométricos sin palabra no se
-   distinguen, y en la barra lateral la palabra también está. */
+/* El rótulo va siempre visible: el icono ayuda a encontrar, la palabra dice qué
+   es, y en la barra lateral la palabra también está. */
 .tabbar-label {
   font-size: var(--font-micro);
   line-height: 1.2;
@@ -4046,6 +4175,12 @@ table.records tbody tr.row-leaving {
   padding: var(--space-lg);
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+
+/* Sin pie, el cuerpo es lo último de la hoja y es él quien tiene que apartarse
+   del indicador de inicio: la nota de la hoja de orden quedaba debajo. */
+.sheet-body:last-child {
+  padding-bottom: calc(var(--space-lg) + var(--safe-bottom));
 }
 
 .sheet-footer {
@@ -4306,6 +4441,162 @@ table.records tbody tr.row-leaving {
   line-height: 1.5;
 }
 
+/* ---- Lista de selección a todo el ancho ------------------------------------
+ *
+ * La de la hoja de orden y la de las listas de modelo y dealer. A diferencia de
+ * `.sheet-options` —un control dentro de un bloque, con caja y scroll propios—,
+ * esta **es** el contenido de la hoja: sin caja, sin tope de alto y de borde a
+ * borde, deshaciendo el sangrado del cuerpo. Quien hace scroll es la hoja, y
+ * así nunca hay un scroll dentro de otro ni una opción elegida escondida al
+ * fondo de un recuadro.
+ *
+ * El filete entre filas arranca en el sangrado del texto, como en una lista de
+ * iOS: separa las filas sin cortar la hoja en franjas.
+ * --------------------------------------------------------------------------- */
+.sheet-choices {
+  display: flex;
+  flex-direction: column;
+  margin: calc(-1 * var(--space-lg)) calc(-1 * var(--space-lg)) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Debajo del buscador no hay cabecera que tocar: el sangrado de arriba se
+   queda. */
+.sheet-picker-search + .sheet-choices {
+  margin-top: 0;
+  border-top: 1px solid var(--border);
+}
+
+.sheet-choice {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  min-height: 48px;
+  padding: var(--space-sm) var(--space-lg);
+  border: none;
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.sheet-choice + .sheet-choice::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: var(--space-lg);
+  right: 0;
+  border-top: 1px solid var(--border);
+}
+
+.sheet-choice:active {
+  background: var(--surface-hover);
+}
+
+.sheet-choice:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* El rótulo parte en dos líneas antes que recortarse: «Puesto que le da la IA ·
+   mejor puesto primero» no cabe en 375 y lo que se cortaba era justo el
+   sentido, que es lo que se está eligiendo. */
+.sheet-choice-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  min-width: 0;
+}
+
+.sheet-choice-name {
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+/* La elegida pesa un punto más además de llevar la marca: el color no decide
+   solo, y la marca sola a la derecha se pierde en una fila larga. */
+.sheet-choice.on .sheet-choice-name {
+  font-weight: 600;
+}
+
+.sheet-choice-detail {
+  color: var(--text-tertiary);
+  font-size: var(--font-meta);
+}
+
+.sheet-choice .sheet-tick {
+  display: flex;
+  width: 18px;
+}
+
+/* La fila que abre una lista de la hoja: caja de campo, para leerse como el
+   control que es, valor a la izquierda y galón de «lleva a otra pantalla». Del
+   alto de los desplegables que tiene debajo, que es el control corriente. */
+.sheet-picker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  height: var(--control-height-touch);
+  padding: 0 var(--space-sm) 0 var(--space-md);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: inherit;
+  text-align: left;
+}
+
+.sheet-picker.set {
+  color: var(--text);
+}
+
+.sheet-picker:active {
+  background: var(--surface-hover);
+}
+
+.sheet-picker:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.sheet-picker-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sheet-picker > svg {
+  flex: none;
+  color: var(--text-tertiary);
+}
+
+/* La pantalla de la lista recibe el foco al entrar, para que el lector empiece
+   por ella; no es un control y no se dibuja como uno. */
+.sheet-picker-screen:focus {
+  outline: none;
+}
+
+/* El buscador se queda arriba mientras se baja por la lista. El `top` negativo
+   deshace el sangrado del cuerpo, que es quien hace scroll. */
+.sheet-picker-search {
+  position: sticky;
+  top: calc(-1 * var(--space-lg));
+  z-index: 1;
+  margin: calc(-1 * var(--space-lg)) calc(-1 * var(--space-lg)) 0;
+  padding: var(--space-lg) var(--space-lg) var(--space-sm);
+  background: var(--surface);
+}
+
+.sheet-picker-search > .input {
+  width: 100%;
+}
+
 /* ------------------------------------------------------------------------- *
  * Sin conexión
  *
@@ -4431,11 +4722,13 @@ table.records tbody tr.row-leaving {
   white-space: nowrap;
 }
 
+/* El galón es el mismo SVG de trazo que el resto de iconos, no el glifo «›»:
+   el glifo lo dibujaba cada fuente a su manera y se quedaba un píxel por debajo
+   del centro de la fila. En caja flex para que el `svg` no arrastre línea base. */
 .more-chevron {
+  display: flex;
   flex: none;
   color: var(--text-tertiary);
-  font-size: 15px;
-  line-height: 1;
 }
 
 /* Ocupa el sitio del galón en las filas que resuelven aquí mismo en vez de
@@ -5443,30 +5736,30 @@ table.records tbody tr.row-leaving {
   }
 
   /* ---- Barra superior ----
-     De 48 px fijos a alto automático con envoltura: en /modelos hay tres
-     acciones que en una sola línea desbordaban el documento 116 px. Con el
-     estilo `black-translucent`, el contenido pasa por debajo de la barra de
-     estado, así que el padding superior con --safe-top no es opcional. */
+     Una sola línea: titular, contexto y acciones de icono. Con rótulos escritos,
+     Modelos apilaba tres botones a lo ancho y la cabecera pedía cien píxeles;
+     ahora las acciones son `HeaderButton`, que aquí esconde su rótulo y queda en
+     un cuadrado de 40 con 44 de objetivo. Con el estilo `black-translucent` el
+     contenido pasa por debajo de la barra de estado, así que el padding superior
+     con --safe-top no es opcional. */
   .topbar {
     height: auto;
-    min-height: calc(var(--topbar-height-touch) + var(--safe-top));
-    flex-wrap: wrap;
+    min-height: calc(var(--topbar-height-touch) + var(--safe-top) + var(--space-sm));
+    flex-wrap: nowrap;
     gap: var(--space-sm);
-    padding: calc(var(--safe-top) + var(--space-xs)) max(var(--space-md), var(--safe-right))
+    padding: calc(var(--safe-top) + var(--space-xs)) max(var(--space-xs), var(--safe-right))
       var(--space-xs) max(var(--space-md), var(--safe-left));
   }
 
   .topbar h1 {
     flex: none;
-    font-size: 15px;
+    font-size: 20px;
+    font-weight: 650;
+    letter-spacing: -0.02em;
   }
 
-  /* La línea de contexto cede antes que la acción.
-     En /analítica —«326 ofertas · 5 binomios marca-modelo»— medía más que el
-     hueco que quedaba, así que empujaba «Actualizar» a una segunda línea y la
-     cabecera pedía cien píxeles para decir dos cosas. Encogiendo y recortando,
-     todo cabe en una: el titular no se toca, la acción se queda a la derecha y
-     lo único que se pierde es la cola de un dato secundario que además está
+  /* La línea de contexto cede antes que nada: el titular no se toca y las
+     acciones tampoco. Lo que se pierde es la cola de un dato que además está
      escrito otra vez debajo. */
   .topbar-meta {
     flex: 0 1 auto;
@@ -5474,50 +5767,52 @@ table.records tbody tr.row-leaving {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    padding-top: 3px;
   }
 
-  /* Encoger no basta: un contenedor que envuelve reparte **antes** de encoger,
-     así que la acción se bajaba de línea con la barra medio vacía y la línea de
-     contexto entera. Con una sola acción la barra no envuelve, y entonces sí
-     manda el reparto de arriba: el titular fijo, la acción fija, y lo que cede
-     es la línea de contexto.
-
-     La envoltura se conserva donde hace falta —Modelos, con tres acciones—,
-     que es justo el caso que la trajo. */
-  .topbar:not(:has(.topbar-actions > :nth-child(2))) {
-    flex-wrap: nowrap;
-  }
-
-  .topbar:not(:has(.topbar-actions > :nth-child(2))) > .topbar-actions {
-    flex: none;
-  }
-
-  /* El grupo de acciones también envuelve, no solo la barra: en /modelos son
-     tres botones que suman 397 px y, como bloque indivisible, desbordaban el
-     documento aunque la barra tuviera permiso para partirse. */
   .topbar-actions {
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    row-gap: var(--space-xs);
+    flex: none;
+    gap: 0;
   }
 
-  /* Con más de una acción, el grupo baja a su propia línea y los botones se
-     reparten el ancho entero. Antes envolvía en escalera —«Actualizar» y
-     «Configurar captación» arriba, «Seguir un modelo» solo y descolgado abajo—,
-     con el borde izquierdo distinto en cada línea: tres botones y ningún margen
-     en común. Repartidos, las dos líneas empiezan y acaban donde empieza y acaba
-     el contenido de la página.
-
-     El `:has()` es la condición «hay más de uno»: con una sola acción —Ofertas y
-     su «Actualizar»— el botón se queda a la derecha del titular, que es donde una
-     acción menor tiene que estar, y no ocupando una línea a lo ancho. */
-  .topbar-actions:has(> :nth-child(2)) {
-    flex: 1 1 100%;
+  .header-btn {
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    justify-content: center;
+    border-color: transparent;
+    background: transparent;
+    color: var(--text-secondary);
+    position: relative;
   }
 
-  .topbar-actions:has(> :nth-child(2)) > * {
-    flex: 1 1 auto;
-    min-width: 0;
+  /* 44 de objetivo sin dibujar 44 de caja. */
+  .header-btn::after {
+    content: "";
+    position: absolute;
+    inset: -2px;
+  }
+
+  .header-btn:active {
+    background: var(--surface-hover);
+  }
+
+  .header-btn.btn-primary {
+    color: var(--accent);
+  }
+
+  .header-btn.btn-primary:hover:not(:disabled),
+  .header-btn.btn-primary:active:not(:disabled) {
+    background: var(--accent-soft);
+  }
+
+  .header-btn > svg {
+    width: 22px;
+    height: 22px;
+  }
+
+  .header-btn-label {
+    display: none;
   }
 
   .content {
@@ -5546,6 +5841,22 @@ table.records tbody tr.row-leaving {
   .filters > .field > .input,
   .filters > .field > .select {
     width: 100%;
+  }
+
+  /* Dos campos en fila —Nombre y Clave del portal, Marca y Modelo— se repartían
+     el ancho por el tamaño intrínseco del `input` (unos 20 caracteres), que no
+     encoge: la fila medía 421 px en una pantalla de 375 y el segundo campo se
+     salía del panel. Con base cero y sin suelo, se reparten lo que hay. */
+  .row > .field.grow {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .field > .input,
+  .field > .select,
+  .field > .textarea {
+    width: 100%;
+    min-width: 0;
   }
 
   /* ---- Campos ----
@@ -5887,6 +6198,9 @@ table.records tbody tr.row-leaving {
      siete píxeles el selector se llevaba una fila entera de más. */
   .analytics-picker-filters {
     flex: 1 1 100%;
+    /* Delante del rótulo: acotan todo lo que hay debajo, y así el rótulo y su
+       aviso de ranuras quedan pegados a la tira de chips que describen. */
+    order: -1;
   }
 
   .analytics-picker-filters > .select-sm {
@@ -5935,6 +6249,33 @@ table.records tbody tr.row-leaving {
     max-width: 100%;
   }
 
+  /* La tira de binomios: una línea con desplazamiento lateral en vez de seis
+     filas de chips. Sale hasta el borde de la pantalla —con el mismo margen de
+     la página por dentro, que es donde arranca y donde se detiene el imán— para
+     que el chip cortado en el borde diga «hay más» sin dibujar nada. El
+     `contain` evita que llegar al final de la tira arrastre la página o dispare
+     el gesto de atrás del navegador. */
+  .binomio-list {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+    margin-left: calc(-1 * max(var(--space-md), var(--safe-left)));
+    margin-right: calc(-1 * max(var(--space-md), var(--safe-right)));
+    padding: 0 max(var(--space-md), var(--safe-right)) 0 max(var(--space-md), var(--safe-left));
+    scroll-padding: 0 max(var(--space-md), var(--safe-right)) 0 max(var(--space-md), var(--safe-left));
+  }
+
+  .binomio-list::-webkit-scrollbar {
+    display: none;
+  }
+
+  .binomio-list > .binomio {
+    flex: 0 0 auto;
+    scroll-snap-align: start;
+  }
+
   /* ---- Lista de registros ----
      El suelo táctil de las acciones se pide aquí y no en la regla base: por
      encima de 860 px manda `.btn` con sus 28 px, que es lo correcto con un
@@ -5958,6 +6299,41 @@ table.records tbody tr.row-leaving {
     border-left: none;
     border-right: none;
     border-radius: 0;
+  }
+
+  /* ---- Dealers ----
+     La acción al margen es un icono y no un rótulo: sin el suelo de 80 px de
+     «Seguir»/«Siguiendo», que aquí solo robaría nombre. Pegado al borde y sin
+     sangrado propio: el glifo cae sobre el margen de 12 de la página y la caja
+     de 44 se queda entera para el dedo. El selector repite `.split` para
+     igualar la especificidad de la regla base y ganarle por orden. */
+  .record-item.split.dealer-item > .record-actions {
+    padding: 0;
+  }
+
+  .dealer-item > .record-actions > .icon-btn {
+    min-width: 0;
+    padding: 0;
+  }
+
+  /* El campo de búsqueda se queda la línea entera; el interruptor baja a la de
+     debajo, a su ancho, en vez de comerle el marcador. */
+  .dealer-filters > .field {
+    flex-basis: 100%;
+  }
+
+  /* Editor: la ciudad a lo ancho, país y valoración a mitades debajo. */
+  .dealer-place {
+    flex-wrap: wrap;
+  }
+
+  .dealer-place > .field {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .dealer-place > .field:first-child {
+    flex-basis: 100%;
   }
 
   /* ---- Ajustes y API keys: la página es la tarjeta -------------------------
@@ -5999,6 +6375,42 @@ table.records tbody tr.row-leaving {
     font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.04em;
+  }
+
+  /* ---- API keys ----
+     La ficha no tiene `.record-link` —no hay detalle que abrir—, así que el
+     cuerpo lleva su propio sangrado. Tres líneas cortas: nombre con su estado,
+     prefijo en mono y fechas, que parten línea antes que recortarse a media
+     hora. */
+  .key-body {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: var(--space-2xs);
+    min-width: 0;
+    padding: var(--space-sm) 0 var(--space-sm) var(--space-md);
+  }
+
+  .key-dates {
+    white-space: normal;
+  }
+
+  /* El botón de texto lleva su propio sangrado de 8: el contenedor pone solo
+     4 para que la palabra acabe a los mismos 12 del borde que el resto. */
+  .record-item.split.key-item > .record-actions {
+    padding-right: var(--space-xs);
+  }
+
+  /* Destructivo en reposo y no solo al pasar el ratón: en la mano no hay
+     «encima». Texto sin caja y 44 de alto, que la caja no se dibuja. */
+  .key-item .key-revoke {
+    height: var(--tap-target);
+    color: var(--negative);
+  }
+
+  .key-item .key-revoke:active:not(:disabled) {
+    background: var(--negative-soft);
+    color: var(--negative);
   }
 
   /* ---- Editor de pesos ------------------------------------------------------
@@ -6139,6 +6551,26 @@ table.records tbody tr.row-leaving {
     flex: 1 1 0;
   }
 
+  /* Con cambios pendientes, la fila se pega encima de la barra de pestañas y
+     sale de borde a borde con su filete, como un pie de hoja. La fecha de
+     edición se va mientras tanto: describe lo guardado, no lo que se está
+     tocando, y le costaba al pie una línea entera. */
+  .score-actions.pending {
+    position: sticky;
+    bottom: calc(var(--tabbar-height) + var(--safe-bottom));
+    z-index: 2;
+    margin-left: calc(-1 * max(var(--space-md), var(--safe-left)));
+    margin-right: calc(-1 * max(var(--space-md), var(--safe-right)));
+    padding: var(--space-sm) max(var(--space-md), var(--safe-right)) var(--space-sm)
+      max(var(--space-md), var(--safe-left));
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .score-actions.pending > .tiny {
+    display: none;
+  }
+
   /* ---- Login ----
      El conmutador de modo mide 58 × 15 y es la única ruta de «entrar» a
      «registrarse», en la primera pantalla de un teléfono nuevo. La excepción de
@@ -6163,6 +6595,585 @@ table.records tbody tr.row-leaving {
     background: var(--accent-soft);
   }
 }
+
+/* ------------------------------------------------------------------------- *
+ * Seguir un modelo
+ *
+ * El panel que junta lo que antes eran dos flujos —elegir el binomio y
+ * decirle al scraper dónde buscarlo— y la lista táctil de Modelos que lo abre.
+ * Todo lo de aquí es nuevo con ese panel: no pisa ninguna regla anterior.
+ * ------------------------------------------------------------------------- */
+
+/* El pie del panel: la acción principal, pegada abajo y al alcance del pulgar.
+   Vive dentro del cuerpo que hace scroll, como `.scrape-config-actions`, y por
+   el mismo motivo: un `fixed` se despega de la hoja con el teclado abierto. El
+   `margin-top: auto` lo baja al fondo cuando el contenido es corto. */
+.drawer-footer {
+  position: sticky;
+  bottom: calc(var(--drawer-pad) * -1);
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin: auto calc(var(--drawer-pad) * -1) calc(var(--drawer-pad) * -1);
+  padding: var(--space-md) var(--drawer-pad);
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.drawer-footer > .follow-submit {
+  margin-left: auto;
+}
+
+/* Campo de búsqueda con la lupa dentro: el icono dice «busca» sin rótulo. */
+.search-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.search-field > svg {
+  position: absolute;
+  top: 50%;
+  left: 10px;
+  transform: translateY(-50%);
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+
+.search-field > .input {
+  width: 100%;
+  padding-left: 36px;
+}
+
+/* Un valor con su unidad: «18.000 €» se lee como precio sin el rótulo. */
+.input-affix {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.input-affix > .input {
+  width: 100%;
+  padding-right: 36px;
+  font-variant-numeric: tabular-nums;
+}
+
+.input-affix.bare > .input {
+  padding-right: 10px;
+}
+
+.input-affix > span {
+  position: absolute;
+  right: 10px;
+  color: var(--text-tertiary);
+  font-size: var(--font-meta);
+  pointer-events: none;
+}
+
+/* ---- El formulario ---- */
+.follow-form,
+.follow-pick {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+}
+
+.follow-pick {
+  gap: var(--space-md);
+}
+
+.follow-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.follow-section > .section-title {
+  margin: 0;
+}
+
+.section-title-hint {
+  margin-left: var(--space-xs);
+  color: var(--text-tertiary);
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* Rejilla que se adapta al ancho del panel, no al de la ventana: dos o tres
+   campos por línea en escritorio, dos en la mano y nunca uno desbordado. */
+.follow-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--space-md);
+}
+
+.follow-note {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--font-meta);
+  line-height: 1.45;
+}
+
+/* El binomio elegido, con su salida para cambiarlo. */
+.follow-chosen {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-sunken);
+}
+
+.follow-chosen-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  min-width: 0;
+}
+
+.follow-chosen-name {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.follow-subject {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+/* «Seguir Toyota Corolla»: la salida para lo que no está en el catálogo. Va
+   arriba de la lista porque si se ha escrito algo que no casa, es lo que se
+   quiere. */
+.follow-create {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  width: 100%;
+  min-height: var(--tap-target);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px dashed var(--accent);
+  border-radius: var(--radius-lg);
+  background: var(--accent-soft);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+
+.follow-create:active {
+  background: var(--surface-hover);
+}
+
+.follow-create-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--on-solid);
+}
+
+.follow-create-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  min-width: 0;
+}
+
+.follow-candidate {
+  position: relative;
+  padding-right: 36px;
+}
+
+.follow-candidate-chevron {
+  position: absolute;
+  top: 50%;
+  right: var(--space-md);
+  color: var(--text-tertiary);
+  transform: translateY(-50%);
+}
+
+.follow-tag {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  color: var(--accent);
+  font-size: var(--font-meta);
+  font-weight: 500;
+}
+
+/* ---- Interruptores de portal ----
+   Una fila por portal con su interruptor a la derecha, como Ajustes de iOS: la
+   fila entera es el objetivo y el estado se lee en el dibujo y en
+   `aria-checked`. Los chips de la matriz de captación hacían lo mismo en
+   botones sueltos que envolvían en tres líneas desiguales. */
+.switch-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  width: 100%;
+  min-height: var(--tap-target);
+  padding: var(--space-sm) var(--space-md);
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.switch-row:active {
+  background: var(--surface-hover);
+}
+
+.switch-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.switch-row-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  min-width: 0;
+}
+
+.switch-row-title {
+  font-weight: 500;
+}
+
+.switch-row-meta {
+  color: var(--text-tertiary);
+  font-size: var(--font-meta);
+}
+
+.switch {
+  position: relative;
+  flex: none;
+  width: 40px;
+  height: 24px;
+  border: 1px solid var(--border-control);
+  border-radius: 12px;
+  background: var(--surface-sunken);
+  transition:
+    background var(--motion) var(--ease-out),
+    border-color var(--motion) var(--ease-out);
+}
+
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform var(--motion) var(--ease-out);
+}
+
+.switch-row[aria-checked="true"] .switch {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.switch-row[aria-checked="true"] .switch::after {
+  transform: translateX(16px);
+}
+
+/* ---- Cifras del binomio en la ficha táctil ---- */
+.model-figures {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-md) var(--space-lg);
+  padding-bottom: var(--space-lg);
+  border-bottom: 1px solid var(--border);
+  --figure-size: 16px;
+}
+
+/* El ranking, como una fila más de la ficha y a lo ancho de la rejilla. */
+.model-ranking {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  min-height: var(--tap-target);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 500;
+  text-align: left;
+}
+
+.model-ranking > svg:first-child {
+  color: var(--accent);
+}
+
+.model-ranking > svg:last-child {
+  color: var(--text-tertiary);
+}
+
+.model-ranking:active:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.model-ranking:disabled {
+  opacity: 0.6;
+}
+
+.model-ranking-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  min-width: 0;
+}
+
+.model-ranking-text > .record-meta {
+  font-weight: 400;
+}
+
+.model-waiting {
+  padding: var(--space-md);
+  border-radius: var(--radius-lg);
+  background: var(--surface-sunken);
+  color: var(--text-secondary);
+}
+
+/* ---- Ranking con IA ---- */
+.ranking-context > summary {
+  margin: 0;
+  cursor: pointer;
+}
+
+.ranking-context[open] > summary {
+  margin-bottom: var(--space-md);
+}
+
+.ranking-priorities {
+  grid-column: 1 / -1;
+}
+
+/* Dejar de seguir se lee como lo que es sin gritar: texto en rojo, sin caja. */
+.follow-unfollow {
+  color: var(--negative);
+}
+
+.follow-variants > summary {
+  display: flex;
+  align-items: center;
+  min-height: var(--tap-target);
+  margin: 0;
+  cursor: pointer;
+  list-style: none;
+}
+
+.follow-variants > summary::-webkit-details-marker {
+  display: none;
+}
+
+.follow-variants > summary::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  margin-left: auto;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform var(--motion) var(--ease-out);
+}
+
+.follow-variants[open] > summary::after {
+  transform: rotate(-135deg) translateY(-2px);
+}
+
+.follow-variants > .record-list {
+  margin-bottom: var(--space-sm);
+}
+
+/* ---- Lista táctil de Modelos ---- */
+.models-filters {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+/* Conmutador de ámbito a lo ancho, como el segmentado de iOS. */
+.scope-switch {
+  display: grid;
+  grid-auto-columns: 1fr;
+  grid-auto-flow: column;
+  padding: 2px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-sunken);
+}
+
+.scope-switch > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.scope-switch > button.on {
+  border-color: var(--border);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.scope-switch-count {
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.models-section + .models-section {
+  margin-top: var(--space-md);
+}
+
+.models-section-title {
+  margin: 0;
+  padding: var(--space-sm) 0;
+  color: var(--text-secondary);
+  font-size: var(--font-meta);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.track-line {
+  color: var(--accent);
+}
+
+.track-line.reached {
+  color: var(--positive);
+  font-weight: 500;
+}
+
+.models-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-bottom: var(--space-2xl);
+}
+
+.models-empty .empty {
+  padding-bottom: var(--space-lg);
+}
+
+@media (max-width: 860px) {
+  .drawer-footer {
+    bottom: calc((var(--drawer-pad) + var(--safe-bottom)) * -1);
+    margin-bottom: calc((var(--drawer-pad) + var(--safe-bottom)) * -1);
+    padding-bottom: calc(var(--space-md) + var(--safe-bottom));
+  }
+
+  /* En la mano la acción principal ocupa lo que sobra: es la que se busca con
+     el pulgar, y un botón a su ancho natural en una esquina se pierde. */
+  .drawer-footer > .follow-submit {
+    flex: 1 1 auto;
+    height: var(--control-height-touch-lg);
+    margin-left: 0;
+  }
+
+  .drawer-footer > .follow-unfollow,
+  .drawer-footer > .btn-ghost {
+    flex: none;
+    height: var(--control-height-touch-lg);
+  }
+
+  .search-field > .input {
+    height: 40px;
+    border-color: transparent;
+    border-radius: var(--radius-lg);
+    background: var(--surface-sunken);
+  }
+
+  .search-field > .input:focus {
+    border-color: var(--accent);
+    background: var(--surface);
+  }
+
+  .follow-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .field label {
+    font-size: var(--font-meta);
+  }
+
+  .switch-row {
+    min-height: 52px;
+  }
+
+  .model-figures {
+    padding-top: var(--space-2xs);
+  }
+
+  /* El puesto y el titular arriba, a dos líneas; veredicto y nota debajo.
+     En una sola fila el titular se quedaba en «Audi A4 Allr…». */
+  .ranked-head {
+    flex-wrap: wrap;
+    row-gap: var(--space-xs);
+  }
+
+  .ranked-head > .ranked-title {
+    flex: 1 1 calc(100% - 40px);
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    white-space: normal;
+  }
+
+  .ranked-head > .spacer {
+    display: none;
+  }
+
+  .pros-cons {
+    grid-template-columns: 1fr;
+  }
+
+  .models-section-title {
+    padding-top: var(--space-md);
+  }
+
+  .models-section:first-child .models-section-title {
+    padding-top: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .switch,
+  .switch::after,
+  .follow-variants > summary::after {
+    transition: none;
+  }
+}
+
 
 /* Quien pide menos movimiento tampoco quiere que una hoja suba desde abajo:
    aparece donde va a quedarse. El velo sigue fundiendo, que es opacidad y no

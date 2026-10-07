@@ -318,8 +318,9 @@ export function ScrapingConfigDrawer({
             <div>
               <p className="card-title">Qué debe buscar el scraper</p>
               <p className="tiny muted">
-                Marca cada combinación de modelo y dealer. La captación intentará completar
-                la cantidad indicada; no elegirá solo las ofertas que parezcan mejores.
+                Cada casilla es una búsqueda: un modelo en un portal. Para seguir un modelo con
+                aviso de precio, usa «Seguir un modelo» en Modelos; sus portales se eligen allí
+                mismo.
               </p>
             </div>
             <div className="field scrape-limit">
@@ -415,8 +416,8 @@ export function ScrapingConfigDrawer({
             </button>
           </form>
           <p className="tiny muted scrape-add-hint">
-            Se añade a la captación marcado en todos los dealers; desmarca los que no lo
-            vendan. En «Modelos» aparecerá cuando llegue su primera oferta.
+            Solo captación: se busca en todos los portales —desmarca los que sobren— pero no
+            se sigue. Aparecerá en Modelos cuando llegue su primera oferta.
           </p>
           {addError ? <Banner kind="warn">{addError}</Banner> : null}
 

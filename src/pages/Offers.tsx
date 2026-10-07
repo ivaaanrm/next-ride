@@ -8,7 +8,8 @@ import {
 } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
-import { PageHeader } from "../components/Layout";
+import { IconRefresh } from "../components/icons";
+import { HeaderButton, PageHeader } from "../components/Layout";
 import { OfferActions } from "../components/OfferActions";
 import {
   Figure,
@@ -696,11 +697,7 @@ export function OffersPage() {
       <PageHeader
         title="Ofertas"
         meta={!touch && total ? `${formatNumber(total)} resultados` : undefined}
-        actions={
-          <button className="btn btn-sm" onClick={refresh}>
-            Actualizar
-          </button>
-        }
+        actions={<HeaderButton icon={IconRefresh} label="Actualizar" onClick={refresh} />}
       />
 
       {/* `content-fill`: el alto sobrante es de la lista, que hace scroll por

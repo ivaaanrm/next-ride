@@ -1,5 +1,6 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 
+import { IconCheck, IconChevronRight } from "./icons";
 import { RangeSlider, Sheet, Toggle } from "./ui";
 import { api } from "../lib/api";
 import {
@@ -218,6 +219,82 @@ export function FilterSheet({
 
   const overview = stats.data ?? fallbackStats;
 
+  // Modelo y dealer se eligen en una pantalla propia **dentro** de la misma hoja,
+  // como un ajuste de iOS que empuja su lista: con dos mil modelos, la lista
+  // metida en un bloque de la hoja era un scroll dentro de otro, y el elegido se
+  // quedaba fuera de la vista. Una hoja encima de otra tampoco: el Escape y el
+  // velo las cerrarían a las dos y se perdería lo que se llevaba puesto.
+  const [picking, setPicking] = useState<"model" | "dealer" | null>(null);
+  const modelRow = useRef<HTMLButtonElement>(null);
+  const dealerRow = useRef<HTMLButtonElement>(null);
+  const form = useRef<HTMLDivElement>(null);
+  // Dónde estaba el scroll de la hoja al entrar en la lista: al volver, quien
+  // eligió un modelo espera ver la fila del modelo, no el principio del resumen.
+  const formScroll = useRef(0);
+  const returnTo = useRef<"model" | "dealer" | null>(null);
+
+  function openPicker(which: "model" | "dealer") {
+    formScroll.current = form.current?.closest(".sheet-body")?.scrollTop ?? 0;
+    returnTo.current = which;
+    setPicking(which);
+  }
+
+  useEffect(() => {
+    if (picking !== null || returnTo.current === null) return;
+    const body = form.current?.closest(".sheet-body");
+    if (body) body.scrollTop = formScroll.current;
+    (returnTo.current === "model" ? modelRow : dealerRow).current?.focus();
+    returnTo.current = null;
+  }, [picking]);
+
+  const modelName =
+    models.find((model) => String(model.id) === pending.model)?.display_name ?? "Todos los modelos";
+  const dealerName =
+    dealers.find((dealer) => String(dealer.id) === pending.dealer)?.name ?? "Todos los dealers";
+
+  if (picking) {
+    const back = () => setPicking(null);
+    return (
+      <Sheet title={picking === "model" ? "Modelo" : "Dealer"} closeLabel="Atrás" onClose={back}>
+        {picking === "model" ? (
+          <OptionPicker
+            label="Modelo"
+            allLabel="Todos los modelos"
+            placeholder="Buscar modelo…"
+            empty="Ningún modelo se llama así."
+            value={pending.model}
+            options={models.map((model) => ({
+              value: String(model.id),
+              label: model.display_name,
+              count: model.active_offers,
+            }))}
+            onPick={(model) => {
+              patch({ model });
+              back();
+            }}
+          />
+        ) : (
+          <OptionPicker
+            label="Dealer"
+            allLabel="Todos los dealers"
+            placeholder="Buscar dealer…"
+            empty="Ningún dealer se llama así."
+            value={pending.dealer}
+            options={dealers.map((dealer) => ({
+              value: String(dealer.id),
+              label: dealer.name,
+              count: dealer.active_offers,
+            }))}
+            onPick={(dealer) => {
+              patch({ dealer });
+              back();
+            }}
+          />
+        )}
+      </Sheet>
+    );
+  }
+
   return (
     <Sheet
       title="Filtros"
@@ -243,13 +320,15 @@ export function FilterSheet({
         </button>
       }
     >
-      <div className="sheet-form">
+      <div className="sheet-form" ref={form}>
         <section className="sheet-block">
           <h3 className="sheet-label">Resumen</h3>
           <div className="sheet-figures">
             <Figure label="Precio medio" value={formatPrice(overview?.avg_price)} />
+            {/* «Dto.» y no «Descuento»: en un tercio de 375 pt la versalita
+                partía en dos líneas y descolgaba la cifra de las de al lado. */}
             <Figure
-              label="Descuento medio"
+              label="Dto. medio"
               value={formatPct(overview?.avg_discount_pct)}
               hint="sobre PVP"
             />
@@ -265,9 +344,7 @@ export function FilterSheet({
             >
               <span className="figure-label">Mejor chollo</span>
               <span className="sheet-deal-price">{formatPrice(overview.best_deal.price)}</span>
-              <span className="sheet-deal-name">
-                {overview.best_deal.car_model.display_name}
-              </span>
+              <span className="sheet-deal-name">{overview.best_deal.car_model.display_name}</span>
             </button>
           ) : null}
         </section>
@@ -292,31 +369,24 @@ export function FilterSheet({
         {/* Lista buscable y no un `<select>` nativo: iOS dibuja un `<select>`
             como rueda, y el catálogo está fragmentado por acabado —un Audi A3
             son veintitrés filas—, así que la rueda obligaría a girar a ciegas
-            entre versiones que se llaman casi igual. */}
-        <ModelPicker
-          models={models}
-          value={pending.model}
-          onChange={(model) => patch({ model })}
+            entre versiones que se llaman casi igual. Los dealers son 285 y
+            pasan por lo mismo. Aquí solo queda la fila que dice qué hay puesto;
+            la lista se abre en su propia pantalla de la hoja. */}
+        <PickerRow
+          rowRef={modelRow}
+          label="Modelo"
+          value={modelName}
+          set={pending.model !== ""}
+          onOpen={() => openPicker("model")}
         />
 
-        <section className="sheet-block">
-          <label className="sheet-label" htmlFor="offer-dealer">
-            Dealer
-          </label>
-          <select
-            id="offer-dealer"
-            className="select"
-            value={pending.dealer}
-            onChange={(event) => patch({ dealer: event.target.value })}
-          >
-            <option value="">Todos los dealers</option>
-            {dealers.map((dealer) => (
-              <option key={dealer.id} value={dealer.id}>
-                {dealer.name}
-              </option>
-            ))}
-          </select>
-        </section>
+        <PickerRow
+          rowRef={dealerRow}
+          label="Dealer"
+          value={dealerName}
+          set={pending.dealer !== ""}
+          onOpen={() => openPicker("dealer")}
+        />
 
         <section className="sheet-block">
           <label className="sheet-label" htmlFor="offer-condition">
@@ -394,81 +464,194 @@ export function FilterSheet({
   );
 }
 
-/** Campo de texto + lista de opciones de 44 pt. El recuento de ofertas activas
- *  va con cada modelo: es lo que dice si vale la pena elegirlo. */
-function ModelPicker({
-  models,
+/**
+ * La fila que abre una lista: rótulo encima, como el resto de bloques de la
+ * hoja, y debajo lo que hay puesto con el galón que dice «esto lleva a otra
+ * pantalla». Tiene la caja de un campo para leerse como el control que es.
+ */
+function PickerRow({
+  rowRef,
+  label,
   value,
-  onChange,
+  set,
+  onOpen,
 }: {
-  models: CarModelWithStats[];
+  /** El foco vuelve aquí al salir de la lista (React 18: `ref` no es una prop). */
+  rowRef: Ref<HTMLButtonElement>;
+  label: string;
   value: string;
-  onChange: (value: string) => void;
+  /** Hay algo elegido: el valor va con tinta plena y no en gris de «todos». */
+  set: boolean;
+  onOpen: () => void;
 }) {
-  const [query, setQuery] = useState("");
-  const matches = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    const list = needle
-      ? models.filter((model) => model.display_name.toLowerCase().includes(needle))
-      : models;
-    // Un tope de sesenta filas: la lista es un control dentro de una hoja, no la
-    // pantalla, y el campo de búsqueda está justo encima para acortarla.
-    return list.slice(0, 60);
-  }, [models, query]);
-
   return (
     <section className="sheet-block">
-      <label className="sheet-label" htmlFor="offer-model">
-        Modelo
-      </label>
-      <input
-        id="offer-model"
-        className="input"
-        type="search"
-        inputMode="search"
-        enterKeyHint="search"
-        autoComplete="off"
-        placeholder="Filtrar la lista de modelos…"
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-      />
-      <div className="sheet-options" role="listbox" aria-label="Modelo">
-        <button
-          type="button"
-          role="option"
-          aria-selected={value === ""}
-          className={`sheet-option${value === "" ? " on" : ""}`}
-          onClick={() => onChange("")}
-        >
-          <span className="sheet-option-name">Todos los modelos</span>
-          <Tick on={value === ""} />
-        </button>
-        {matches.map((model) => (
-          <button
-            key={model.id}
-            type="button"
-            role="option"
-            aria-selected={String(model.id) === value}
-            className={`sheet-option${String(model.id) === value ? " on" : ""}`}
-            onClick={() => onChange(String(model.id))}
-          >
-            <span className="sheet-option-name">{model.display_name}</span>
-            <span className="sheet-option-count">{model.active_offers}</span>
-            <Tick on={String(model.id) === value} />
-          </button>
-        ))}
-        {matches.length === 0 ? (
-          <p className="sheet-empty">Ningún modelo se llama así.</p>
-        ) : null}
-      </div>
+      <h3 className="sheet-label">{label}</h3>
+      <button
+        ref={rowRef}
+        type="button"
+        className={`sheet-picker${set ? " set" : ""}`}
+        aria-label={`${label}: ${value}`}
+        onClick={onOpen}
+      >
+        <span className="sheet-picker-value">{value}</span>
+        <IconChevronRight size={16} />
+      </button>
     </section>
+  );
+}
+
+interface PickerOption {
+  value: string;
+  label: string;
+  count: number;
+}
+
+/** Tope de filas pintadas. La lista es para elegir, no para leer: el campo de
+ *  búsqueda está justo encima, y dos mil botones en una hoja se notan al abrirla. */
+const PICKER_LIMIT = 100;
+
+/**
+ * Lista buscable de selección única, a pantalla de hoja completa: campo arriba,
+ * pegado mientras se baja, y filas de 48 de borde a borde. El recuento de
+ * ofertas activas va con cada opción: es lo que dice si vale la pena elegirla.
+ */
+function OptionPicker({
+  label,
+  allLabel,
+  placeholder,
+  empty,
+  value,
+  options,
+  onPick,
+}: {
+  label: string;
+  allLabel: string;
+  placeholder: string;
+  empty: string;
+  value: string;
+  options: PickerOption[];
+  onPick: (value: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const root = useRef<HTMLDivElement>(null);
+
+  // Al entrar, el foco va a la lista y no al campo: en iOS, enfocar el campo
+  // saca el teclado y tapa media lista antes de que se haya pedido buscar.
+  // La hoja es la misma y su scroll también: sin esto, la lista se abría a la
+  // altura a la que se había dejado el formulario.
+  useEffect(() => {
+    root.current?.closest(".sheet-body")?.scrollTo(0, 0);
+    root.current?.focus();
+  }, []);
+
+  const matches = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return needle
+      ? options.filter((option) => option.label.toLowerCase().includes(needle))
+      : options;
+  }, [options, query]);
+  const shown = matches.slice(0, PICKER_LIMIT);
+  const rest = matches.length - shown.length;
+  // Lo elegido se ve siempre, aunque quede fuera del tope o de la búsqueda: es
+  // lo único de la lista que quien entra ya sabe que busca.
+  const chosen =
+    value !== "" && !shown.some((option) => option.value === value)
+      ? (options.find((option) => option.value === value) ?? null)
+      : null;
+
+  return (
+    <div className="sheet-picker-screen" ref={root} tabIndex={-1} aria-label={label}>
+      <div className="sheet-picker-search">
+        <input
+          className="input"
+          type="search"
+          inputMode="search"
+          enterKeyHint="search"
+          autoComplete="off"
+          aria-label={`Buscar en la lista de ${label.toLowerCase()}`}
+          placeholder={placeholder}
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+      </div>
+      <div className="sheet-choices" role="listbox" aria-label={label}>
+        {query.trim() === "" ? (
+          <Choice role="option" on={value === ""} onClick={() => onPick("")}>
+            {allLabel}
+          </Choice>
+        ) : null}
+        {chosen ? (
+          <Choice role="option" on count={chosen.count} onClick={() => onPick(chosen.value)}>
+            {chosen.label}
+          </Choice>
+        ) : null}
+        {shown.map((option) => (
+          <Choice
+            key={option.value}
+            role="option"
+            on={option.value === value}
+            count={option.count}
+            onClick={() => onPick(option.value)}
+          >
+            {option.label}
+          </Choice>
+        ))}
+      </div>
+      {matches.length === 0 ? <p className="sheet-empty">{empty}</p> : null}
+      {rest > 0 ? (
+        <p className="sheet-note">{`Y ${formatNumber(rest)} más: escribe para acotar la lista.`}</p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Una fila de lista de selección única: 48 de alto y de borde a borde, rótulo
+ * que parte en dos líneas antes que recortarse, y la marca de elegido al final.
+ * Sirve igual de `option` en un `listbox` que de `radio` en un `radiogroup`.
+ */
+function Choice({
+  role,
+  on,
+  count,
+  detail,
+  onClick,
+  children,
+}: {
+  role: "option" | "radio";
+  on: boolean;
+  count?: number;
+  /** Segunda línea, más callada: una advertencia que va con la opción. */
+  detail?: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  const selected = role === "option" ? { "aria-selected": on } : { "aria-checked": on };
+  return (
+    <button
+      type="button"
+      role={role}
+      {...selected}
+      className={`sheet-choice${on ? " on" : ""}`}
+      onClick={onClick}
+    >
+      <span className="sheet-choice-text">
+        <span className="sheet-choice-name">{children}</span>
+        {detail ? <span className="sheet-choice-detail">{detail}</span> : null}
+      </span>
+      {count !== undefined ? (
+        <span className="sheet-option-count">{formatNumber(count)}</span>
+      ) : null}
+      <Tick on={on} />
+    </button>
   );
 }
 
 function Tick({ on }: { on: boolean }) {
   return (
     <span className="sheet-tick" aria-hidden="true">
-      {on ? "✓" : ""}
+      {on ? <IconCheck size={18} /> : null}
     </span>
   );
 }
@@ -580,13 +763,18 @@ function parseBound(raw: string): number | null {
  * -------------------------------------------------------------------------- */
 
 /**
- * Lista de selección única, un sentido por fila.
+ * Lista de selección única, un sentido por fila, como la hoja de acciones de
+ * iOS: filas de 48 a todo el ancho, filete entre ellas y la marca en la
+ * elegida. Sin caja propia ni scroll propio: quien hace scroll es la hoja, y
+ * así la opción elegida —que puede ser la última— nunca queda escondida dentro
+ * de un recuadro.
  *
  * El aviso del tope va **escrito y a la vista**, no en un `title`: es lo único
- * que hace fiable el orden por puntuación —se calcula en Python sobre 500 filas
+ * que hace fiable el orden por puntuación —se calcula sobre 500 filas
  * coincidentes—, y en un móvil un `title` no existe. Quien ordena un catálogo de
- * tres mil ofertas por puntuación tiene que saber, antes de tocar, que lo que va
- * a ver son las mejores de un subconjunto.
+ * nueve mil ofertas por puntuación tiene que saber, antes de tocar, que lo que va
+ * a ver son las mejores de un subconjunto. Por eso va dos veces: corto en la
+ * propia opción y entero en la nota del pie.
  */
 export function SortSheet({
   sort,
@@ -599,24 +787,17 @@ export function SortSheet({
 }) {
   return (
     <Sheet title="Ordenar" closeLabel="Cerrar" onClose={onClose}>
-      <div className="sheet-options" role="radiogroup" aria-label="Ordenar por">
+      <div className="sheet-choices" role="radiogroup" aria-label="Ordenar por">
         {SORT_OPTIONS.map((option) => (
-          <button
+          <Choice
             key={option.token}
-            type="button"
             role="radio"
-            aria-checked={option.token === sort}
-            className={`sheet-option${option.token === sort ? " on" : ""}`}
+            on={option.token === sort}
+            detail={option.capped ? "Evalúa hasta 500 ofertas" : undefined}
             onClick={() => onPick(option.token)}
           >
-            <span className="sheet-option-name">{option.label}</span>
-            {option.capped ? (
-              <span className="sheet-option-count" aria-hidden="true">
-                tope
-              </span>
-            ) : null}
-            <Tick on={option.token === sort} />
-          </button>
+            {option.label}
+          </Choice>
         ))}
       </div>
       <p className="sheet-note">{CAP_HINT}</p>

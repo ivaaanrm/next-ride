@@ -163,9 +163,12 @@ function ScoringCard() {
                 <span>{component.label}</span>
                 <span className="tiny muted">{component.description}</span>
               </div>
+              {/* `inputMode` además de `type`: en iOS, `number` solo saca el
+                  teclado de símbolos, con las cifras en la fila de arriba. */}
               <input
                 className="input num"
                 type="number"
+                inputMode="numeric"
                 min={0}
                 max={100}
                 step={1}
@@ -191,6 +194,7 @@ function ScoringCard() {
             <input
               className="input num"
               type="number"
+              inputMode="numeric"
               min={1000}
               max={100000}
               step={500}
@@ -212,7 +216,11 @@ function ScoringCard() {
           </div>
         </div>
 
-        <div className="row score-actions">
+        {/* Con cambios sin guardar, la fila de acciones se pega encima de la
+            barra de pestañas en táctil: la lista de pesos pasa del alto de la
+            pantalla, y tocar un peso de arriba dejaba «Guardar» fuera de vista.
+            Sin cambios no hay nada que guardar y vuelve a su sitio. */}
+        <div className={`row score-actions${dirty ? " pending" : ""}`}>
           {data.updated_at ? (
             <span className="tiny muted">Editada el {formatDateTime(data.updated_at)}</span>
           ) : null}

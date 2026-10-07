@@ -1,5 +1,6 @@
 import { NavLink, useLocation } from "react-router-dom";
 
+import { IconAnalytics, IconModels, IconMore, IconOffers } from "./icons";
 import { noticeCountLabel, useNotices } from "./Notifications";
 import { scrollBehavior } from "./SwipeRow";
 
@@ -16,15 +17,14 @@ import { scrollBehavior } from "./SwipeRow";
  * cola —Dealers, Ajustes, API keys, avisos, sesión— se pliega en «Más», que es
  * lo que hacen Apple Music, Mail y Things con el mismo problema.
  *
- * Los iconos son los mismos glifos geométricos que ya usa `NAV` en la barra
- * lateral, y llevan **siempre** su rótulo debajo: cuatro cuadrados con distinta
- * partición no se distinguen sin la palabra.
+ * Los iconos son los mismos de `NAV` en la barra lateral, y llevan **siempre**
+ * su rótulo debajo: el dibujo ayuda a encontrar, la palabra dice qué es.
  */
 const TABS = [
-  { to: "/offers", label: "Ofertas", icon: "◱" },
-  { to: "/analytics", label: "Analítica", icon: "◫" },
-  { to: "/models", label: "Modelos", icon: "◈" },
-  { to: "/more", label: "Más", icon: "⋯" },
+  { to: "/offers", label: "Ofertas", Icon: IconOffers },
+  { to: "/analytics", label: "Analítica", Icon: IconAnalytics },
+  { to: "/models", label: "Modelos", Icon: IconModels },
+  { to: "/more", label: "Más", Icon: IconMore },
 ];
 
 /**
@@ -74,7 +74,7 @@ export function TabBar() {
             onClick={() => scrollToTopIfCurrent(tab.to)}
           >
             <span className="tabbar-icon" aria-hidden="true">
-              {tab.icon}
+              <tab.Icon size={22} />
               {badge ? <span className="tabbar-badge">{count}</span> : null}
             </span>
             <span className="tabbar-label">{tab.label}</span>

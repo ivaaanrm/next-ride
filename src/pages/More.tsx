@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 
+import { IconChevronRight, IconRefresh } from "../components/icons";
 import { PageHeader } from "../components/Layout";
 import { noticeCountLabel, useNotices } from "../components/Notifications";
 import { ThemeIcon, themeLabel } from "../components/ThemeToggle";
@@ -71,11 +72,13 @@ export function MorePage() {
             />
             {/* Lo que en un navegador haría el botón de refresco. Instalada, la
                 app no tiene ninguno: sin esta fila, un documento en mal estado
-                solo se arregla matando la app. */}
+                solo se arregla matando la app. Icono y no galón, como el tema:
+                no lleva a ninguna parte, ocurre aquí. */}
             <MoreButton
               label="Recargar la app"
               value="Vuelve a cargar el documento"
               onClick={() => window.location.reload()}
+              icon={<IconRefresh size={16} />}
             />
             {update.available ? (
               <MoreButton
@@ -83,11 +86,15 @@ export function MorePage() {
                 value="Hay una versión esperando"
                 tone="accent"
                 onClick={update.apply}
+                icon={<IconRefresh size={16} />}
               />
             ) : null}
+            {/* Rótulo corto: «Instalar en la pantalla de inicio» partía en dos
+                líneas en 375 y el valor se quedaba en «Cómo se hace en i…». El
+                nombre largo sigue siendo el título de la hoja. */}
             {standalone ? null : (
               <MoreButton
-                label="Instalar en la pantalla de inicio"
+                label="Instalar la app"
                 value="Cómo se hace en iPhone"
                 onClick={() => setInstall(true)}
                 haspopup
@@ -132,7 +139,7 @@ function MoreLink({ to, label, value }: { to: string; label: string; value?: str
       <span className="more-label">{label}</span>
       {value ? <span className="more-value">{value}</span> : null}
       <span className="more-chevron" aria-hidden="true">
-        ›
+        <IconChevronRight size={16} />
       </span>
     </Link>
   );
@@ -176,7 +183,7 @@ function MoreButton({
         <span className="more-icon">{icon}</span>
       ) : (
         <span className="more-chevron" aria-hidden="true">
-          ›
+          <IconChevronRight size={16} />
         </span>
       )}
     </button>

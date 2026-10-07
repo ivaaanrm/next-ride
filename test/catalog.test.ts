@@ -110,6 +110,91 @@ describe("seguimiento de modelos", () => {
     expect(res.body.car_model).toMatchObject({ make, model: "Z", reference_price: 21000 });
     expect((await user.post("/api/v1/tracked-models", {})).status).toBe(422);
   });
+
+  it("seguir un binomio nuevo en un paso: catálogo, criterios y captación", async () => {
+    const user = await signedUpClient();
+    const make = unique("Paso");
+    const key = `${make.toLowerCase()}|corolla`;
+    const sources = (await user.get("/api/v1/scraping/sources")).body as { id: number; key: string }[];
+    const [first, second] = sources;
+
+    const followed = await user.put("/api/v1/tracked-models/group", {
+      make: ` ${make} `,
+      model: "Corolla",
+      target_price: 18000,
+      source_ids: [first.id, second.id],
+    });
+    expect(followed.status).toBe(200);
+    expect(followed.body).toEqual({ key, tracked_variants: 1, source_ids: [first.id, second.id].sort((a, b) => a - b) });
+
+    // Está ya en «Modelos», seguido y sin ofertas, antes de la primera ingesta.
+    const q = encodeURIComponent(make.toLowerCase());
+    const [group] = (await user.get(`/api/v1/car-models/groups?q=${q}`)).body;
+    expect(group).toMatchObject({ key, active_offers: 0, tracked_variants: 1, target_price: 18000 });
+
+    const forKey = async () =>
+      ((await user.get("/api/v1/scraping/targets")).body as { make_model_key: string; source_id: number }[])
+        .filter((t) => t.make_model_key === key)
+        .map((t) => t.source_id)
+        .sort((a, b) => a - b);
+    expect(await forKey()).toEqual([first.id, second.id].sort((a, b) => a - b));
+    const config = (await scraper.get("/api/v1/scraping/config")).body;
+    expect(config.targets.some((t: { make_model_key: string }) => t.make_model_key === key)).toBe(true);
+
+    // Cambiar las fuentes solo toca este binomio: el resto de la matriz sigue.
+    const othersBefore = (await user.get("/api/v1/scraping/targets")).body.filter(
+      (t: { make_model_key: string }) => t.make_model_key !== key,
+    ).length;
+    await user.put("/api/v1/tracked-models/group", { make, model: "Corolla", source_ids: [second.id] });
+    expect(await forKey()).toEqual([second.id]);
+    const othersAfter = (await user.get("/api/v1/scraping/targets")).body.filter(
+      (t: { make_model_key: string }) => t.make_model_key !== key,
+    ).length;
+    expect(othersAfter).toBe(othersBefore);
+    // `source_ids` ausente: los criterios cambian y la captación no.
+    await user.put("/api/v1/tracked-models/group", { make, model: "Corolla", target_price: 17500 });
+    expect(await forKey()).toEqual([second.id]);
+
+    expect(
+      (await user.put("/api/v1/tracked-models/group", { make, model: "Corolla", source_ids: [999999] })).status,
+    ).toBe(422);
+
+    // Las versiones que llegan después heredan el seguimiento y sus criterios.
+    await scraper.post("/api/v1/offers/bulk", {
+      offers: [
+        offerPayload({ make, model: "Corolla", trim: "Hybrid", price: 17000 }),
+        offerPayload({ make, model: "Corolla", trim: "Touring", price: 21000 }),
+      ],
+    });
+    const variants = (await user.get(`/api/v1/car-models?q=${q}`)).body as {
+      trim: string;
+      is_tracked: boolean;
+      tracking: { target_price: number } | null;
+    }[];
+    expect(variants).toHaveLength(3);
+    expect(variants.every((v) => v.is_tracked && v.tracking?.target_price === 17500)).toBe(true);
+
+    // Dejar de seguir y de buscar.
+    const stop = await user.delete(`/api/v1/tracked-models/group?key=${encodeURIComponent(key)}&stop_scraping=true`);
+    expect(stop.status).toBe(204);
+    expect((await user.get(`/api/v1/car-models/groups?q=${q}`)).body[0].tracked_variants).toBe(0);
+    expect(await forKey()).toEqual([]);
+  });
+
+  it("quien sigue solo algunas versiones no hereda las nuevas", async () => {
+    const user = await signedUpClient();
+    const make = unique("Parcial");
+    await scraper.post("/api/v1/offers/bulk", {
+      offers: [offerPayload({ make, model: "P", trim: "1" }), offerPayload({ make, model: "P", trim: "2" })],
+    });
+    const q = encodeURIComponent(make.toLowerCase());
+    const [one] = (await user.get(`/api/v1/car-models?q=${q}`)).body;
+    await user.post("/api/v1/tracked-models", { car_model_id: one.id });
+
+    await scraper.post("/api/v1/offers/bulk", { offers: [offerPayload({ make, model: "P", trim: "3" })] });
+    const variants = (await user.get(`/api/v1/car-models?q=${q}`)).body as { is_tracked: boolean }[];
+    expect(variants.filter((v) => v.is_tracked)).toHaveLength(1);
+  });
 });
 
 describe("configuración de rastreo", () => {

@@ -375,7 +375,10 @@ export function RadarProfile({
         <div
           className="chart-radar-tip"
           style={{
-            left: Math.max(0, Math.min(activePoint[0], box.width - 172)),
+            // El ancho del tooltip (200, en la hoja) más los 8 px del `transform`:
+            // con un tope menor que su ancho, el navegador lo encogía contra el
+            // borde y «82.902 km» se partía en dos renglones en un teléfono.
+            left: Math.max(0, Math.min(activePoint[0], box.width - 208)),
             top: Math.max(0, Math.min(activePoint[1], box.height - 96)),
           }}
         >
