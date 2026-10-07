@@ -16,7 +16,7 @@
     "isolatedModules": true,
     "resolveJsonModule": true,
     "noEmit": true,
-    "types": ["./worker/worker-configuration.d.ts", "./worker/env.d.ts", "vite/client"]
+    "types": ["./worker/worker-configuration.d.ts", "vite/client"]
   },
   "include": ["worker"]
 }

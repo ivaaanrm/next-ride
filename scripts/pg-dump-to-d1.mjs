@@ -285,8 +285,11 @@ const targets = get("scrape_targets").map((row) => ({
   updated_at: iso(row.updated_at),
 }));
 
+// Sin el id: nada apunta a una API key, y con él una clave registrada antes
+// (la de `BOOTSTRAP_SCRAPER_API_KEY`) que ocupara el mismo id haría que el
+// `INSERT OR IGNORE` se saltara la del volcado. El conflicto que importa es el
+// del hash: esa sí es la misma clave.
 const apiKeys = get("api_keys").map((row) => ({
-  id: num(row.id),
   name: row.name,
   prefix: row.prefix,
   hashed_key: row.hashed_key,
@@ -300,13 +303,24 @@ const apiKeys = get("api_keys").map((row) => ({
 // --------------------------------------------------------------------------- //
 // Salida
 // --------------------------------------------------------------------------- //
-// D1 no deja crear tablas temporales para comprobarlo antes: si el dueño no
-// existe, los favoritos y seguimientos fallan por su NOT NULL y D1 deshace el
-// fichero entero, que se ejecuta como una sola transacción.
-const ownerCheck = `-- ${owner} tiene que existir antes de importar: entra primero.`;
+// Si el dueño no existe, el fichero entero tiene que fallar, no saltarse filas.
+// D1 no deja crear tablas temporales ni lanzar `RAISE` fuera de un trigger, así
+// que se fuerza un NOT NULL: una fila de control cuyo `hashed_key` sale del id
+// del dueño. Sin dueño es NULL, la sentencia falla y D1 deshace el fichero.
+// (Un `INSERT OR IGNORE` no serviría: también se traga los NOT NULL.)
+const ownerEmail = owner.replace(/'/g, "''");
+const ownerGuard = [
+  `-- ${owner} tiene que existir antes de importar: entra primero.`,
+  `INSERT INTO api_keys (name, prefix, hashed_key, is_active) VALUES ('_import_owner_check', '-', (SELECT 'owner:' || id FROM users WHERE email = '${ownerEmail}'), 0);`,
+  "DELETE FROM api_keys WHERE name = '_import_owner_check' AND prefix = '-';",
+];
+
+/** Todo pasa a un solo dueño: lo que era de varios puede repetirse. */
+const uniqueBy = (rows, key) => [...new Map(rows.map((row) => [key(row), row])).values()];
+
 const sql = [
   `-- Importación de ${basename(dumpPath)} — generado por scripts/pg-dump-to-d1.mjs`,
-  ownerCheck,
+  ...ownerGuard,
   "PRAGMA defer_foreign_keys = true;",
   // La semilla de rastreo se sustituye por la configuración real.
   "DELETE FROM scrape_targets;",
@@ -315,8 +329,8 @@ const sql = [
   ...insert("car_models", carModels),
   ...insert("offers", offers),
   ...insert("offer_price_history", history),
-  ...insert("offer_favorites", favorites, "INSERT OR IGNORE"),
-  ...insert("tracked_models", tracked, "INSERT OR IGNORE"),
+  ...insert("offer_favorites", uniqueBy(favorites, (row) => row.offer_id)),
+  ...insert("tracked_models", uniqueBy(tracked, (row) => row.car_model_id)),
   ...insert("ranking_runs", runs),
   ...insert("offer_rankings", rankings),
   ...insert("score_config", scoreConfig, "INSERT OR REPLACE"),

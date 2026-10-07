@@ -45,12 +45,10 @@
   // Backup diario de D1 a R2.
   "triggers": { "crons": ["17 3 * * *"] },
 
-  // El único secreto sin el que no se arranca. Declararlo aquí hace que
-  // `wrangler types` no dependa de lo que haya en `.dev.vars` (en CI no hay).
-  // Los opcionales (ANTHROPIC_API_KEY, FIRST_SUPERUSER_*, BOOTSTRAP_SCRAPER_API_KEY)
-  // se tipan en `worker/env.d.ts`.
-  "secrets": { "required": ["BETTER_AUTH_SECRET"] },
-
+  // Sin `secrets.required` a propósito: con él, `pnpm dev` solo carga de
+  // `.dev.vars` los secretos que estén en esa lista (y los opcionales, como
+  // FIRST_SUPERUSER_*, dejarían de sembrar), y `wrangler deploy` falla si falta
+  // alguno de la lista. Los tipos de los secretos salen de `.dev.vars`.
   // Configuración no secreta. Los secretos (BETTER_AUTH_SECRET,
   // ANTHROPIC_API_KEY, FIRST_SUPERUSER_PASSWORD, BOOTSTRAP_SCRAPER_API_KEY…)
   // van con `wrangler secret put` y, en local, en `.dev.vars`.
