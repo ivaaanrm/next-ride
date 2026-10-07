@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "cocheradar",
-  "short_name": "cocheradar",
+  "name": "cochesradar",
+  "short_name": "cochesradar",
   "description": "Ofertas de coches de varios dealers, comparadas.",
   "start_url": "/offers",
   "scope": "/",
@@ -12,10 +12,10 @@
   "background_color": "#fbfbfb",
   "theme_color": "#fbfbfb",
   "icons": [
-    { "src": "/icons/icon-192.v2.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "/icons/icon-512.v2.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/icon-192.v3.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.v3.png", "sizes": "512x512", "type": "image/png" },
     {
-      "src": "/icons/maskable-512.v2.png",
+      "src": "/icons/maskable-512.v3.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"

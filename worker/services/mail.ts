@@ -28,9 +28,9 @@ export function invitationMessage({ url, inviter, expiresAt }: InvitationMail) {
     month: "long",
     timeZone: "Europe/Madrid",
   });
-  const subject = `${inviter} te invita a cocheradar`;
+  const subject = `${inviter} te invita a cochesradar`;
   const text = [
-    `${inviter} te ha invitado a cocheradar, las mejores ofertas de coches en un único sitio.`,
+    `${inviter} te ha invitado a cochesradar, las mejores ofertas de coches en un único sitio.`,
     "",
     "Para crear tu cuenta, abre este enlace y elige una contraseña:",
     url,
@@ -45,9 +45,9 @@ export function invitationMessage({ url, inviter, expiresAt }: InvitationMail) {
       <tr><td align="center">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background:#ffffff;border-radius:12px;padding:32px">
           <tr><td>
-            <h1 style="margin:0 0 16px;font-size:22px">cocheradar</h1>
+            <h1 style="margin:0 0 16px;font-size:22px">cochesradar</h1>
             <p style="margin:0 0 16px;font-size:16px;line-height:1.5">
-              ${escapeHtml(inviter)} te ha invitado a cocheradar, las mejores ofertas de coches en un único sitio.
+              ${escapeHtml(inviter)} te ha invitado a cochesradar, las mejores ofertas de coches en un único sitio.
             </p>
             <p style="margin:0 0 24px">
               <a href="${escapeHtml(url)}" style="display:inline-block;background:#1c1917;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600">Crear mi cuenta</a>
@@ -73,7 +73,7 @@ export async function sendInvitationEmail(env: Env, mail: InvitationMail): Promi
   try {
     await env.EMAIL.send({
       to: mail.to,
-      from: { email: env.MAIL_FROM, name: "cocheradar" },
+      from: { email: env.MAIL_FROM, name: "cochesradar" },
       subject,
       text,
       html,

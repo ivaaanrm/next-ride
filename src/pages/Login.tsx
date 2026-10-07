@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 
+import { Logo } from "../components/Logo";
 import { Banner, OfflineNotice } from "../components/ui";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
@@ -51,7 +52,10 @@ export function LoginPage() {
     return (
       <div className="auth-shell">
         <div className="auth-card">
-          <h1>cocheradar</h1>
+          <div className="auth-brand">
+            <Logo size={56} className="auth-logo" />
+            <h1>cochesradar</h1>
+          </div>
           <OfflineNotice onRetry={retry} retrying={retrying} />
         </div>
       </div>
@@ -61,7 +65,10 @@ export function LoginPage() {
   return (
     <div className="auth-shell">
       <div className="auth-card">
-        <h1>cocheradar</h1>
+        <div className="auth-brand">
+          <Logo size={56} className="auth-logo" />
+          <h1>cochesradar</h1>
+        </div>
         <p className="sub">
           {isRegister
             ? "Crea una cuenta para seguir modelos y ver las mejores ofertas."

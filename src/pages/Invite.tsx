@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 
+import { Logo } from "../components/Logo";
 import { Banner, Loading, OfflineNotice } from "../components/ui";
 import { api, isUnreachable } from "../lib/api";
 import { useAuth } from "../lib/auth";
@@ -86,7 +87,10 @@ export function InvitePage() {
     return (
       <div className="auth-shell">
         <div className="auth-card">
-          <h1>cocheradar</h1>
+          <div className="auth-brand">
+            <Logo size={56} className="auth-logo" />
+            <h1>cochesradar</h1>
+          </div>
           <p className="sub">
             Ya has entrado como <strong>{user.email}</strong>. Para aceptar la invitación con
             otra cuenta, cierra antes esta sesión.
@@ -111,7 +115,10 @@ export function InvitePage() {
   return (
     <div className="auth-shell">
       <div className="auth-card">
-        <h1>cocheradar</h1>
+        <div className="auth-brand">
+          <Logo size={56} className="auth-logo" />
+          <h1>cochesradar</h1>
+        </div>
 
         {offline ? (
           <OfflineNotice onRetry={() => setAttempt((n) => n + 1)} retrying={false} />

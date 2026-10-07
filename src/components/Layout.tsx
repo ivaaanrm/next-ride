@@ -12,6 +12,7 @@ import {
   IconOffers,
   IconSettings,
 } from "./icons";
+import { Logo } from "./Logo";
 import { NoticesProvider, NotificationsNav } from "./Notifications";
 import { TabBar } from "./TabBar";
 import { ThemeIcon, themeLabel } from "./ThemeToggle";
@@ -68,8 +69,8 @@ export function Layout() {
       <div className="app">
         <nav id="app-sidebar" className={`sidebar${collapsed ? " collapsed" : ""}`}>
           <div className="brand">
-            <span className="brand-mark">CR</span>
-            <span className="nav-label">cocheradar</span>
+            <Logo size={22} className="brand-mark" />
+            <span className="nav-label">cochesradar</span>
             <div className="spacer" />
             <button
               className="sidebar-toggle"

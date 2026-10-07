@@ -9,15 +9,15 @@
   Se rasteriza con `sips` igual que `icon.svg`.
 -->
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <rect width="512" height="512" fill="#0e0f11" />
+  <rect width="512" height="512" fill="#ffffff" />
   <g transform="translate(256 256) scale(0.8) translate(-256 -256) translate(-13.5 13.5)">
     <path
       d="M371.9 225A120 120 0 1 1 287.1 140.1"
       fill="none"
-      stroke="#f4f4f0"
+      stroke="#1b1b18"
       stroke-width="56"
       stroke-linecap="round"
     />
-    <circle cx="397.4" cy="114.6" r="34" fill="#c6ff3d" />
+    <circle cx="397.4" cy="114.6" r="34" fill="#1961ed" />
   </g>
 </svg>

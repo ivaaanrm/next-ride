@@ -1,7 +1,8 @@
 <!--
-  Maestro del icono de la app. 512 × 512, fondo casi negro a sangre, un anillo
-  abierto en blanco roto (la rueda) y un punto lima que sale por el hueco hacia
-  arriba a la derecha (lo siguiente).
+  Maestro del icono de la app. 512 × 512, en claro: fondo blanco a sangre, un
+  anillo abierto en tinta casi negra (la rueda) y un punto azul de acento que
+  sale por el hueco hacia arriba a la derecha (lo siguiente). Los colores son
+  los del texto y el acento del tema claro (`src/styles.css`).
 
   Solo geometría, sin letras: el rasterizado da el mismo PNG en cualquier
   máquina.
@@ -12,18 +13,18 @@
   sacar a fichero con la opción out).
 -->
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <rect width="512" height="512" fill="#0e0f11" />
+  <rect width="512" height="512" fill="#ffffff" />
   <!-- El conjunto se desplaza para que su caja quede centrada en el lienzo. -->
   <g transform="translate(-13.5 13.5)">
     <!-- Anillo: radio 120, de 15° a 75° sobre la horizontal queda el hueco. -->
     <path
       d="M371.9 225A120 120 0 1 1 287.1 140.1"
       fill="none"
-      stroke="#f4f4f0"
+      stroke="#1b1b18"
       stroke-width="56"
       stroke-linecap="round"
     />
     <!-- Punto: en la bisectriz del hueco, fuera del anillo. -->
-    <circle cx="397.4" cy="114.6" r="34" fill="#c6ff3d" />
+    <circle cx="397.4" cy="114.6" r="34" fill="#1961ed" />
   </g>
 </svg>

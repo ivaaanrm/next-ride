@@ -22,7 +22,7 @@ import sharp from "sharp";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = join(ROOT, "public", "splash");
-const VERSION = "v1";
+const VERSION = "v2";
 
 /**
  * Pantallas en puntos CSS (retrato) y su densidad. Cubre del iPhone X a la

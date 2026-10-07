@@ -36,7 +36,7 @@
  * SPA ya cargada y el siguiente `import()` diferido daría 404.
  * ------------------------------------------------------------------------- */
 
-const VERSION = "v2";
+const VERSION = "v3";
 const SHELL_CACHE = `nr-shell-${VERSION}`;
 const ASSET_CACHE = `nr-assets-${VERSION}`;
 const OWN_CACHES = [SHELL_CACHE, ASSET_CACHE];
@@ -45,10 +45,10 @@ const OWN_CACHES = [SHELL_CACHE, ASSET_CACHE];
 const SHELL_URLS = [
   "/index.html",
   "/manifest.json",
-  "/icons/icon-192.v2.png",
-  "/icons/icon-512.v2.png",
-  "/icons/maskable-512.v2.png",
-  "/icons/apple-touch-icon-180.v2.png",
+  "/icons/icon-192.v3.png",
+  "/icons/icon-512.v3.png",
+  "/icons/maskable-512.v3.png",
+  "/icons/apple-touch-icon-180.v3.png",
 ];
 
 /**
