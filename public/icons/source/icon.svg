@@ -1,0 +1,29 @@
+<!--
+  Maestro del icono de la app. 512 × 512, fondo casi negro a sangre, un anillo
+  abierto en blanco roto (la rueda) y un punto lima que sale por el hueco hacia
+  arriba a la derecha (lo siguiente).
+
+  Solo geometría, sin letras: el rasterizado da el mismo PNG en cualquier
+  máquina.
+
+  Sin transparencia y sin esquinas redondeadas: iOS compone el alfa contra negro
+  y aplica él mismo la máscara. El PNG rasterizado es el artefacto que se
+  despliega; este fichero solo existe para poder regenerarlo con `sips` (convertir a PNG, redimensionar con la opción z y
+  sacar a fichero con la opción out).
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#0e0f11" />
+  <!-- El conjunto se desplaza para que su caja quede centrada en el lienzo. -->
+  <g transform="translate(-13.5 13.5)">
+    <!-- Anillo: radio 120, de 15° a 75° sobre la horizontal queda el hueco. -->
+    <path
+      d="M371.9 225A120 120 0 1 1 287.1 140.1"
+      fill="none"
+      stroke="#f4f4f0"
+      stroke-width="56"
+      stroke-linecap="round"
+    />
+    <!-- Punto: en la bisectriz del hueco, fuera del anillo. -->
+    <circle cx="397.4" cy="114.6" r="34" fill="#c6ff3d" />
+  </g>
+</svg>

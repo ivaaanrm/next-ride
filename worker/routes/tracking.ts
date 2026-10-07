@@ -1,0 +1,197 @@
+/** Modelos que el usuario decide seguir en la plataforma. */
+import { and, desc, eq } from "drizzle-orm";
+import { z } from "zod";
+
+import { router } from "../app";
+import { carModels, trackedModels, type CarModel } from "../db/schema";
+import { inList, runBatch, type Db } from "../lib/db";
+import { notFound, parseBody, parseId, unprocessable } from "../lib/http";
+import { requireUser } from "../middleware";
+import { int, nullable, num } from "../schemas/common";
+import { getOrCreateCarModel } from "../services/catalog";
+import { trackedModelRead } from "../services/serialize";
+
+const Criteria = {
+  target_price: nullable(num(z.number().min(0))),
+  max_mileage_km: nullable(int(z.number().min(0))),
+  min_year: nullable(int(z.number().min(1950).max(2100))),
+  notes: nullable(z.string().max(1000)),
+};
+
+/**
+ * Empieza a seguir un modelo: por `car_model_id` si ya existe, o por marca +
+ * modelo (+ acabado) para crearlo en la misma llamada.
+ */
+const TrackedModelCreate = z
+  .object({
+    ...Criteria,
+    car_model_id: nullable(int()),
+    make: nullable(z.string().min(1).max(80)),
+    model: nullable(z.string().min(1).max(120)),
+    trim: z.string().max(120).default(""),
+    // Solo se aplica si el modelo se crea aquí o no tenía PVP de referencia.
+    reference_price: nullable(num(z.number().min(0))),
+  })
+  .refine((value) => value.car_model_id !== null || (value.make && value.model), {
+    message: "Aporta 'car_model_id', o 'make' y 'model' para crear el modelo",
+  });
+
+/**
+ * Varias versiones a la vez con los mismos criterios: es cómo se sigue un
+ * binomio entero. El PVP no se toca aquí a propósito: es de la versión.
+ */
+const TrackedModelBulkCreate = z.object({ ...Criteria, car_model_ids: z.array(int()).min(1) });
+
+const TrackedModelUpdate = z
+  .object({
+    target_price: num(z.number().min(0)).nullable(),
+    max_mileage_km: int(z.number().min(0)).nullable(),
+    min_year: int(z.number().min(1950).max(2100)).nullable(),
+    notes: z.string().max(1000).nullable(),
+    is_active: z.boolean().nullable(),
+  })
+  .partial();
+
+type CriteriaValues = {
+  target_price: number | null;
+  max_mileage_km: number | null;
+  min_year: number | null;
+  notes: string | null;
+};
+
+/** Re-seguir un modelo ya seguido actualiza los criterios en lugar de fallar. */
+async function upsertTracking(db: Db, userId: string, carModelIds: number[], criteria: CriteriaValues) {
+  const values = { ...criteria, is_active: true };
+  await runBatch(
+    db,
+    carModelIds.map((carModelId) =>
+      db
+        .insert(trackedModels)
+        .values({ user_id: userId, car_model_id: carModelId, ...values })
+        .onConflictDoUpdate({
+          target: [trackedModels.user_id, trackedModels.car_model_id],
+          set: { ...values, updated_at: new Date().toISOString() },
+        }),
+    ),
+  );
+  return readTracked(db, userId, carModelIds);
+}
+
+async function readTracked(db: Db, userId: string, carModelIds?: number[]) {
+  const rows = await db
+    .select({ tracked: trackedModels, car_model: carModels })
+    .from(trackedModels)
+    .innerJoin(carModels, eq(carModels.id, trackedModels.car_model_id))
+    .where(
+      and(
+        eq(trackedModels.user_id, userId),
+        carModelIds ? inList(trackedModels.car_model_id, carModelIds) : undefined,
+      ),
+    )
+    .orderBy(desc(trackedModels.created_at), desc(trackedModels.id));
+  const byModel = new Map(rows.map((row) => [row.tracked.car_model_id, row]));
+  const ordered = carModelIds ? carModelIds.flatMap((id) => byModel.get(id) ?? []) : rows;
+  return ordered.map((row) => trackedModelRead(row.tracked, row.car_model));
+}
+
+export const trackingRoutes = router();
+trackingRoutes.use(requireUser);
+
+trackingRoutes.get("/", async (c) => c.json(await readTracked(c.var.db, c.var.user.id)));
+
+trackingRoutes.post("/", async (c) => {
+  const payload = await parseBody(c, TrackedModelCreate);
+  const db = c.var.db;
+
+  let model: CarModel | undefined;
+  if (payload.car_model_id !== null) {
+    [model] = await db.select().from(carModels).where(eq(carModels.id, payload.car_model_id));
+    if (!model) throw notFound("Modelo no encontrado");
+  } else {
+    model = await getOrCreateCarModel(db, payload.make!, payload.model!, payload.trim);
+  }
+
+  if (payload.reference_price !== null && model.reference_price === null) {
+    await db
+      .update(carModels)
+      .set({ reference_price: payload.reference_price })
+      .where(eq(carModels.id, model.id));
+  }
+
+  const [tracked] = await upsertTracking(db, c.var.user.id, [model.id], {
+    target_price: payload.target_price,
+    max_mileage_km: payload.max_mileage_km,
+    min_year: payload.min_year,
+    notes: payload.notes,
+  });
+  return c.json(tracked, 201);
+});
+
+// Las dos rutas `/bulk` van antes que las que llevan un id.
+trackingRoutes.post("/bulk", async (c) => {
+  const payload = await parseBody(c, TrackedModelBulkCreate);
+  const db = c.var.db;
+  const ids = [...new Set(payload.car_model_ids)];
+  const found = new Set(
+    (await db.select({ id: carModels.id }).from(carModels).where(inList(carModels.id, ids))).map(
+      (row) => row.id,
+    ),
+  );
+  const missing = ids.filter((id) => !found.has(id));
+  if (missing.length) throw notFound(`Modelos no encontrados: ${missing.join(", ")}`);
+
+  const tracked = await upsertTracking(db, c.var.user.id, ids, {
+    target_price: payload.target_price,
+    max_mileage_km: payload.max_mileage_km,
+    min_year: payload.min_year,
+    notes: payload.notes,
+  });
+  return c.json(tracked, 201);
+});
+
+/**
+ * Deja de seguir varias versiones. Idempotente a propósito: se dispara sobre un
+ * binomio entero, donde lo normal es que solo algunas tuvieran seguimiento.
+ */
+trackingRoutes.delete("/bulk", async (c) => {
+  const ids = (c.req.query("car_model_ids") ?? "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => /^-?\d+$/.test(part))
+    .map(Number);
+  if (!ids.length) throw unprocessable("Aporta al menos un id de modelo en 'car_model_ids'");
+  await c.var.db
+    .delete(trackedModels)
+    .where(and(eq(trackedModels.user_id, c.var.user.id), inList(trackedModels.car_model_id, ids)));
+  return c.body(null, 204);
+});
+
+trackingRoutes.patch("/:id", async (c) => {
+  const id = parseId(c, "id");
+  const payload = await parseBody(c, TrackedModelUpdate);
+  const db = c.var.db;
+  const [tracked] = await db.select().from(trackedModels).where(eq(trackedModels.id, id));
+  if (!tracked || tracked.user_id !== c.var.user.id) throw notFound("Seguimiento no encontrado");
+  const { is_active: isActive, ...rest } = payload;
+  const set = { ...rest, ...(isActive !== undefined && isActive !== null ? { is_active: isActive } : {}) };
+  if (Object.keys(set).length) {
+    await db.update(trackedModels).set(set).where(eq(trackedModels.id, id));
+  }
+  const [result] = await readTracked(db, c.var.user.id, [tracked.car_model_id]);
+  return c.json(result);
+});
+
+/** Se identifica por `car_model_id`, no por el id del seguimiento. */
+trackingRoutes.delete("/:carModelId", async (c) => {
+  const [deleted] = await c.var.db
+    .delete(trackedModels)
+    .where(
+      and(
+        eq(trackedModels.user_id, c.var.user.id),
+        eq(trackedModels.car_model_id, parseId(c, "carModelId")),
+      ),
+    )
+    .returning({ id: trackedModels.id });
+  if (!deleted) throw notFound("Seguimiento no encontrado");
+  return c.body(null, 204);
+});

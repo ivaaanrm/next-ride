@@ -1,0 +1,246 @@
+import { and, eq, max, sql, type SQL } from "drizzle-orm";
+import { z } from "zod";
+
+import { router } from "../app";
+import { carModels, rankingRuns, trackedModels, type CarModel } from "../db/schema";
+import { inList, round, type Db } from "../lib/db";
+import { conflict, notFound, parseBody, parseId, parseQuery, qBool, qString } from "../lib/http";
+import { requireUser } from "../middleware";
+import { nullable } from "../schemas/common";
+import { DEFAULT_PARAMS } from "../schemas/scoring";
+import { makeModelKey, slugify } from "../services/catalog";
+import { binomioMarket, modelPriceStats } from "../services/metrics";
+import { carModelRead, trackedPrefs } from "../services/serialize";
+
+type CarModelWithStats = Awaited<ReturnType<typeof withStats>>[number];
+
+async function withStats(db: Db, userId: string, models: CarModel[]) {
+  if (!models.length) return [];
+  const ids = models.map((model) => model.id);
+  const [stats, tracked] = await Promise.all([
+    modelPriceStats(db, ids),
+    db
+      .select()
+      .from(trackedModels)
+      .where(
+        and(
+          eq(trackedModels.user_id, userId),
+          inList(trackedModels.car_model_id, ids),
+          eq(trackedModels.is_active, true),
+        ),
+      ),
+  ]);
+  const prefs = new Map(tracked.map((row) => [row.car_model_id, trackedPrefs(row)]));
+
+  return models.map((model) => {
+    const stat = stats.get(model.id);
+    const tracking = prefs.get(model.id) ?? null;
+    return {
+      ...carModelRead(model),
+      active_offers: stat?.count ?? 0,
+      min_price: stat?.min_price ?? null,
+      median_price: stat?.median_price ? round(stat.median_price, 2) : null,
+      max_price: stat?.max_price ?? null,
+      dealers_count: stat?.dealers_count ?? 0,
+      is_tracked: tracking !== null,
+      // Criterios del usuario actual; `null` si no lo sigue. El ranking de IA
+      // no vive aquí: es del binomio, no de la versión (`last_ranked_at`).
+      tracking,
+    };
+  });
+}
+
+/** Mediana de una lista ya ordenada (la de los PVP de las versiones). */
+function medianOfSorted(values: number[]): number | null {
+  if (!values.length) return null;
+  const middle = Math.floor(values.length / 2);
+  if (values.length % 2) return values[middle];
+  return round((values[middle - 1] + values[middle]) / 2, 2);
+}
+
+const ListQuery = z.object({ q: qString, tracked_only: qBool, include_inactive: qBool });
+
+const trackedByUser = (userId: string) =>
+  sql`EXISTS (SELECT 1 FROM tracked_models t WHERE t.car_model_id = ${carModels.id} AND t.user_id = ${userId} AND t.is_active = 1)`;
+
+const CarModelCreate = z.object({
+  make: z.string().min(1).max(80),
+  model: z.string().min(1).max(120),
+  trim: z.string().max(120).default(""),
+  body_type: nullable(z.string().max(40)),
+  reference_price: nullable(z.number().min(0)),
+});
+
+const CarModelUpdate = z
+  .object({
+    body_type: z.string().max(40).nullable(),
+    reference_price: z.number().min(0).nullable(),
+    is_active: z.boolean(),
+  })
+  .partial();
+
+export const carModelsRoutes = router();
+carModelsRoutes.use(requireUser);
+
+carModelsRoutes.get("/", async (c) => {
+  const query = parseQuery(c, ListQuery);
+  const conditions: SQL[] = [];
+  if (!query.include_inactive) conditions.push(eq(carModels.is_active, true));
+  if (query.q) {
+    const pattern = `%${query.q.toLowerCase()}%`;
+    conditions.push(
+      sql`(lower(${carModels.make}) LIKE ${pattern} OR lower(${carModels.model}) LIKE ${pattern} OR lower(${carModels.slug}) LIKE ${pattern})`,
+    );
+  }
+  if (query.tracked_only) conditions.push(trackedByUser(c.var.user.id));
+
+  const models = await c.var.db
+    .select()
+    .from(carModels)
+    .where(and(...conditions))
+    .orderBy(sql`lower(${carModels.make})`, sql`lower(${carModels.model})`, sql`lower(${carModels.trim})`);
+  return c.json(await withStats(c.var.db, c.var.user.id, models));
+});
+
+/**
+ * El catálogo por binomio marca-modelo, con las versiones colgando.
+ *
+ * `car_models` está partido por acabado —un «Audi A3» son veintitrés filas— y
+ * a ese nivel el listado enseña una oferta por fila. El binomio es la unidad
+ * con la que se mira un mercado, la misma que usa `/analytics/segments`.
+ *
+ * Va antes de `/:id`: «groups» no es un entero.
+ */
+carModelsRoutes.get("/groups", async (c) => {
+  const query = parseQuery(c, ListQuery);
+  const db = c.var.db;
+  const userId = c.var.user.id;
+
+  // Dos pasos: qué binomios casan con el filtro y luego *todas* sus versiones.
+  // Buscar «sportback» encuentra el A3 entero, no tres de sus versiones: un
+  // grupo recortado daría una mediana que no es la del mercado que describe.
+  const conditions: SQL[] = [];
+  if (!query.include_inactive) conditions.push(eq(carModels.is_active, true));
+  if (query.q) {
+    const pattern = `%${query.q.toLowerCase()}%`;
+    conditions.push(
+      sql`(lower(${carModels.make}) LIKE ${pattern} OR lower(${carModels.model}) LIKE ${pattern} OR lower(${carModels.slug}) LIKE ${pattern})`,
+    );
+  }
+  // Basta con seguir una versión para que el binomio esté en la lista.
+  if (query.tracked_only) conditions.push(trackedByUser(userId));
+  const keyRows = await db
+    .selectDistinct({ key: carModels.make_model_key })
+    .from(carModels)
+    .where(and(...conditions));
+  const keys = keyRows.map((row) => row.key);
+  if (!keys.length) return c.json([]);
+
+  const models = await db
+    .select()
+    .from(carModels)
+    .where(
+      and(
+        inList(carModels.make_model_key, keys),
+        query.include_inactive ? undefined : eq(carModels.is_active, true),
+      ),
+    )
+    // En minúsculas, que es de lo que está hecha la clave: si no, las dos
+    // grafías de un binomio se separarían y sus versiones dejarían de ser
+    // contiguas. Por marca y luego modelo, y no por la clave entera: el «|» de
+    // en medio pondría «mercedes-benz» antes que «mercedes».
+    .orderBy(sql`lower(${carModels.make})`, sql`lower(${carModels.model})`, sql`lower(${carModels.trim})`);
+
+  const [variants, market, ranked] = await Promise.all([
+    withStats(db, userId, models),
+    binomioMarket(
+      db,
+      keys,
+      DEFAULT_PARAMS,
+      new Date(),
+      models.map((model) => model.id),
+    ),
+    db
+      .select({ key: rankingRuns.make_model_key, last: max(rankingRuns.created_at) })
+      .from(rankingRuns)
+      .where(and(inList(rankingRuns.make_model_key, keys), eq(rankingRuns.status, "completed")))
+      .groupBy(rankingRuns.make_model_key),
+  ]);
+  const lastRanked = new Map(ranked.map((row) => [row.key, row.last]));
+
+  const groups = new Map<string, Record<string, unknown> & { variants: CarModelWithStats[] }>();
+  models.forEach((model, index) => {
+    const key = model.make_model_key;
+    const variant = variants[index];
+    let group = groups.get(key);
+    if (!group) {
+      const stat = market.stats.get(key);
+      // Sin ofertas activas no hay grafía más frecuente: se cae a la de la versión.
+      group = {
+        key,
+        make: stat?.make ?? variant.make,
+        model: stat?.model ?? variant.model,
+        variants: [],
+        active_offers: stat?.count ?? 0,
+        min_price: stat?.min_price ?? null,
+        median_price: stat?.median_price ?? null,
+        max_price: stat?.max_price ?? null,
+        dealers_count: stat?.dealers_count ?? 0,
+        last_ranked_at: lastRanked.get(key) ?? null,
+      };
+      groups.set(key, group);
+    }
+    group.variants.push(variant);
+  });
+
+  return c.json(
+    [...groups.values()].map((group) => {
+      const tracked = group.variants.flatMap((variant) => (variant.tracking ? [variant.tracking] : []));
+      const targets = tracked.flatMap((t) => (t.target_price !== null ? [t.target_price] : []));
+      // El PVP es de la versión: el binomio enseña la mediana de las que lo
+      // tienen y dice cuántas son, para no aparentar describir el binomio entero.
+      const references = group.variants
+        .flatMap((variant) => (variant.reference_price !== null ? [variant.reference_price] : []))
+        .sort((a, b) => a - b);
+      return {
+        ...group,
+        reference_price: medianOfSorted(references),
+        reference_variants: references.length,
+        tracked_variants: tracked.length,
+        // El objetivo más bajo: el que decide si ya hay algo que mirar.
+        target_price: targets.length ? Math.min(...targets) : null,
+        label: `${group.make} ${group.model}`,
+        variant_count: group.variants.length,
+      };
+    }),
+  );
+});
+
+carModelsRoutes.post("/", async (c) => {
+  const payload = await parseBody(c, CarModelCreate);
+  const slug = slugify(payload.make, payload.model, payload.trim);
+  const [existing] = await c.var.db.select({ id: carModels.id }).from(carModels).where(eq(carModels.slug, slug));
+  if (existing) throw conflict(`Ya existe el modelo '${slug}'`);
+  const [model] = await c.var.db
+    .insert(carModels)
+    .values({ ...payload, slug, make_model_key: makeModelKey(payload.make, payload.model) })
+    .returning();
+  return c.json(carModelRead(model), 201);
+});
+
+carModelsRoutes.get("/:id", async (c) => {
+  const [model] = await c.var.db.select().from(carModels).where(eq(carModels.id, parseId(c, "id")));
+  if (!model) throw notFound("Modelo no encontrado");
+  return c.json((await withStats(c.var.db, c.var.user.id, [model]))[0]);
+});
+
+carModelsRoutes.patch("/:id", async (c) => {
+  const id = parseId(c, "id");
+  const payload = await parseBody(c, CarModelUpdate);
+  const db = c.var.db;
+  const [model] = Object.keys(payload).length
+    ? await db.update(carModels).set(payload).where(eq(carModels.id, id)).returning()
+    : await db.select().from(carModels).where(eq(carModels.id, id));
+  if (!model) throw notFound("Modelo no encontrado");
+  return c.json(carModelRead(model));
+});

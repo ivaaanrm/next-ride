@@ -21,6 +21,41 @@ el límite configurado. No valores ni selecciones las “mejores” ofertas.**
   informe.** Si no está definida, aborta antes de scrapear nada.
 - API base: variable `NR_API_BASE_URL`; por defecto `http://localhost:8000`.
 
+## 0.1 Preflight de herramientas — lo primero del run
+
+Antes de cargar la configuración y antes de tocar la red, mira la **lista de herramientas
+de esta sesión** y anota qué hay realmente disponible:
+
+| Capacidad | Cómo se comprueba | Sin ella no puedes |
+|---|---|---|
+| `fetch` | Existe `WebFetch`, o `curl`/`python3` con salida a internet | Nada: si tampoco hay esto, **aborta el run**. |
+| `playwright` | Existe una herramienta MCP de Playwright en la lista de tools | Servir targets con `access: playwright`. |
+| `browser` | Existe una herramienta de navegador real (`mcp__Claude_Browser__*`, `mcp__claude-in-chrome__*`, o equivalente) | Servir targets con `access: browser` y descubrir `search_url` nuevos. |
+
+Comprobar significa **mirar la lista de herramientas**, no llamar a una a ver si falla.
+
+Reglas duras del preflight, sin excepciones:
+
+- Si no hay herramienta de Playwright ni de navegador, todos los targets con
+  `access: playwright` o `access: browser` salen del run **inmediatamente** con estado
+  `tooling_unavailable`. No los abras, no los reintentes, no busques un rodeo.
+- **No instales un navegador ni te lo fabriques.** Nada de `npx playwright install`,
+  `pip install playwright`, descargar Chromium, levantar Chrome headless a mano, hablar
+  CDP por tu cuenta ni pelearte con el proxy TLS del entorno. Si la herramienta no está
+  en la lista, para esta sesión no existe.
+- Si te descubres depurando la instalación de un navegador o errores de certificado del
+  proxy, eso ya no es este run. Corta, marca los targets afectados como
+  `tooling_unavailable` y sigue con los de `fetch`.
+- Deja el resultado del preflight en la cabecera del informe: qué había, qué no, y qué
+  targets quedan fuera por ello. Es lo que le dice a un humano que hay que arreglar el
+  runner, no el scraper.
+
+El inventario se hace ahora; se aplica en cuanto llegue la config del §1, cribando los
+targets por `source.access` antes de abrir el primer portal.
+
+Un run con los targets de navegador en `tooling_unavailable` y los de `fetch` en `ok` es
+un run **correcto** y debe terminar con éxito.
+
 ## 1. Cargar configuración antes de navegar
 
 Antes de abrir ningún dealer, ejecuta:
@@ -69,23 +104,50 @@ nunca navegues en paralelo sobre el mismo dominio. `source.access`, `search_url`
 `search_params`, `source.listing_url`, `source.notes` y `source.config` sustituyen por
 completo a los antiguos JSON locales.
 
-Si `search_url` es `null`, no inventes una URL:
+### 1.1 `search_url: null`: primer descubrimiento y régimen estacionario
 
-- con `playwright` o `browser`, descúbrela desde la interfaz pública y guárdala mediante
-  `PATCH /api/v1/scraping/targets/{target.id}`;
-- con `fetch` o `manual`, marca el target como `configuration_missing` y continúa con el
-  siguiente. Las fuentes con plantillas de slug deben llegar ya resueltas desde la API.
+Un `search_url` a `null` no es un error de configuración: es un target que todavía no ha
+pasado por su **primer descubrimiento**. Distingue los dos momentos, porque tienen costes
+y requisitos distintos:
+
+- **Primer descubrimiento (una vez por target).** coches.net y OcasionPlus solo entregan
+  la URL de búsqueda tras interacción real con la interfaz: escribir en el buscador,
+  elegir una sugerencia del desplegable y aceptar. Eso **no es fetchable por naturaleza**;
+  no hay URL construible que reproduzca el resultado. Necesita Playwright o navegador.
+- **Régimen estacionario (todos los demás runs).** El `PATCH` persiste la URL y los IDs,
+  así que los runs siguientes leen `search_url` ya resuelto de la API y no descubren nada.
+  El coste de interacción se paga una sola vez, no cada día.
+
+Según lo que haya:
+
+- Con `playwright` o `browser` **disponibles en el preflight**: descubre la URL desde la
+  interfaz pública y guárdala con `PATCH /api/v1/scraping/targets/{target.id}` antes de
+  seguir con ese target.
+- Con `playwright` o `browser` **no disponibles**: el target sale como
+  `tooling_unavailable`. No es `configuration_missing` (la config está bien) ni `blocked`
+  (el portal no nos ha rechazado): falta nuestra herramienta. Mañana, con navegador, se
+  descubre y se persiste.
+- Con `fetch` o `manual`: marca el target como `configuration_missing` y continúa. Las
+  fuentes con plantillas de slug deben llegar ya resueltas desde la API.
+
+**Nunca adivines URLs de slug como sustituto del descubrimiento.** Probar rutas
+plausibles en coches.net ha devuelto redirecciones a `http://127.0.0.1`, que tiene toda
+la pinta de ser la respuesta de un WAF a tráfico sospechoso. Adivinar genera exactamente
+el patrón de peticiones que te marca como bot, y el precio no lo paga el target de hoy:
+lo paga la fuente entera en los runs que sí tienen navegador. Un `tooling_unavailable`
+cuesta un target un día; que te señalen la IP cuesta la fuente.
 
 ## 2. Elegir herramienta según el dealer
 
-El campo `source.access` devuelto por la API manda. No lo cambies por tu cuenta.
+El campo `source.access` devuelto por la API manda. No lo cambies por tu cuenta. Y solo
+se intenta lo que el preflight (§0.1) haya declarado disponible.
 
-| access | Qué usar | Cuándo |
-|---|---|---|
-| `fetch` | `WebFetch` o `curl` | El sitio renderiza en servidor y su robots.txt permite la ruta. Es el caso de Flexicar. Empieza siempre por aquí: es lo más rápido y barato. |
-| `playwright` | Playwright MCP, con navegador como fallback | El listado se pinta por JS. Espera el selector del listado, no un `sleep` fijo. Si Playwright falla o es bloqueado en dos intentos, prueba el navegador real antes de marcar el target como `blocked`. |
-| `browser` | Navegador real del usuario | Cuando hace falta una sesión normal del navegador o Playwright no puede leer el listado. Si el navegador no responde en dos intentos, marca el target como `skipped` y continúa. |
-| `manual` | Nada | El sitio prohíbe el acceso automatizado. **No lo scrapees.** Márcalo como `blocked_by_policy` en el informe y pasa al siguiente. |
+| access | Qué usar | Cuándo | Si la herramienta no existe en la sesión |
+|---|---|---|---|
+| `fetch` | `WebFetch` o `curl` | El sitio renderiza en servidor y su robots.txt permite la ruta. Es el caso de Flexicar. Empieza siempre por aquí: es lo más rápido y barato. | Aborta el run: sin fetch no hay nada que hacer. |
+| `playwright` | Playwright MCP, con navegador como fallback | El listado se pinta por JS. Espera el selector del listado, no un `sleep` fijo. Si Playwright falla o es bloqueado en dos intentos, prueba el navegador real antes de marcar el target como `blocked`. | Sin Playwright **ni** navegador: `tooling_unavailable`, sin abrir el portal. |
+| `browser` | Navegador real del usuario | Cuando hace falta una sesión normal del navegador o Playwright no puede leer el listado. Si el navegador responde pero no carga en dos intentos, marca el target como `skipped` y continúa. | `tooling_unavailable`, sin abrir el portal. |
+| `manual` | Nada | El sitio prohíbe el acceso automatizado. **No lo scrapees.** Márcalo como `blocked_by_policy` en el informe y pasa al siguiente. | — |
 
 Reglas duras, sin excepciones:
 
@@ -105,18 +167,70 @@ Reglas duras, sin excepciones:
 - Solo lectura. No rellenes formularios, no inicies sesión, no pidas información al
   concesionario, no reserves nada.
 
-## 2.1 Recetas de acceso por dealer
+## 2.1 `blocked` vs `tooling_unavailable`: no son lo mismo
+
+Dos fallos que se parecen mucho en pantalla y que se arreglan en sitios opuestos. Clasifica
+siempre a conciencia, porque el informe es lo único que ve quien tiene que reaccionar:
+
+| | `tooling_unavailable` | `blocked` |
+|---|---|---|
+| Qué ha pasado | Nuestro runner no tenía con qué mirar: no hay herramienta de Playwright/navegador, o la salida a red falla (proxy TLS, `ERR_CONNECTION_RESET`, DNS) | El portal nos ha rechazado activamente: 403, 429, muro de captcha, challenge de WAF, tarpit |
+| Quién lo arregla | Quien mantiene el runner o el entorno de ejecución | Escalado técnico o legal con el dealer |
+| Qué NO hay que hacer | Reintentar mañana esperando suerte | Insistir, rotar identidad o buscar rodeos |
+
+Desambiguador rápido: si **todos** los targets de **dominios distintos** fallan igual, el
+problema es nuestro (`tooling_unavailable`). Si un dominio falla mientras otros van bien
+con la misma herramienta, el problema es de ese dominio (`blocked`).
+
+## 2.2 Confirmar que la página cargó de verdad
+
+Un `<title>` no es prueba de nada. **La página de error de red de Chrome pone el hostname
+solicitado como `<title>`**, así que `document.title === "www.coches.net"` se lee exactamente
+igual tanto si el listado ha cargado como si la conexión se ha caído. Es la trampa más cara
+de este run: parece que funcionó y no funcionó.
+
+No aceptes ninguno de estos como señal de éxito: el `<title>`, la URL de la barra de
+direcciones, un screenshot no vacío, o un HTTP 200 a secas.
+
+**Exige siempre una aserción de contenido** antes de tratar una captura como buena: el
+selector propio de ese listado tiene que existir con al menos un elemento. Y comprueba
+además las señales negativas:
+
+- `#main-frame-error`, `.error-code` o `chrome-error://chromewebdata` en la página;
+- texto `ERR_CONNECTION_RESET`, `ERR_TIMED_OUT`, `ERR_NAME_NOT_RESOLVED`, `ERR_PROXY_*`,
+  `ERR_CERT_*`;
+- `document.body.innerText` por debajo de unos cientos de caracteres en un listado que
+  debería traer decenas de tarjetas.
+
+En `fetch` vale lo mismo: un 200 con cuerpo de challenge o de interstitial no es un
+listado. Asegúrate de que aparece el marcador esperado (`__NEXT_DATA__`, `results[]`)
+antes de dar la respuesta por buena.
+
+Qué hacer con una aserción fallida: un reintento y, si vuelve a fallar, clasifica según
+§2.1 — un `ERR_*` de red o de proxy es **nuestro** (`tooling_unavailable`); un 403, un
+captcha o un challenge es **suyo** (`blocked`). Guarda la captura fallida para poder
+diagnosticarla y no la normalices.
+
+Comprueba la aserción también en las páginas de control, no solo en el objetivo: dar por
+bueno un `example.com` que en realidad era la interstitial de error es cómo se pierde
+media sesión persiguiendo el problema equivocado.
+
+## 2.3 Recetas de acceso por dealer
 
 Usa estas recetas mientras la fuente conserve el mismo `source.access` en la API.
 No redescubras una fuente o sus selectores en cada run.
 
-| Dealer | Acceso | Fuente estable | Salida determinista |
-|---|---|---|---|
-| Flexicar | `fetch` | `__NEXT_DATA__` + endpoint `/vehicles` configurado por la API | `scrapers/flexicar.py` |
-| coches.net | `playwright` | tarjetas del listado público | captura browser + `scrapers/cochesnet.py` |
-| OcasionPlus | `playwright` | tarjetas con atributos `data-test` | captura browser + `scrapers/ocasionplus.py` |
-| Iruri Motor | `fetch` | endpoint JSON público de Vehica | `scrapers/irurimotor.py` |
-| Quadis | `browser` | tarjetas `.car-card` del listado público | captura browser + `scrapers/quadis.py` |
+La columna de aserción es la de §2.2: si ese marcador no aparece, la carga **no** cuenta
+como buena, diga lo que diga el `<title>`.
+
+| Dealer | Acceso | Fuente estable | Aserción de carga | Salida determinista |
+|---|---|---|---|---|
+| Flexicar | `fetch` | `__NEXT_DATA__` + endpoint `/vehicles` configurado por la API | `<script id="__NEXT_DATA__">` con `props.pageProps.initialVehicles` | `scrapers/flexicar.py` |
+| coches.net | `playwright` | tarjetas del listado público | `.mt-ListAds-item.mt-CardAd` (≥ 1) | captura browser + `scrapers/cochesnet.py` |
+| OcasionPlus | `playwright` | tarjetas con atributos `data-test` | `a[href*="/coches-segunda-mano/"]` (≥ 1) | captura browser + `scrapers/ocasionplus.py` |
+| Iruri Motor | `fetch` | endpoint JSON público de Vehica | JSON con `results[]` | `scrapers/irurimotor.py` |
+| Quadis | `browser` | tarjetas `.car-card` del listado público | `.car-card` (≥ 1) o `#vehicle-count` a cero | captura browser + `scrapers/quadis.py` |
+| Compramos Tu Coche | `fetch` | listado SSR con atributos `data-qa-selector` | **chip `[data-qa-selector="filter-item-vehicle"]` que coincida con el token** | `scrapers/compramostucoche.py` |
 
 ### Flexicar
 
@@ -129,6 +243,16 @@ No redescubras una fuente o sus selectores en cada run.
    `models={search_params.model_slug}`; continúa hasta la página 3 como máximo.
    El HTML ignora `?page=2`, por lo que no debe usarse como paginación. Deduplica por ID
    y detente en cuanto completes el cupo.
+
+   > **Techo conocido de Flexicar — no lo vuelvas a investigar.** `services.flexicar.es`
+   > publica `Disallow: /` en su propio `robots.txt`, así que el endpoint de paginación
+   > `api/v1/vehicles` está desautorizado y con `access: fetch` no se puede usar. En la
+   > práctica, **los targets de Flexicar están estructuralmente limitados a lo que quepa
+   > en la página 1 (12 tarjetas), sea cual sea `max_results`**: con `max_results = 15`
+   > eso son 12 de 85 disponibles. Es el comportamiento correcto, no un fallo. El
+   > extractor ya lo señala con `pagination_blocked_by_robots`. El target sigue siendo
+   > `ok`; el déficit de cobertura se anota como *techo conocido* en el informe y no abre
+   > incidencia ni se reintenta por otra vía.
 5. Visita cada ficha seleccionada, respetando la pausa de 2 segundos, y lee
    `props.pageProps.vehicle` y `props.pageProps.dealership`. Si una ficha aislada falla,
    conserva los datos de la tarjeta y registra el aviso.
@@ -147,9 +271,12 @@ python3 scrapers/flexicar.py "Audi A3" --max 15 \
 ### coches.net
 
 1. Usa Playwright sobre `search_url`.
-2. Si `search_url` es `null`, abre la web pública, entra en **Marca y modelo**, busca el
-   nombre exacto, selecciónalo y pulsa **Aceptar**. No uses el buscador con IA para fijar
-   el modelo: puede interpretar `A3` como `A4`.
+2. Si `search_url` es `null`, esto es un **primer descubrimiento** (§1.1): abre la web
+   pública, entra en **Marca y modelo**, busca el nombre exacto, selecciónalo y pulsa
+   **Aceptar**. No uses el buscador con IA para fijar el modelo: puede interpretar `A3`
+   como `A4`. Sin herramienta interactiva no hay atajo: `tooling_unavailable` y a otra
+   cosa. No pruebes URLs de slug a ver si suena la flauta — es lo que acaba en una
+   redirección a `http://127.0.0.1`.
 3. Extrae la URL y los IDs resultantes y persístelos para futuros runs:
 
 ```http
@@ -185,8 +312,10 @@ el orden del portal. No puntúa, reordena ni escoge las más baratas.
 
 ### OcasionPlus
 
-1. Usa Playwright con el `search_url` del target. Si es `null`, construye la búsqueda desde
-   la interfaz pública y persiste la URL con el mismo `PATCH` descrito para Coches.net.
+1. Usa Playwright con el `search_url` del target. Si es `null`, es un primer
+   descubrimiento (§1.1): construye la búsqueda desde la interfaz pública y persiste la
+   URL con el mismo `PATCH` descrito para Coches.net. Sin herramienta interactiva,
+   `tooling_unavailable`; tampoco aquí se adivinan slugs.
 2. Identifica las tarjetas por enlaces `a[href*="/coches-segunda-mano/"]` y limita la
    lectura al modelo exacto mostrado en `[data-test="span-brand-model"]`.
 3. Captura con una sola lectura masiva:
@@ -261,8 +390,64 @@ Los vehículos nuevos sin año visible no se publican: `year` es obligatorio par
 de validación. No abras fichas individuales solo para completar ese dato; continúa por el
 listado hasta reunir `max_results` ofertas válidas o agotar tres páginas.
 
+### Compramos Tu Coche
+
+`robots.txt` solo desautoriza `/home-service/`, `/inspection/`, `/appointment/` y
+similares: `/comprar-coche/` es navegable con `fetch`.
+
+1. El listado se renderiza en servidor, pero **las clases CSS llevan hash**
+   (`root___Dz4kU`, CSS-modules) y cambian en cada despliegue. Selecciona solo por
+   `data-qa-selector`; no escribas nunca un selector de clase para esta fuente.
+2. **La trampa de este portal: un filtro inválido no da error.** Los parámetros no usan
+   el nombre que muestra la interfaz:
+   - `brand` lleva guion bajo donde el nombre lleva guion: `MERCEDES_BENZ`, no
+     `MERCEDES-BENZ`;
+   - `model` es `{BRAND}.{TOKEN}` y el token es el nombre interno **en alemán**:
+     `A-KLASSE` (no `CLASE A`), `PAJERO` (no `MONTERO`).
+
+   Con un token equivocado el sitio responde **HTTP 200 con el catálogo entero sin
+   filtrar**: diez tarjetas sanas de Toyota, Seat o MINI que parecen un listado
+   correcto del target. Por eso la aserción de §2.2 aquí no es opcional: exige el chip
+   `[data-qa-selector="filter-item-vehicle"]` y que su parte de modelo **coincida
+   exactamente** con el token pedido. Sin chip, o con un chip que solo trae la marca,
+   el listado se descarta entero. `assert_filter_applied()` ya lo hace.
+3. Cada carrocería es un modelo distinto y **repetir `model` en la URL no combina
+   nada** (se queda con el primero). Por eso el target lleva
+   `search_params.model_tokens` y el extractor los recorre en el orden del portal
+   hasta completar el cupo. `Audi A3` necesita `A3`, `A3 SPORTBACK`, `A3 LIMOUSINE` y
+   `A3 ALLSTREET`; `Mercedes Clase A` necesita `A-KLASSE` y `A-KLASSE LIMOUSINE`.
+4. La página trae 10 tarjetas y pagina con `&page=N`; el tope son 3 páginas por token,
+   y se corta en cuanto se reúnen `max_results`.
+5. Campos por tarjeta, todos por `data-qa-selector`: `title` (texto y `href`),
+   `registration` (`07/2015` → año), `mileage`, `transmission`, `fuelType`,
+   `horsePower` (`140 kW (190 CV)` → 190) y `price`. El precio de contado viene ya en
+   entero en `data-qa-selector-value`; **`monthly-price` es la cuota financiada y no se
+   usa nunca**.
+6. El anuncio se publica en compramostucoche.es pero el enlace apunta a
+   **autohero.com**, la marca de retail del mismo grupo y el vendedor real: `dealer_name`
+   es `Autohero`. Quita el parámetro `MID` de tracking; la URL limpia
+   (`/es/{modelo}/id/{uuid}/`) es la clave natural y el `uuid` es el `external_id`.
+7. `image_url` se queda vacío a propósito: el HTML servido solo trae relleno
+   (`defaultTabletImage` o un `data:` en base64), y la foto real la carga el carrusel
+   por JS. No es un fallo del extractor y no hay que "arreglarlo" con `fetch`.
+8. Ejecuta:
+
+```bash
+python3 scrapers/compramostucoche.py "Audi A3" --max 15 \
+  --config state/runtime-config.json \
+  --fixture scrapers/fixtures/compramostucoche-audi-a3-listing.html \
+  --out state/raw-compramostucoche-audi-a3.json
+```
+
+Cero ofertas con el chip correcto es un resultado válido, no un `layout_changed`:
+significa que ese modelo no tiene stock hoy. Es el caso habitual de `Mercedes Clase A`
+y `Mitsubishi Montero` en esta fuente.
+
 ### Secuencia común después de capturar
 
+0. Comprueba la aserción de contenido de §2.2 **antes de nada**. Una captura que no la
+   pasa no se normaliza ni se cuenta como listado vacío: se guarda para diagnóstico y el
+   target se clasifica según §2.1.
 1. Guarda siempre la respuesta o captura fuente antes de normalizar.
 2. Ejecuta el scraper/normalizador específico; no construyas el payload final a mano.
 3. Valida todos los objetos contra `OfferIngest`.
@@ -321,6 +506,10 @@ validación, o si el listado devuelve 0 resultados cuando el run anterior devolv
 3, **no envíes nada de ese target**. Márcalo como `layout_changed` en el informe. Eso
 casi siempre significa que el HTML cambió, no que el stock desapareció.
 
+El freno solo aplica a listados que **pasaron la aserción de carga** de §2.2. Un cero
+sobre una página que ni siquiera cargó no es `layout_changed`: no hay HTML que se haya
+roto. Clasifícalo según §2.1 y no toques el fixture ni los selectores.
+
 ## 5. Deduplicar contra el estado
 
 `state/seen.json` mapea `url` a `{ price, first_seen, last_seen, content_hash }`.
@@ -357,15 +546,38 @@ Content-Type: application/json
 
 Crea `reports/YYYY-MM-DD.md` con:
 
+- **Cabecera con el preflight de §0.1**: qué herramientas había, cuáles no, y qué targets
+  quedan fuera por ello.
 - Tabla por target: dealer, modelo, encontrados, nuevos, con bajada de precio, sin cambios,
-  descartados, estado (`ok` / `blocked` / `blocked_by_policy` / `layout_changed` / `skipped`).
+  descartados, estado.
 - Los cambios de precio del día, con importe y porcentaje.
-- El déficit de cobertura por target (`max_results - válidas`) cuando no se complete el cupo.
+- El déficit de cobertura por target (`max_results - válidas`) cuando no se complete el
+  cupo, con su causa. Los techos estructurales conocidos —Flexicar limitado a la página 1
+  por su propio `robots.txt`— se etiquetan como **techo conocido** y no cuentan como
+  incidencia.
 - Errores y qué habría que arreglar a mano.
 
+Vocabulario de estados. Cada uno apunta a un responsable distinto; esa es toda su razón
+de ser:
+
+| Estado | Significa | Lo arregla |
+|---|---|---|
+| `ok` | Capturado y normalizado, aserción de contenido incluida | — |
+| `tooling_unavailable` | Nuestro runner no tenía herramienta o salida a red | El entorno de ejecución |
+| `blocked` | El portal nos rechazó activamente (403, 429, captcha, WAF) | Escalado con el dealer |
+| `blocked_by_policy` | `robots.txt` o `access: manual` lo desautorizan | Nadie: es la decisión correcta |
+| `layout_changed` | Cargó, pero los selectores o el freno de emergencia fallaron | El scraper |
+| `configuration_missing` | Falta `search_url` en una fuente que no puede descubrirlo | La config de la API |
+| `skipped` | La herramienta estaba y aun así no se pudo completar en dos intentos | Revisar al día siguiente |
+
+`tooling_unavailable` no es un subtipo de `blocked`: un día entero de targets en
+`tooling_unavailable` significa que hay que arreglar el runner, y no debe leerse como que
+los portales nos están cerrando la puerta.
+
 Termina imprimiendo por stdout un JSON de una línea:
-`{"date":"...","targets":N,"sent":N,"new":N,"price_changed":N,"errors":N}`
-para que el cron pueda alertar sin parsear el markdown.
+`{"date":"...","targets":N,"sent":N,"new":N,"price_changed":N,"errors":N,"blocked":N,"tooling_unavailable":N}`
+para que el cron pueda alertar sin parsear el markdown, y distinguir de un vistazo un
+problema nuestro de uno de los portales.
 
 ## 8. Convergencia hacia scrapers deterministas
 
