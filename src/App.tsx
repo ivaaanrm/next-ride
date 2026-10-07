@@ -1,11 +1,13 @@
 import { Suspense, lazy, type ComponentType } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 
 import { Layout } from "./components/Layout";
 import { Loading } from "./components/ui";
 import { useAuth } from "./lib/auth";
 import { ApiKeysPage } from "./pages/ApiKeys";
 import { DealersPage } from "./pages/Dealers";
+import { InvitationsPage } from "./pages/Invitations";
+import { InvitePage } from "./pages/Invite";
 import { LoginPage } from "./pages/Login";
 import { ModelsPage } from "./pages/Models";
 import { MorePage } from "./pages/More";
@@ -50,6 +52,7 @@ const AnalyticsPage = lazyWithRetry(() =>
 
 export function App() {
   const { user, loading } = useAuth();
+  const { pathname } = useLocation();
 
   if (loading) {
     return (
@@ -58,6 +61,10 @@ export function App() {
       </div>
     );
   }
+
+  // El enlace del email de invitación vive fuera de la app: se abre sin sesión,
+  // y con una abierta avisa en vez de mezclar cuentas.
+  if (pathname === "/invite") return <InvitePage />;
 
   if (!user) return <LoginPage />;
 
@@ -76,6 +83,7 @@ export function App() {
         <Route path="/models" element={<ModelsPage />} />
         <Route path="/dealers" element={<DealersPage />} />
         <Route path="/api-keys" element={<ApiKeysPage />} />
+        <Route path="/invitations" element={<InvitationsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         {/* La cola de la navegación, que en un móvil no cabe en la barra de
             pestañas. En escritorio la ruta existe igual, pero la barra lateral

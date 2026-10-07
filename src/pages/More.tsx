@@ -56,6 +56,7 @@ export function MorePage() {
             />
             <MoreLink to="/settings" label="Ajustes" />
             <MoreLink to="/api-keys" label="API keys" />
+            {user?.is_superuser ? <MoreLink to="/invitations" label="Invitaciones" /> : null}
           </MoreSection>
 
           <MoreSection title="Aplicación">

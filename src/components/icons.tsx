@@ -100,6 +100,14 @@ export const IconKey = (props: IconProps) => (
   </Svg>
 );
 
+/** Invitaciones: un sobre. */
+export const IconMail = (props: IconProps) => (
+  <Svg {...props}>
+    <rect x="3.5" y="5.5" width="17" height="13" rx="1.5" />
+    <path d="m4 7 8 6 8-6" />
+  </Svg>
+);
+
 export const IconBell = (props: IconProps) => (
   <Svg {...props}>
     <path d="M6 9a6 6 0 0 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 15 6 9" />

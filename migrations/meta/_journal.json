@@ -15,6 +15,13 @@
       "when": 1791360053531,
       "tag": "0001_seed_scraping",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1791366278908,
+      "tag": "0002_invitations",
+      "breakpoints": true
     }
   ]
 }

@@ -36,7 +36,7 @@ const TABS = [
  * solo de la ruta exacta —marcarlo aquí sería decir que esta es la página, y no
  * lo es—, así que la señal accesible en esas rutas es el encabezado.
  */
-const MORE_ROUTES = ["/more", "/dealers", "/settings", "/api-keys"];
+const MORE_ROUTES = ["/more", "/dealers", "/settings", "/api-keys", "/invitations"];
 
 export function TabBar() {
   const { pathname } = useLocation();

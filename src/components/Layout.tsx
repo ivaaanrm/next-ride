@@ -7,6 +7,7 @@ import {
   IconAnalytics,
   IconDealers,
   IconKey,
+  IconMail,
   IconModels,
   IconOffers,
   IconSettings,
@@ -26,6 +27,9 @@ const SETTINGS_NAV = [
   { to: "/settings", label: "Ajustes", Icon: IconSettings },
   { to: "/api-keys", label: "API Keys", Icon: IconKey },
 ];
+
+/** Solo la ve un superusuario: a los demás el servidor les diría 403. */
+const ADMIN_NAV = [{ to: "/invitations", label: "Invitaciones", Icon: IconMail }];
 
 const COLLAPSED_KEY = "nr.sidebar_collapsed";
 
@@ -98,7 +102,7 @@ export function Layout() {
           <div className="nav-section">Sistema</div>
           {/* Antes que Ajustes: el aviso es lo que manda a Ajustes, no al revés. */}
           <NotificationsNav collapsed={collapsed} />
-          {SETTINGS_NAV.map((item) => (
+          {[...SETTINGS_NAV, ...(user?.is_superuser ? ADMIN_NAV : [])].map((item) => (
             <NavLink
               key={item.to}
               to={item.to}

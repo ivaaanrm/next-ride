@@ -485,3 +485,22 @@ export interface ApiKey {
 export interface ApiKeyCreated extends ApiKey {
   api_key: string;
 }
+
+export type InvitationStatus = "pending" | "accepted" | "revoked" | "expired";
+
+export interface Invitation {
+  id: number;
+  email: string;
+  status: InvitationStatus;
+  expires_at: string;
+  created_at: string;
+  accepted_at: string | null;
+  email_sent_at: string | null;
+}
+
+export interface InvitationCreated extends Invitation {
+  /** El enlace en claro: solo viene al crearla. */
+  invite_url: string;
+  email_sent: boolean;
+  email_error: string | null;
+}

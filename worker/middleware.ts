@@ -29,6 +29,15 @@ export const requireUser = createMiddleware<AppEnv>(async (c, next) => {
   await next();
 });
 
+/** Endpoints de administración: con sesión y además superusuario, o 403. */
+export const requireSuperuser = createMiddleware<AppEnv>(async (c, next) => {
+  const user = await sessionUser(c);
+  if (!user) throw CREDENTIALS_ERROR();
+  if (!user.isSuperuser) throw forbidden("Solo un administrador puede hacer esto");
+  c.set("user", user);
+  await next();
+});
+
 /** Endpoints de ingesta y configuración del skill: sesión o `X-API-Key`. */
 export const requireIngest = createMiddleware<AppEnv>(async (c, next) => {
   const raw = c.req.header("X-API-Key");

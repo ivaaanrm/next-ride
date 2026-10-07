@@ -170,6 +170,30 @@ export const apiKeys = sqliteTable(
 );
 
 // --------------------------------------------------------------------------- //
+// Invitaciones
+//
+// Con el registro cerrado, la única puerta de entrada: un superusuario invita a
+// un email y le llega un enlace de un solo uso. Del token solo se guarda el
+// hash, como de las API keys: quien lea la base no puede aceptar por nadie.
+// --------------------------------------------------------------------------- //
+export const invitations = sqliteTable(
+  "invitations",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    email: text("email").notNull(),
+    token_hash: text("token_hash").notNull().unique(),
+    invited_by_id: text("invited_by_id").references(() => users.id, { onDelete: "set null" }),
+    expires_at: text("expires_at").notNull(),
+    accepted_at: text("accepted_at"),
+    accepted_user_id: text("accepted_user_id").references(() => users.id, { onDelete: "set null" }),
+    revoked_at: text("revoked_at"),
+    email_sent_at: text("email_sent_at"),
+    ...timestamps,
+  },
+  (table) => [index("ix_invitations_email").on(table.email)],
+);
+
+// --------------------------------------------------------------------------- //
 // Catálogo
 // --------------------------------------------------------------------------- //
 export const dealers = sqliteTable("dealers", {
@@ -481,6 +505,7 @@ export const schema = {
   accounts,
   verifications,
   apiKeys,
+  invitations,
   dealers,
   carModels,
   trackedModels,
@@ -503,4 +528,5 @@ export type OfferRanking = typeof offerRankings.$inferSelect;
 export type ScrapeSource = typeof scrapeSources.$inferSelect;
 export type ScrapeTarget = typeof scrapeTargets.$inferSelect;
 export type ApiKey = typeof apiKeys.$inferSelect;
+export type Invitation = typeof invitations.$inferSelect;
 export type User = typeof users.$inferSelect;

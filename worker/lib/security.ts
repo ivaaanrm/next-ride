@@ -98,3 +98,16 @@ export async function generateApiKey(): Promise<{ raw: string; prefix: string; h
   const raw = `${API_KEY_PREFIX}_${prefix}_${toBase64Url(randomBytes(32))}`;
   return { raw, prefix, hashed: await hashApiKey(raw) };
 }
+
+// --------------------------------------------------------------------------- //
+// Tokens de un solo uso (invitaciones)
+//
+// Mismo trato que las API keys: 32 bytes aleatorios en el enlace, SHA-256 en la
+// base. Con esa entropía no hace falta un hash lento ni limitar intentos.
+// --------------------------------------------------------------------------- //
+export async function generateToken(): Promise<{ raw: string; hashed: string }> {
+  const raw = toBase64Url(randomBytes(32));
+  return { raw, hashed: await hashApiKey(raw) };
+}
+
+export const hashToken = hashApiKey;

@@ -137,6 +137,10 @@ export function LoginPage() {
           </button>
         </form>
 
+        {!canRegister && !sessionEnded ? (
+          <div className="auth-switch">¿Todavía no tienes cuenta? Pide una invitación.</div>
+        ) : null}
+
         {canRegister ? (
           <div className="auth-switch">
             {isRegister ? "¿Ya tienes cuenta? " : "¿Todavía no tienes cuenta? "}

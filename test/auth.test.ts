@@ -8,7 +8,7 @@ describe("health", () => {
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("ok");
     expect(res.body.schema.up_to_date).toBe(true);
-    expect(res.body.schema.head).toBe("0001_seed_scraping.sql");
+    expect(res.body.schema.head).toBe("0002_invitations.sql");
     expect(res.body.ai_enabled).toBe(false);
   });
 });

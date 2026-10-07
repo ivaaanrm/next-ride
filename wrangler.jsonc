@@ -42,6 +42,12 @@
     }
   ],
 
+  // Invitaciones por email (Cloudflare Email Sending, dominio ya dado de alta).
+  // Solo puede firmar como el remitente de `MAIL_FROM`: un fallo en el código
+  // no puede mandar correo en nombre de otra dirección del dominio. En `pnpm
+  // dev` y en las pruebas el envío es simulado: se escribe en la consola.
+  "send_email": [{ "name": "EMAIL", "allowed_sender_addresses": ["no-reply@cochesradar.com"] }],
+
   // Backup diario de D1 a R2.
   "triggers": { "crons": ["17 3 * * *"] },
 
@@ -61,7 +67,12 @@
     "ANTHROPIC_ENABLE_FALLBACKS": "true",
     "RANKING_MAX_ITERATIONS": "10",
     "RANKING_MAX_OFFERS": "40",
-    "BACKUP_RETENTION_DAYS": "30"
+    "BACKUP_RETENTION_DAYS": "30",
+    // De dónde salen los enlaces de los emails. Fijo y no el origen de la
+    // petición: invitar desde workers.dev no debe mandar a nadie allí.
+    "APP_URL": "https://cochesradar.com",
+    "MAIL_FROM": "no-reply@cochesradar.com",
+    "INVITATION_TTL_DAYS": "7"
   },
 
   "observability": {
