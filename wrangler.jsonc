@@ -73,10 +73,10 @@
   // Dominio propio: Cloudflare crea el DNS y el certificado al desplegar. Solo
   // el apex: Better Auth toma el origen de cada petición, así que `www` sería
   // otra cookie y otra PWA; mejor una regla de redirección en la zona.
-  "routes": [{ "pattern": "cocheradar.com", "custom_domain": true }],
+  "routes": [{ "pattern": "cochesradar.com", "custom_domain": true }],
   // Con `routes`, Wrangler apaga workers.dev salvo que se diga lo contrario, y
   // el skill de captación sigue apuntando ahí (`NR_API_BASE_URL`). Se puede
-  // quitar cuando el skill use https://cocheradar.com.
+  // quitar cuando el skill use https://cochesradar.com.
   "workers_dev": true,
 
   "upload_source_maps": true
